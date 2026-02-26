@@ -1,0 +1,26 @@
+{
+  "name": "piclaw",
+  "version": "0.1.0",
+  "description": "Proyecto pequeño inspirado en OpenClaw (base en construcción)",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "start": "node --import tsx src/index.ts",
+    "dev": "node --import tsx src/index.ts",
+    "web": "node --import tsx src/server.ts",
+    "config": "node --import tsx src/index.ts config"
+  },
+  "dependencies": {
+    "@inquirer/prompts": "^8.3.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  }
+}
