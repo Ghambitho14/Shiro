@@ -18,7 +18,8 @@ function buildRequestBody(params: { messages: VllmMessage[]; tools?: unknown[] }
 		model: getVllmSettings().model,
 		messages: params.messages,
 		stream: false,
-		max_tokens: 4096,
+		max_tokens: 512,
+		temperature: 0.7,
 	};
 	if (params.tools?.length) {
 		body.tools = params.tools;
@@ -52,12 +53,12 @@ export const vllmClient: LLMClient = {
 		};
 		const choice = data.choices?.[0];
 		const msg = choice?.message;
-		const content = msg?.content ?? "";
+		const raw = (msg?.content ?? "").trim();
 		const toolCalls = msg?.tool_calls;
-		if (Array.isArray(toolCalls) && toolCalls.length > 0) {
-			return "";
-		}
-		return content;
+		// Si hay texto, devolverlo aunque el modelo haya enviado tool_calls
+		if (raw) return raw;
+		if (Array.isArray(toolCalls) && toolCalls.length > 0) return "";
+		return "";
 	},
 
 	async chatWithTools(

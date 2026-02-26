@@ -72,6 +72,7 @@ export async function runAgent(
 		shortMemory: memory,
 		tokenBudget,
 		workspaceContext,
+		textOnly: true,
 	});
 
 	const fullMessages: Message[] = [{ role: "system", content: system }, ...messages];
@@ -98,12 +99,10 @@ export async function runAgent(
 		return lastContent;
 	}
 
-	// Modo directo: un solo chatWithTools (compatible con comportamiento actual)
-	const { getToolsDefinition } = await import("../tools/ToolRegistry.js");
-	const toolsDef = getToolsDefinition(true);
+	// Modo directo: responde con texto (sin herramientas)
 	try {
-		const content = await llm.chatWithTools(fullMessages, toolsDef, adaptToolResult);
-		const out = content.trim() || "(Sin respuesta de texto)";
+		const content = (await llm.chat(fullMessages)).trim();
+		const out = content || "";
 		pushEvent("observation", { content: out });
 		return out;
 	} catch (err) {
