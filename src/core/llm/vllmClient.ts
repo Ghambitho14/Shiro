@@ -2,10 +2,17 @@ import type { LLMClient, ToolDef } from "./LLMClient.js";
 import type { Message } from "../agent/Types.js";
 import { getConfig } from "../../config/config.js";
 
+function normalizeOpenAiBaseUrl(rawBaseUrl: string): string {
+	const trimmed = rawBaseUrl.replace(/\/+$/, "");
+	if (/\/v\d+$/i.test(trimmed)) return trimmed;
+	return `${trimmed}/v1`;
+}
+
 function getVllmSettings(): { baseUrl: string; model: string; apiKey: string | undefined } {
 	const cfg = getConfig();
+	const rawBaseUrl = process.env.VLLM_BASE_URL ?? cfg.vllmBaseUrl ?? "http://127.0.0.1:8000/v1";
 	return {
-		baseUrl: (process.env.VLLM_BASE_URL ?? cfg.vllmBaseUrl ?? "http://127.0.0.1:8000/v1").replace(/\/+$/, ""),
+		baseUrl: normalizeOpenAiBaseUrl(rawBaseUrl),
 		model: process.env.VLLM_MODEL ?? cfg.model ?? "default",
 		apiKey: process.env.VLLM_API_KEY?.trim() ?? cfg.vllmApiKey?.trim(),
 	};

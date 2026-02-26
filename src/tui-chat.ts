@@ -5,6 +5,13 @@ import { vllmClient } from "./core/llm/vllmClient.js";
 import { MemoryManager } from "./core/memory/MemoryManager.js";
 import { runAgent } from "./core/agent/Agent.js";
 
+function isPromptCancelled(err: unknown): boolean {
+	if (!err || typeof err !== "object") return false;
+	const withName = err as { name?: unknown; message?: unknown };
+	return withName.name === "ExitPromptError"
+		|| (typeof withName.message === "string" && withName.message.toLowerCase().includes("force closed"));
+}
+
 export async function runTuiChat(): Promise<void> {
 	const state = getState();
 	const memory = new MemoryManager({ shortWindow: 50, summarizeEvery: 20 });
@@ -14,7 +21,16 @@ export async function runTuiChat(): Promise<void> {
 
 	// eslint-disable-next-line no-constant-condition
 	while (true) {
-		const userMessage = await input({ message: "Tú:" });
+		let userMessage = "";
+		try {
+			userMessage = await input({ message: "Tú:" });
+		} catch (err) {
+			if (isPromptCancelled(err)) {
+				console.log("\n  Detecté Ctrl+C. Cerrando chat...\n");
+				break;
+			}
+			throw err;
+		}
 		const trimmed = userMessage?.trim() ?? "";
 		if (!trimmed) continue;
 		const msg = trimmed.toLowerCase();

@@ -26,6 +26,8 @@ Uso:
   pnpm run config         Entrar a configuraciones (menú TUI)
   pnpm onboard            Configuración inicial (primera vez)
   pnpm run dev            Iniciar la web de chat
+  pnpm start server       Iniciar solo el servidor web
+  pnpm wa                 Iniciar puente WhatsApp Web (QR)
   pnpm start set-name <nombre>  Cambiar nombre del asistente
   --help / --version      Ayuda o versión
 `.trim();
@@ -38,6 +40,8 @@ Comandos:
   pnpm run config         Configuraciones (modelo, vLLM, nombre, etc.)
   pnpm onboard            Configuración inicial (primera vez)
   pnpm run dev            Iniciar la web de chat
+  pnpm start server       Iniciar solo el servidor web
+  pnpm wa                 Iniciar puente WhatsApp Web (QR)
 `.trim();
 }
 
@@ -74,12 +78,17 @@ async function main(): Promise<void> {
 		await runOnboard();
 		return;
 	}
-	if (arg === "serve" || arg === "web") {
+	if (arg === "serve" || arg === "web" || arg === "server") {
 		if (isFirstRun()) {
 			console.log("\n  Primera vez: ejecuta 'pnpm shiro onboard' para configurar.\n");
 			return;
 		}
 		await import("./server.js");
+		return;
+	}
+	if (arg === "whatsapp" || arg === "wa") {
+		const { runWhatsAppBridge } = await import("./whatsapp.js");
+		await runWhatsAppBridge();
 		return;
 	}
 	if (arg === "--version" || arg === "-v") {
