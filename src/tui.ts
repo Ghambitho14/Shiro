@@ -15,7 +15,7 @@ const MENU_OPTIONS = [
 
 export async function runTui(): Promise<void> {
 	const name = getState().name;
-	console.log(`\n  PiClaw — ${name}\n  Usa las flechas para moverte, Enter para elegir.\n`);
+	console.log(`\n  Shiro — ${name}\n  Usa las flechas para moverte, Enter para elegir.\n`);
 
 	// eslint-disable-next-line no-constant-condition
 	while (true) {

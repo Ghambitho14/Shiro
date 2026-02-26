@@ -6,14 +6,20 @@
   "main": "src/index.ts",
   "scripts": {
     "start": "node --import tsx src/index.ts",
-    "dev": "node --import tsx src/index.ts",
+    "shiro": "node --import tsx src/index.ts",
+    "tui": "node --import tsx src/index.ts tui",
+    "config": "node --import tsx src/index.ts config",
+    "onboard": "node --import tsx src/index.ts onboard",
+    "dev": "node --import tsx src/server.ts",
     "web": "node --import tsx src/server.ts",
-    "config": "node --import tsx src/index.ts config"
+    "test": "node --import tsx --test src/core/agent/ContextBuilder.test.ts src/core/health/LoopDetector.test.ts src/core/memory/Summarizer.test.ts"
   },
   "dependencies": {
-    "@inquirer/prompts": "^8.3.0"
+    "@inquirer/prompts": "^8.3.0",
+    "zod": "^3.23.0"
   },
   "devDependencies": {
+    "@types/node": "^25.3.1",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"
   },
@@ -21,6 +27,8 @@
     "node": ">=18"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild"]
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
   }
 }

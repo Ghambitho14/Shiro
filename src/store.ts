@@ -6,7 +6,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = join(__dirname, "..", "data");
 const STATE_FILE = join(DATA_DIR, "state.json");
 
-const DEFAULT_NAME = "PiClaw";
+const DEFAULT_NAME = "Shiro";
 
 export type State = { name: string };
 

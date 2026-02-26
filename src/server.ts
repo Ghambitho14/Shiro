@@ -3,15 +3,18 @@ import { readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getState } from "./store.js";
-import { getConfig } from "./config.js";
-import { getHealth, setHealthActive } from "./health.js";
+import { getConfig } from "./config/config.js";
+import { getHealthState, setHealthActive } from "./core/health/HealthManager.js";
 import { buildWorkspaceContext } from "./workspace.js";
-import { getToolsDefinition, executeTool } from "./tools.js";
-import { chatWithTools, getVllmConfig } from "./vllm.js";
+import { vllmClient } from "./core/llm/vllmClient.js";
+import { MemoryManager } from "./core/memory/MemoryManager.js";
+import { runAgent } from "./core/agent/Agent.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, "..", "public");
-const PORT = Number(process.env.PORT) || 3780;
+const PORT = Number(process.env.PORT) || 1406;
+
+const memory = new MemoryManager({ shortWindow: 50, summarizeEvery: 20 });
 
 function readBody(req: import("node:http").IncomingMessage): Promise<string> {
 	return new Promise((resolve, reject) => {
@@ -35,7 +38,6 @@ const server = createServer(async (req, res) => {
 	const url = req.url ?? "/";
 	const method = req.method ?? "GET";
 
-	// CORS básico para desarrollo
 	res.setHeader("Access-Control-Allow-Origin", "*");
 	res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
 	res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -45,22 +47,23 @@ const server = createServer(async (req, res) => {
 		return;
 	}
 
-	// GET /api/state → nombre, vLLM, habilidades
 	if (method === "GET" && (url === "/api/state" || url.startsWith("/api/state?"))) {
 		const state = getState();
-		const vllm = getVllmConfig();
+		const vllm = vllmClient.getConfig();
 		const config = getConfig();
 		sendJson(res, 200, { name: state.name, vllm, abilities: config.abilities ?? null });
 		return;
 	}
 
-	// GET /api/health → lastActive, status (vida y autonomía)
 	if (method === "GET" && (url === "/api/health" || url.startsWith("/api/health?"))) {
-		sendJson(res, 200, getHealth());
+		const h = getHealthState();
+		sendJson(res, 200, {
+			lastActive: h.lastActive,
+			status: h.status === "paused" ? "idle" : "active",
+		});
 		return;
 	}
 
-	// POST /api/chat → { messages } → inyecta SOUL + memory, llama vLLM, actualiza health
 	if (method === "POST" && url === "/api/chat") {
 		let body: string;
 		try {
@@ -82,30 +85,21 @@ const server = createServer(async (req, res) => {
 			return;
 		}
 		const state = getState();
-		const config = getConfig();
 		const workspaceContext = buildWorkspaceContext({ includeLongTermMemory: true });
-		let systemContent = `Eres un asistente útil llamado ${state.name}. Responde en el mismo idioma que el usuario.
-
-Herramientas de workspace: read_file(path), write_file(path, content), list_dir(path opcional). Úsalas para SOUL.md, MEMORY.md, memory/ y para actualizar memoria.
-
-Herramientas de la PC del usuario: read_file_system(path), write_file_system(path, content), list_dir_system(path opcional). Cuando el usuario pregunte qué hay en su PC, qué carpetas hay, qué hay en Documentos (o en cualquier carpeta), DEBES llamar a list_dir_system: sin path para la raíz (carpeta de usuario), o con path como "Documents", "Desktop", etc., y luego responder con el listado real que devuelva la herramienta. No describas solo que tienes la herramienta; ejecútala y muestra el resultado.`;
-		if (config.abilities?.trim()) systemContent += "\n\nHabilidades o instrucciones: " + config.abilities.trim();
-		if (workspaceContext) systemContent += "\n\n--- Contexto de tu workspace (SOUL + memoria) ---\n" + workspaceContext;
-		const onlyUserAssistant = incoming.filter((m) => m.role !== "system");
-		const messages: import("./vllm.js").ChatMessage[] = [
-			{ role: "system", content: systemContent },
-			...onlyUserAssistant.map((m) => ({
-				role: (m.role === "assistant" ? "assistant" : "user") as "user" | "assistant",
-				content: String(m.content),
-			})),
-		];
-		const toolsDef = getToolsDefinition();
+		const userContent = incoming.length > 0 ? incoming[incoming.length - 1].content ?? "" : "";
+		if (!userContent.trim()) {
+			sendJson(res, 400, { error: "Empty message" });
+			return;
+		}
 		try {
 			setHealthActive();
-			const content = await chatWithTools(messages, toolsDef, (name, args) => {
-				const r = executeTool(name, args);
-				return { ok: r.ok, content: r.ok ? r.content : r.error, error: r.ok ? undefined : r.error };
-			});
+			const content = await runAgent(userContent, {
+				llm: vllmClient,
+				memory,
+				agentName: state.name,
+				tokenBudget: 8000,
+				usePlanner: false,
+			}, workspaceContext ?? undefined);
 			sendJson(res, 200, { content });
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);
@@ -114,7 +108,6 @@ Herramientas de la PC del usuario: read_file_system(path), write_file_system(pat
 		return;
 	}
 
-	// GET / → index.html
 	if (method === "GET" && (url === "/" || url === "/index.html")) {
 		const path = join(PUBLIC_DIR, "index.html");
 		if (!existsSync(path)) {
@@ -129,7 +122,18 @@ Herramientas de la PC del usuario: read_file_system(path), write_file_system(pat
 	send(res, 404, "Not found");
 });
 
+server.on("error", (err: NodeJS.ErrnoException) => {
+	if (err.code === "EADDRINUSE") {
+		console.error(`\n  El puerto ${PORT} ya está en uso. Cierra el otro proceso o usa otro puerto:`);
+		console.error(`  Windows: set PORT=1407 && pnpm run dev`);
+		console.error(`  Linux/Mac: PORT=1407 pnpm run dev\n`);
+	} else {
+		console.error(err);
+	}
+	process.exitCode = 1;
+});
+
 server.listen(PORT, () => {
-	console.log(`PiClaw web: http://127.0.0.1:${PORT}`);
-	console.log(`vLLM: ${getVllmConfig().baseUrl} (model: ${getVllmConfig().model})`);
+	console.log(`Shiro web: http://127.0.0.1:${PORT}`);
+	console.log(`vLLM: ${vllmClient.getConfig().baseUrl} (model: ${vllmClient.getConfig().model})`);
 });

@@ -1,26 +1,43 @@
 import { createRequire } from "node:module";
+import { existsSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { getState, setState } from "./store.js";
 import { greet } from "./greet.js";
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 const pkg = require("../package.json") as { version: string; name: string };
+
+const DATA_DIR = join(__dirname, "..", "data");
+const CONFIG_FILE = join(DATA_DIR, "config.json");
+
+function isFirstRun(): boolean {
+	return !existsSync(CONFIG_FILE);
+}
 
 function buildHelp(): string {
 	const name = getState().name;
 	return `
 ${name} — ${pkg.name} v${pkg.version}
 
-El nombre del asistente lo puedes cambiar con: pnpm start set-name <nombre>
-(lo puede invocar también el agente "que aprende de sí mismo").
-
 Uso:
-  pnpm start              Inicia la web de chat (servidor + vLLM)
-  pnpm start config       Terminal interactiva (TUI): menú con flechas para config y más
-  pnpm start greet        Saluda
-  pnpm start greet <nombre>  Saluda por nombre
-  pnpm start set-name <nombre>  Guarda el nombre del asistente
-  pnpm start --help       Muestra esta ayuda
-  pnpm start --version    Muestra la versión
+  pnpm tui                Hablar con el asistente en terminal
+  pnpm run config         Entrar a configuraciones (menú TUI)
+  pnpm onboard            Configuración inicial (primera vez)
+  pnpm run dev            Iniciar la web de chat
+  pnpm start set-name <nombre>  Cambiar nombre del asistente
+  --help / --version      Ayuda o versión
+`.trim();
+}
+
+function buildShiroHelp(): string {
+	return `
+Comandos:
+  pnpm tui                Chat con el asistente en terminal
+  pnpm run config         Configuraciones (modelo, vLLM, nombre, etc.)
+  pnpm onboard            Configuración inicial (primera vez)
+  pnpm run dev            Iniciar la web de chat
 `.trim();
 }
 
@@ -39,6 +56,29 @@ async function main(): Promise<void> {
 		return;
 	}
 	if (!arg) {
+		console.log(buildShiroHelp());
+		return;
+	}
+	if (arg === "tui") {
+		const { runTuiChat } = await import("./tui-chat.js");
+		await runTuiChat();
+		return;
+	}
+	if (arg === "config") {
+		const { runTui } = await import("./tui.js");
+		await runTui();
+		return;
+	}
+	if (arg === "onboard") {
+		const { runOnboard } = await import("./onboard.js");
+		await runOnboard();
+		return;
+	}
+	if (arg === "serve" || arg === "web") {
+		if (isFirstRun()) {
+			console.log("\n  Primera vez: ejecuta 'pnpm shiro onboard' para configurar.\n");
+			return;
+		}
 		await import("./server.js");
 		return;
 	}
@@ -59,12 +99,6 @@ async function main(): Promise<void> {
 		}
 		setState({ name });
 		console.log(`Nombre guardado: ${getState().name}`);
-		return;
-	}
-
-	if (arg === "config") {
-		const { runTui } = await import("./tui.js");
-		await runTui();
 		return;
 	}
 
