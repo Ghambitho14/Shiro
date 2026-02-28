@@ -9,3 +9,4 @@ data/
 /.wwebjs_auth
 /.wwebjs_cache
 Shiro.rar
+/node_modules
