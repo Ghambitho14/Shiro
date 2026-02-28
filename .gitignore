@@ -6,5 +6,6 @@ data/
 /AGENTS.MD
 /CLAUDE.md
 /README.md
-.wwebjs_auth/
-.wwebjs_cache/
+/.wwebjs_auth
+/.wwebjs_cache
+Shiro.rar
