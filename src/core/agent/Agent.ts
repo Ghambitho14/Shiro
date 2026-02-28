@@ -5,22 +5,21 @@ import type { MemoryStore } from "../memory/MemoryStore.js";
 import { buildContext } from "./ContextBuilder.js";
 import { plan } from "./Planner.js";
 import { executeStep } from "./Executor.js";
-import { executeToolSafe } from "../tools/ToolRegistry.js";
+import {
+	executeToolSafeScoped,
+	getToolsDefinitionScoped,
+} from "../tools/ToolRegistry.js";
 
-function adaptToolResult(
-	name: string,
-	args: Record<string, unknown>,
-): { ok: boolean; content: string; error?: string } {
-	const r = executeToolSafe(name, args);
-	return {
-		ok: r.ok,
-		content: r.ok ? r.content : r.error,
-		error: r.ok ? undefined : r.error,
-	};
-}
 import { checkAndIntervene } from "../health/HealthManager.js";
 import { policies } from "../soul/policies.js";
 import { logger } from "../logger.js";
+
+export type UserProfileForAgent = {
+	userName?: string;
+	language?: string;
+	about?: string;
+	extra?: string;
+};
 
 export type AgentOptions = {
 	llm: LLMClient;
@@ -28,6 +27,11 @@ export type AgentOptions = {
 	agentName: string;
 	tokenBudget?: number;
 	usePlanner?: boolean;
+	textOnly?: boolean;
+	allowedTools?: string[];
+	conversation?: Array<{ role: "user" | "assistant"; content: string }>;
+	/** Perfil del usuario (para personalizar respuestas). */
+	userProfile?: UserProfileForAgent | null;
 };
 
 /** Loop principal: opción con planner (pasos) o directo (un solo chatWithTools). */
@@ -42,6 +46,10 @@ export async function runAgent(
 		agentName,
 		tokenBudget = 8000,
 		usePlanner = false,
+		textOnly = false,
+		allowedTools,
+		conversation,
+		userProfile,
 	} = opts;
 
 	const runId = `run_${Date.now()}`;
@@ -72,10 +80,30 @@ export async function runAgent(
 		shortMemory: memory,
 		tokenBudget,
 		workspaceContext,
-		textOnly: true,
+		textOnly,
+		userProfile: userProfile ?? undefined,
 	});
 
-	const fullMessages: Message[] = [{ role: "system", content: system }, ...messages];
+	const normalizedConversation = Array.isArray(conversation)
+		? conversation
+			.map((m) => ({ role: m.role, content: m.content?.trim() ?? "" }))
+			.filter((m) => (m.role === "user" || m.role === "assistant") && m.content.length > 0)
+		: [];
+	const fullMessages: Message[] = normalizedConversation.length > 0
+		? [{ role: "system", content: system }, ...normalizedConversation]
+		: [{ role: "system", content: system }, ...messages];
+	const toolsDef = getToolsDefinitionScoped(allowedTools);
+	const adaptToolResult = (
+		name: string,
+		args: Record<string, unknown>,
+	): { ok: boolean; content: string; error?: string } => {
+		const r = executeToolSafeScoped(name, args, allowedTools);
+		return {
+			ok: r.ok,
+			content: r.ok ? r.content : r.error,
+			error: r.ok ? undefined : r.error,
+		};
+	};
 
 	if (usePlanner && policies.maxStepsPerRun > 0) {
 		const steps = await plan(llm, goal, agentName);
@@ -86,7 +114,7 @@ export async function runAgent(
 			const stepGoal = steps[i];
 			const stepId = `step_${i}`;
 			pushEvent("tool_call", { step: stepGoal }, stepId);
-			const result = await executeStep(llm, stepGoal, fullMessages, adaptToolResult);
+			const result = await executeStep(llm, stepGoal, fullMessages, adaptToolResult, toolsDef);
 			if (!result.ok) {
 				pushEvent("error", { content: result.error }, stepId);
 				return result.error;
@@ -99,9 +127,11 @@ export async function runAgent(
 		return lastContent;
 	}
 
-	// Modo directo: responde con texto (sin herramientas)
+	// Modo directo: puede usar herramientas si textOnly === false
 	try {
-		const content = (await llm.chat(fullMessages)).trim();
+		const content = textOnly
+			? (await llm.chat(fullMessages)).trim()
+			: (await llm.chatWithTools(fullMessages, toolsDef, adaptToolResult)).trim();
 		const out = content || "";
 		pushEvent("observation", { content: out });
 		return out;

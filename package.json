@@ -10,6 +10,7 @@
     "tui": "node --import tsx src/index.ts tui",
     "config": "node --import tsx src/index.ts config",
     "onboard": "node --import tsx src/index.ts onboard",
+    "personalize": "node --import tsx src/index.ts personalize",
     "server": "node --import tsx src/index.ts server",
     "wa": "node --import tsx src/index.ts wa",
     "dev": "node --import tsx src/server.ts",

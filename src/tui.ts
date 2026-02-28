@@ -5,10 +5,10 @@ import { getConfig, setConfig, resetConfig } from "./config.js";
 const MENU_OPTIONS = [
 	{ name: "Iniciar web de chat (servidor + vLLM)", value: "web" },
 	{ name: "Ver configuración", value: "list" },
+	{ name: "Personalizar Shiro (qué saber de ti)", value: "personalize" },
 	{ name: "Establecer modelo (vLLM)", value: "model" },
 	{ name: "Establecer URL base vLLM", value: "vllm-base" },
 	{ name: "Establecer habilidades del asistente", value: "abilities" },
-	{ name: "Cambiar nombre del asistente", value: "name" },
 	{ name: "Resetear todo (config + nombre)", value: "reset" },
 	{ name: "Salir", value: "exit" },
 ] as const;
@@ -47,13 +47,21 @@ export async function runTui(): Promise<void> {
 				return;
 			case "list": {
 				const cfg = getConfig();
+				const { getUserProfile } = await import("./user-profile.js");
+				const profile = getUserProfile();
 				console.log("\n--- Configuración actual ---");
+				console.log("  asistente: Shiro (fijo)");
 				console.log("  model:", cfg.model ?? "(por defecto)");
 				console.log("  vllm-base:", cfg.vllmBaseUrl ?? "(por defecto)");
 				console.log("  vllm-api-key:", cfg.vllmApiKey ? "***" : "(no definida)");
 				console.log("  abilities:", cfg.abilities ?? "(ninguna)");
-				console.log("  nombre:", getState().name);
+				console.log("  sobre ti:", profile.userName ? profile.userName + (profile.about ? " + más" : "") : "(no definido)");
 				console.log("----------------------------\n");
+				break;
+			}
+			case "personalize": {
+				const { runPersonalize } = await import("./personalize.js");
+				await runPersonalize();
 				break;
 			}
 			case "model": {
@@ -85,18 +93,6 @@ export async function runTui(): Promise<void> {
 				});
 				setConfig({ abilities: value.trim() || undefined });
 				console.log("  Habilidades guardadas.\n");
-				break;
-			}
-			case "name": {
-				const { setState } = await import("./store.js");
-				const value = await input({
-					message: "Nombre del asistente",
-					default: getState().name,
-				});
-				if (value.trim()) {
-					setState({ name: value.trim() });
-					console.log("  Nombre guardado.\n");
-				}
 				break;
 			}
 			case "reset": {

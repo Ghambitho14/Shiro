@@ -28,8 +28,8 @@ Uso:
   pnpm run dev            Iniciar la web de chat
   pnpm start server       Iniciar solo el servidor web
   pnpm wa                 Iniciar puente WhatsApp Web (QR)
-  pnpm start set-name <nombre>  Cambiar nombre del asistente
-  --help / --version      Ayuda o versión
+  pnpm personalize       Qué saber de ti (para personalizar Shiro)
+  --help / --version     Ayuda o versión
 `.trim();
 }
 
@@ -37,8 +37,9 @@ function buildShiroHelp(): string {
 	return `
 Comandos:
   pnpm tui                Chat con el asistente en terminal
-  pnpm run config         Configuraciones (modelo, vLLM, nombre, etc.)
+  pnpm run config         Configuraciones (modelo, vLLM, etc.)
   pnpm onboard            Configuración inicial (primera vez)
+  pnpm personalize        Qué saber de ti (personalizar Shiro)
   pnpm run dev            Iniciar la web de chat
   pnpm start server       Iniciar solo el servidor web
   pnpm wa                 Iniciar puente WhatsApp Web (QR)
@@ -76,6 +77,11 @@ async function main(): Promise<void> {
 	if (arg === "onboard") {
 		const { runOnboard } = await import("./onboard.js");
 		await runOnboard();
+		return;
+	}
+	if (arg === "personalize") {
+		const { runPersonalize } = await import("./personalize.js");
+		await runPersonalize();
 		return;
 	}
 	if (arg === "serve" || arg === "web" || arg === "server") {

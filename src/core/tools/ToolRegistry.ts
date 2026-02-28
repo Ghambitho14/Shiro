@@ -89,6 +89,18 @@ export function getToolsDefinition(enabledOnly = true): ToolDef[] {
 	return TOOL_DEFS.filter((t) => enabledSet.has(t.function.name));
 }
 
+export function getAllToolNames(): string[] {
+	return TOOL_DEFS.map((t) => t.function.name);
+}
+
+export function getToolsDefinitionScoped(allowedTools?: string[]): ToolDef[] {
+	if (!Array.isArray(allowedTools) || allowedTools.length === 0) {
+		return getToolsDefinition(true);
+	}
+	const allowed = new Set(allowedTools);
+	return TOOL_DEFS.filter((t) => enabledSet.has(t.function.name) && allowed.has(t.function.name));
+}
+
 export function setToolsEnabled(names: string[], enabled: boolean): void {
 	for (const name of names) {
 		if (enabled) enabledSet.add(name);
@@ -99,6 +111,20 @@ export function setToolsEnabled(names: string[], enabled: boolean): void {
 export function executeToolSafe(name: string, args: Record<string, unknown>): ToolResult {
 	if (!enabledSet.has(name)) {
 		return { ok: false, error: "Herramienta deshabilitada (safe-mode): " + name };
+	}
+	return executeTool(name, args);
+}
+
+export function executeToolSafeScoped(
+	name: string,
+	args: Record<string, unknown>,
+	allowedTools?: string[],
+): ToolResult {
+	if (!enabledSet.has(name)) {
+		return { ok: false, error: "Herramienta deshabilitada (safe-mode): " + name };
+	}
+	if (Array.isArray(allowedTools) && allowedTools.length > 0 && !allowedTools.includes(name)) {
+		return { ok: false, error: "Herramienta no permitida en esta sesion: " + name };
 	}
 	return executeTool(name, args);
 }

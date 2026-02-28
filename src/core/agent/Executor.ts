@@ -1,5 +1,5 @@
 import type { Message } from "./Types.js";
-import type { LLMClient, ExecuteToolFn } from "../llm/LLMClient.js";
+import type { LLMClient, ExecuteToolFn, ToolDef } from "../llm/LLMClient.js";
 import { getToolsDefinition } from "../tools/ToolRegistry.js";
 import { metrics } from "../health/metrics.js";
 import { recordError, recordSuccess } from "../health/HealthManager.js";
@@ -12,12 +12,13 @@ export async function executeStep(
 	stepGoal: string,
 	messagesSoFar: Message[],
 	executeTool: ExecuteToolFn,
+	toolsDef?: ToolDef[],
 ): Promise<ExecutorResult> {
-	const toolsDef = getToolsDefinition(true);
+	const effectiveToolsDef = toolsDef ?? getToolsDefinition(true);
 	const fullMessages: Message[] = [...messagesSoFar, { role: "user", content: stepGoal }];
 
 	try {
-		const content = await llm.chatWithTools(fullMessages, toolsDef, ((name, args) => {
+		const content = await llm.chatWithTools(fullMessages, effectiveToolsDef, ((name, args) => {
 			metrics.toolCalls++;
 			const r = executeTool(name, args);
 			if (!r.ok) {

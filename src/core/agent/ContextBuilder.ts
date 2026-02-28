@@ -6,6 +6,13 @@ import { getSoul } from "../soul/soul.js";
 import { getToolsDefinition } from "../tools/ToolRegistry.js";
 import { isSafeMode } from "../health/HealthManager.js";
 
+export type UserProfileInput = {
+	userName?: string;
+	language?: string;
+	about?: string;
+	extra?: string;
+};
+
 export type ContextInput = {
 	goal: string;
 	agentName: string;
@@ -15,6 +22,8 @@ export type ContextInput = {
 	workspaceContext?: string;
 	/** Si true, no se incluyen herramientas en el contexto (solo respuesta en texto). */
 	textOnly?: boolean;
+	/** Perfil del usuario para personalizar respuestas (nombre, idioma, sobre ti). */
+	userProfile?: UserProfileInput | null;
 };
 
 /** Prioridad: SOUL > goal > short memory > tool context > long memory. Truncado por tokenBudget (approx 4 chars/token). */
@@ -29,6 +38,19 @@ export function buildContext(input: ContextInput): { system: string; messages: M
 	let remaining = budgetChars - soul.length - safeNote.length - 200;
 	if (remaining < 500) remaining = 500;
 
+	const userBlock = input.userProfile && (input.userProfile.userName || input.userProfile.about || input.userProfile.language || input.userProfile.extra)
+		? (() => {
+				const p = input.userProfile!;
+				const parts: string[] = [];
+				if (p.userName) parts.push("Nombre: " + p.userName);
+				if (p.language) parts.push("Idioma preferido: " + p.language);
+				if (p.about) parts.push("Sobre la persona: " + p.about);
+				if (p.extra) parts.push("Notas: " + p.extra);
+				const text = "## Sobre el usuario\n" + parts.join("\n");
+				remaining -= text.length;
+				return "\n\n" + text;
+			})()
+		: "";
 	const goalBlock = `## Mensaje del usuario\n${input.goal}`;
 	remaining -= goalBlock.length;
 
@@ -60,6 +82,7 @@ export function buildContext(input: ContextInput): { system: string; messages: M
 	const system =
 		soul +
 		safeNote +
+		userBlock +
 		"\n\n" +
 		goalBlock +
 		(toolBlock ? "\n\n" + toolBlock : "") +

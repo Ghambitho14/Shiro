@@ -1,6 +1,7 @@
 import * as qrcode from "qrcode-terminal";
 import WhatsAppWebJs, { Client, type Message } from "whatsapp-web.js";
 import { getState } from "./store.js";
+import { getUserProfile } from "./user-profile.js";
 import { buildWorkspaceContext } from "./workspace.js";
 import { MemoryManager } from "./core/memory/MemoryManager.js";
 import { runAgent } from "./core/agent/Agent.js";
@@ -91,7 +92,8 @@ async function processIncomingMessage(message: Message): Promise<void> {
 			memory,
 			agentName: state.name,
 			tokenBudget: 8000,
-			usePlanner: false,
+			usePlanner: true,
+			userProfile: getUserProfile(),
 		},
 		workspaceContext || undefined,
 	);

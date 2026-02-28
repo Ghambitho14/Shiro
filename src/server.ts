@@ -4,12 +4,14 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import QRCode from "qrcode";
 import { getState } from "./store.js";
+import { getUserProfile, setUserProfile } from "./user-profile.js";
 import { getConfig } from "./config/config.js";
 import { getHealthState, setHealthActive } from "./core/health/HealthManager.js";
 import { buildWorkspaceContext } from "./workspace.js";
 import { vllmClient } from "./core/llm/vllmClient.js";
 import { MemoryManager } from "./core/memory/MemoryManager.js";
 import { runAgent } from "./core/agent/Agent.js";
+import { getAllToolNames } from "./core/tools/ToolRegistry.js";
 import {
 	createChatSession,
 	deleteChatSession,
@@ -58,6 +60,19 @@ function sanitizeMessages(input: unknown): ChatMessage[] {
 			return { role, content: trimmed } as ChatMessage;
 		})
 		.filter((m): m is ChatMessage => m !== null);
+}
+
+function sanitizeAllowedTools(input: unknown): string[] | undefined {
+	if (!Array.isArray(input)) return undefined;
+	const all = new Set(getAllToolNames());
+	const unique: string[] = [];
+	for (const item of input) {
+		if (typeof item !== "string") continue;
+		const name = item.trim();
+		if (!name || !all.has(name) || unique.includes(name)) continue;
+		unique.push(name);
+	}
+	return unique.length > 0 ? unique : undefined;
 }
 
 function isWhatsAppConfigureIntent(text: string): boolean {
@@ -235,9 +250,14 @@ const server = createServer(async (req, res) => {
 			return;
 		}
 		let incoming: ChatMessage[];
+		let allowedTools: string[] | undefined;
 		try {
-			const parsed = JSON.parse(body) as { messages?: Array<{ role?: string; content?: string }> };
+			const parsed = JSON.parse(body) as {
+				messages?: Array<{ role?: string; content?: string }>;
+				allowedTools?: unknown;
+			};
 			incoming = sanitizeMessages(parsed.messages);
+			allowedTools = sanitizeAllowedTools(parsed.allowedTools);
 			if (!incoming.length) {
 				sendJson(res, 400, { error: "messages array required" });
 				return;
@@ -301,13 +321,46 @@ const server = createServer(async (req, res) => {
 				memory,
 				agentName: state.name,
 				tokenBudget: 8000,
-				usePlanner: false,
+				usePlanner: true,
+				allowedTools,
+				conversation: incoming,
+				userProfile: getUserProfile(),
 			}, workspaceContext ?? undefined);
 			sendJson(res, 200, { content });
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);
 			sendJson(res, 502, { error: message });
 		}
+		return;
+	}
+
+	if (method === "GET" && pathname === "/api/user-profile") {
+		sendJson(res, 200, getUserProfile());
+		return;
+	}
+
+	if (method === "PUT" && pathname === "/api/user-profile") {
+		let body = "";
+		try {
+			body = await readBody(req);
+		} catch {
+			sendJson(res, 400, { error: "Invalid body" });
+			return;
+		}
+		let payload: Record<string, unknown> = {};
+		try {
+			if (body.trim()) payload = JSON.parse(body) as Record<string, unknown>;
+		} catch {
+			sendJson(res, 400, { error: "Invalid JSON" });
+			return;
+		}
+		const next = setUserProfile({
+			userName: typeof payload.userName === "string" ? payload.userName : undefined,
+			language: typeof payload.language === "string" ? payload.language : undefined,
+			about: typeof payload.about === "string" ? payload.about : undefined,
+			extra: typeof payload.extra === "string" ? payload.extra : undefined,
+		});
+		sendJson(res, 200, next);
 		return;
 	}
 

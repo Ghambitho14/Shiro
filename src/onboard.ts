@@ -2,25 +2,17 @@ import { input, confirm } from "@inquirer/prompts";
 import { getState, setState } from "./store.js";
 import { getConfig, setConfig } from "./config/config.js";
 
-const DEFAULT_NAME = "Shiro";
+const ASSISTANT_NAME = "Shiro";
 const DEFAULT_VLLM = "http://127.0.0.1:8000/v1";
 const DEFAULT_MODEL = "default";
 
 export async function runOnboard(): Promise<void> {
 	console.log("\n  ═══ Configuración inicial — Shiro ═══\n");
-	console.log("  Responde paso a paso. Puedes dejar el valor por defecto con Enter.\n");
+	console.log("  El asistente se llama Shiro. Responde paso a paso (Enter = por defecto).\n");
 
-	// 1. Nombre del asistente
-	const name = await input({
-		message: "Nombre del asistente",
-		default: getState().name || DEFAULT_NAME,
-	});
-	if (name.trim()) {
-		setState({ name: name.trim() });
-		console.log("  → Guardado.\n");
-	}
+	setState({ name: ASSISTANT_NAME });
 
-	// 2. URL base vLLM
+	// 1. URL base vLLM
 	const vllmBaseUrl = await input({
 		message: "URL base de vLLM (donde corre el modelo)",
 		default: getConfig().vllmBaseUrl ?? DEFAULT_VLLM,
@@ -49,14 +41,22 @@ export async function runOnboard(): Promise<void> {
 	if (abilities.trim()) console.log("  → Guardado.\n");
 
 	// Resumen
-	const state = getState();
 	const cfg = getConfig();
 	console.log("  --- Resumen ---");
-	console.log(`  Nombre:     ${state.name}`);
+	console.log(`  Asistente:  Shiro (fijo)`);
 	console.log(`  vLLM URL:   ${cfg.vllmBaseUrl ?? DEFAULT_VLLM}`);
 	console.log(`  Modelo:     ${cfg.model ?? DEFAULT_MODEL}`);
 	console.log(`  Habilidades: ${cfg.abilities ? "(definidas)" : "(ninguna)"}`);
 	console.log("  -------------\n");
+
+	const wantPersonalize = await confirm({
+		message: "¿Quieres que Shiro sepa algo sobre ti? (nombre, idioma, aficiones...)",
+		default: true,
+	});
+	if (wantPersonalize) {
+		const { runPersonalize } = await import("./personalize.js");
+		await runPersonalize();
+	}
 
 	const startWeb = await confirm({
 		message: "¿Iniciar la web de chat ahora?",

@@ -1,0 +1,36 @@
+---
+description: Eleva el criterio del agente para resolver mejor
+alwaysApply: true
+---
+
+# Inteligencia Operativa del Agente
+
+## Resultado esperado
+
+El agente no solo ejecuta tareas: toma mejores decisiones técnicas con el menor cambio posible y validación proporcional al riesgo.
+
+## Reglas de pensamiento y ejecución
+
+- Define en una línea el problema antes de tocar archivos.
+- Reutiliza código existente antes de crear soluciones nuevas.
+- Si hay varias rutas válidas, selecciona la más simple y mantenible.
+- Evita sobreingeniería y evita duplicación.
+- No preguntes por defecto: pregunta solo cuando desbloquea una decisión real.
+
+## Calidad de implementación
+
+- Mantén coherencia con convenciones y arquitectura del repo.
+- Considera entornos `dev`, `test`, `prod` en configuración y efectos.
+- Limita el cambio al alcance solicitado.
+- Añade comentarios solo si aclaran lógica no obvia.
+
+## Verificación mínima obligatoria
+
+- Ejecuta validación razonable al cambio (lint/test/build según aplique).
+- Revisa y corrige lints de archivos editados cuando sea fácil hacerlo.
+- Si es web, reinicia en limpio: detener servidores previos y levantar uno nuevo.
+
+## Comunicación con usuario
+
+- Explica brevemente qué cambió y por qué.
+- Incluye pasos de verificación cuando no se pudo ejecutar algo localmente.
