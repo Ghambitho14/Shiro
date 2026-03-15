@@ -1,6 +1,7 @@
 import type { LLMClient, ToolDef } from "./LLMClient.js";
 import type { Message } from "../agent/Types.js";
 import { getConfig } from "../../config/config.js";
+import { sanitizeModelResponse } from "../sanitizeResponse.js";
 
 function normalizeOpenAiBaseUrl(rawBaseUrl: string): string {
 	const trimmed = rawBaseUrl.replace(/\/+$/, "");
@@ -62,8 +63,8 @@ export const vllmClient: LLMClient = {
 		const msg = choice?.message;
 		const raw = (msg?.content ?? "").trim();
 		const toolCalls = msg?.tool_calls;
-		// Si hay texto, devolverlo aunque el modelo haya enviado tool_calls
-		if (raw) return raw;
+		// Si hay texto, devolverlo (sin bloques <think>)
+		if (raw) return sanitizeModelResponse(raw);
 		if (Array.isArray(toolCalls) && toolCalls.length > 0) return "";
 		return "";
 	},
@@ -108,7 +109,7 @@ export const vllmClient: LLMClient = {
 			currentMessages.push(msg as VllmMessage);
 
 			if (!toolCalls?.length) {
-				return content.trim() || "(Sin respuesta de texto)";
+				return sanitizeModelResponse(content.trim() || "(Sin respuesta de texto)");
 			}
 
 			for (const tc of toolCalls) {

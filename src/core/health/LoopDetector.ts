@@ -12,8 +12,10 @@ export function detectLoop(events: AgentEvent[]): { signal: LoopSignal; detail?:
 	// Misma tool/action >= 3
 	const toolCalls = events.filter((e) => e.type === "tool_call");
 	if (toolCalls.length >= SAME_ACTION_THRESHOLD) {
-		const names = toolCalls.slice(-SAME_ACTION_THRESHOLD).map((e) => e.payload.name);
-		const allSame = names.every((n) => n === names[0]);
+		const names = toolCalls
+			.slice(-SAME_ACTION_THRESHOLD)
+			.map((e) => String(e.payload.name ?? e.payload.step ?? "").trim());
+		const allSame = names[0].length > 0 && names.every((n) => n === names[0]);
 		if (allSame) {
 			return { signal: "same_action", detail: String(names[0]) };
 		}

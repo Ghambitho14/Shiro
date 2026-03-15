@@ -13,6 +13,7 @@ import {
 import { checkAndIntervene } from "../health/HealthManager.js";
 import { policies } from "../soul/policies.js";
 import { logger } from "../logger.js";
+import { sanitizeModelResponse } from "../sanitizeResponse.js";
 
 export type UserProfileForAgent = {
 	userName?: string;
@@ -54,6 +55,16 @@ export async function runAgent(
 
 	const runId = `run_${Date.now()}`;
 
+	const isSimpleGreeting = (text: string): boolean => {
+		const t = text.trim().toLowerCase().replace(/\s+/g, " ");
+		return (
+			t.length < 80 &&
+			(/^(hola|hey|hi|buenas|qué tal|qué hubo|hello|saludos|buen día|buenas tardes|buenas noches)[\s!?.,]*$/i.test(t) ||
+				/^((hola|hey|hi),?\s*)+[!.]?\s*$/i.test(t))
+		);
+	};
+	const effectiveUsePlanner = usePlanner && !isSimpleGreeting(goal);
+
 	const pushEvent = (type: AgentEvent["type"], payload: Record<string, unknown>, stepId?: string) => {
 		memory.push({
 			type,
@@ -64,7 +75,7 @@ export async function runAgent(
 		});
 	};
 
-	pushEvent("decision", { goal, usePlanner });
+	pushEvent("decision", { goal, usePlanner: effectiveUsePlanner });
 
 	const recent = memory.getRecent(20);
 	const { intervened, action } = checkAndIntervene(recent);
@@ -105,7 +116,7 @@ export async function runAgent(
 		};
 	};
 
-	if (usePlanner && policies.maxStepsPerRun > 0) {
+	if (effectiveUsePlanner && policies.maxStepsPerRun > 0) {
 		const steps = await plan(llm, goal, agentName);
 		logger.info("Plan generado", { steps: steps.length });
 		pushEvent("plan", { steps });
@@ -113,7 +124,7 @@ export async function runAgent(
 		for (let i = 0; i < Math.min(steps.length, policies.maxStepsPerRun); i++) {
 			const stepGoal = steps[i];
 			const stepId = `step_${i}`;
-			pushEvent("tool_call", { step: stepGoal }, stepId);
+			pushEvent("tool_call", { name: "planner_step", step: stepGoal }, stepId);
 			const result = await executeStep(llm, stepGoal, fullMessages, adaptToolResult, toolsDef);
 			if (!result.ok) {
 				pushEvent("error", { content: result.error }, stepId);
@@ -124,7 +135,7 @@ export async function runAgent(
 			fullMessages.push({ role: "assistant", content: result.content });
 			pushEvent("observation", { content: result.content }, stepId);
 		}
-		return lastContent;
+		return sanitizeModelResponse(lastContent);
 	}
 
 	// Modo directo: puede usar herramientas si textOnly === false
@@ -132,7 +143,7 @@ export async function runAgent(
 		const content = textOnly
 			? (await llm.chat(fullMessages)).trim()
 			: (await llm.chatWithTools(fullMessages, toolsDef, adaptToolResult)).trim();
-		const out = content || "";
+		const out = sanitizeModelResponse(content || "");
 		pushEvent("observation", { content: out });
 		return out;
 	} catch (err) {

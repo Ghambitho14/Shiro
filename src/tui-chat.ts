@@ -1,6 +1,7 @@
 import { input } from "@inquirer/prompts";
 import { getState } from "./store.js";
 import { getUserProfile } from "./user-profile.js";
+import { getConfig } from "./config/config.js";
 import { buildWorkspaceContext } from "./workspace.js";
 import { vllmClient } from "./core/llm/vllmClient.js";
 import { MemoryManager } from "./core/memory/MemoryManager.js";
@@ -40,12 +41,15 @@ export async function runTuiChat(): Promise<void> {
 			break;
 		}
 		try {
+			const config = getConfig();
+			const autonomous = config.autonomousMode !== false;
 			const response = await runAgent(trimmed, {
 				llm: vllmClient,
 				memory,
 				agentName: state.name,
 				tokenBudget: 8000,
-				usePlanner: true,
+				usePlanner: autonomous,
+				textOnly: !autonomous,
 				userProfile: getUserProfile(),
 			}, workspaceContext ?? undefined);
 			console.log(`\n  ${state.name}: ${response}\n`);

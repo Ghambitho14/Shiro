@@ -1475,7 +1475,8 @@
 					headers: { "Content-Type": "application/json" },
 					body: JSON.stringify({
 						messages: apiMessages,
-						allowedTools: Array.from(selectedTools)
+						allowedTools: Array.from(selectedTools),
+						sessionId: activeSessionId
 					})
 				});
 				const data = await r.json();

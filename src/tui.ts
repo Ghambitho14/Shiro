@@ -6,6 +6,7 @@ const MENU_OPTIONS = [
 	{ name: "Iniciar web de chat (servidor + vLLM)", value: "web" },
 	{ name: "Ver configuración", value: "list" },
 	{ name: "Personalizar Shiro (qué saber de ti)", value: "personalize" },
+	{ name: "Modo autónomo (planner + herramientas)", value: "autonomous" },
 	{ name: "Establecer modelo (vLLM)", value: "model" },
 	{ name: "Establecer URL base vLLM", value: "vllm-base" },
 	{ name: "Establecer habilidades del asistente", value: "abilities" },
@@ -51,12 +52,23 @@ export async function runTui(): Promise<void> {
 				const profile = getUserProfile();
 				console.log("\n--- Configuración actual ---");
 				console.log("  asistente: Shiro (fijo)");
+				console.log("  modo autónomo (planner + herramientas):", (cfg.autonomousMode !== false) ? "sí" : "no");
 				console.log("  model:", cfg.model ?? "(por defecto)");
 				console.log("  vllm-base:", cfg.vllmBaseUrl ?? "(por defecto)");
 				console.log("  vllm-api-key:", cfg.vllmApiKey ? "***" : "(no definida)");
 				console.log("  abilities:", cfg.abilities ?? "(ninguna)");
 				console.log("  sobre ti:", profile.userName ? profile.userName + (profile.about ? " + más" : "") : "(no definido)");
 				console.log("----------------------------\n");
+				break;
+			}
+			case "autonomous": {
+				const current = getConfig().autonomousMode !== false;
+				const enable = await confirm({
+					message: "¿Activar modo autónomo (planner + herramientas)? Si es no, Shiro solo responderá en texto.",
+					default: current,
+				});
+				setConfig({ autonomousMode: enable });
+				console.log("  Modo autónomo:", enable ? "activado" : "desactivado (solo chat)\n");
 				break;
 			}
 			case "personalize": {

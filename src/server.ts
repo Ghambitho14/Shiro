@@ -25,17 +25,44 @@ import { getWhatsAppBridgeStatus, startWhatsAppBridge, stopWhatsAppBridge } from
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, "..", "public");
 const PORT = Number(process.env.PORT) || 1406;
+const MAX_BODY_BYTES = 1024 * 1024;
+/** Por defecto solo localhost; usar BIND_HOST=0.0.0.0 para exponer. */
+const BIND_HOST = process.env.BIND_HOST?.trim() || "127.0.0.1";
+/** Si se define, las rutas sensibles exigen Authorization: Bearer <token>. */
+const AUTH_TOKEN = process.env.SHIRO_AUTH_TOKEN?.trim();
 
-const memory = new MemoryManager({ shortWindow: 50, summarizeEvery: 20 });
+const sessionMemories = new Map<string, MemoryManager>();
 let shuttingDown = false;
+
+function getMemoryForSession(sessionId: string): MemoryManager {
+	const existing = sessionMemories.get(sessionId);
+	if (existing) return existing;
+	const created = new MemoryManager({ shortWindow: 50, summarizeEvery: 20 });
+	sessionMemories.set(sessionId, created);
+	return created;
+}
 
 function readBody(req: import("node:http").IncomingMessage): Promise<string> {
 	return new Promise((resolve, reject) => {
 		const chunks: Buffer[] = [];
-		req.on("data", (chunk) => chunks.push(chunk));
+		let totalBytes = 0;
+		req.on("data", (chunk) => {
+			const piece = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+			totalBytes += piece.byteLength;
+			if (totalBytes > MAX_BODY_BYTES) {
+				req.destroy();
+				reject(new Error("BODY_TOO_LARGE"));
+				return;
+			}
+			chunks.push(piece);
+		});
 		req.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
 		req.on("error", reject);
 	});
+}
+
+function isBodyTooLargeError(err: unknown): boolean {
+	return err instanceof Error && err.message === "BODY_TOO_LARGE";
 }
 
 function send(res: import("node:http").ServerResponse, status: number, body: string, contentType = "text/plain"): void {
@@ -60,6 +87,27 @@ function sanitizeMessages(input: unknown): ChatMessage[] {
 			return { role, content: trimmed } as ChatMessage;
 		})
 		.filter((m): m is ChatMessage => m !== null);
+}
+
+function isSensitivePath(pathname: string): boolean {
+	return (
+		pathname === "/api/chat" ||
+		pathname.startsWith("/api/whatsapp/") ||
+		pathname === "/api/user-profile" ||
+		pathname === "/api/chat-sessions" ||
+		pathname.startsWith("/api/chat-sessions/")
+	);
+}
+
+function requireAuth(req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse): boolean {
+	if (!AUTH_TOKEN) return false;
+	const auth = req.headers.authorization;
+	const token = typeof auth === "string" && auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+	if (token !== AUTH_TOKEN) {
+		sendJson(res, 401, { error: "Unauthorized" });
+		return true;
+	}
+	return false;
 }
 
 function sanitizeAllowedTools(input: unknown): string[] | undefined {
@@ -112,12 +160,18 @@ const server = createServer(async (req, res) => {
 		res.end();
 		return;
 	}
+	if (isSensitivePath(pathname) && requireAuth(req, res)) return;
 
 	if (method === "GET" && pathname === "/api/state") {
 		const state = getState();
 		const vllm = vllmClient.getConfig();
 		const config = getConfig();
-		sendJson(res, 200, { name: state.name, vllm, abilities: config.abilities ?? null });
+		sendJson(res, 200, {
+			name: state.name,
+			vllm,
+			abilities: config.abilities ?? null,
+			autonomousMode: config.autonomousMode ?? true,
+		});
 		return;
 	}
 
@@ -169,7 +223,11 @@ const server = createServer(async (req, res) => {
 		let body = "";
 		try {
 			body = await readBody(req);
-		} catch {
+		} catch (err) {
+			if (isBodyTooLargeError(err)) {
+				sendJson(res, 413, { error: "Request body too large (max 1 MB)" });
+				return;
+			}
 			sendJson(res, 400, { error: "Invalid body" });
 			return;
 		}
@@ -209,7 +267,11 @@ const server = createServer(async (req, res) => {
 			let body = "";
 			try {
 				body = await readBody(req);
-			} catch {
+			} catch (err) {
+				if (isBodyTooLargeError(err)) {
+					sendJson(res, 413, { error: "Request body too large (max 1 MB)" });
+					return;
+				}
 				sendJson(res, 400, { error: "Invalid body" });
 				return;
 			}
@@ -236,6 +298,7 @@ const server = createServer(async (req, res) => {
 				sendJson(res, 404, { error: "Session not found" });
 				return;
 			}
+			sessionMemories.delete(sessionId);
 			sendJson(res, 200, { ok: true });
 			return;
 		}
@@ -245,19 +308,26 @@ const server = createServer(async (req, res) => {
 		let body: string;
 		try {
 			body = await readBody(req);
-		} catch {
+		} catch (err) {
+			if (isBodyTooLargeError(err)) {
+				sendJson(res, 413, { error: "Request body too large (max 1 MB)" });
+				return;
+			}
 			sendJson(res, 400, { error: "Invalid body" });
 			return;
 		}
 		let incoming: ChatMessage[];
 		let allowedTools: string[] | undefined;
+		let sessionId: string | undefined;
 		try {
 			const parsed = JSON.parse(body) as {
 				messages?: Array<{ role?: string; content?: string }>;
 				allowedTools?: unknown;
+				sessionId?: unknown;
 			};
 			incoming = sanitizeMessages(parsed.messages);
 			allowedTools = sanitizeAllowedTools(parsed.allowedTools);
+			sessionId = typeof parsed.sessionId === "string" && parsed.sessionId.trim() ? parsed.sessionId.trim() : undefined;
 			if (!incoming.length) {
 				sendJson(res, 400, { error: "messages array required" });
 				return;
@@ -316,12 +386,15 @@ const server = createServer(async (req, res) => {
 		}
 		try {
 			setHealthActive();
+			const config = getConfig();
+			const autonomous = config.autonomousMode !== false;
 			const content = await runAgent(userContent, {
 				llm: vllmClient,
-				memory,
+				memory: getMemoryForSession(sessionId ?? "web-default"),
 				agentName: state.name,
 				tokenBudget: 8000,
-				usePlanner: true,
+				usePlanner: autonomous,
+				textOnly: !autonomous,
 				allowedTools,
 				conversation: incoming,
 				userProfile: getUserProfile(),
@@ -343,7 +416,11 @@ const server = createServer(async (req, res) => {
 		let body = "";
 		try {
 			body = await readBody(req);
-		} catch {
+		} catch (err) {
+			if (isBodyTooLargeError(err)) {
+				sendJson(res, 413, { error: "Request body too large (max 1 MB)" });
+				return;
+			}
 			sendJson(res, 400, { error: "Invalid body" });
 			return;
 		}
@@ -412,7 +489,8 @@ function shutdown(signal: NodeJS.Signals): void {
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 
-server.listen(PORT, () => {
-	console.log(`Shiro web: http://127.0.0.1:${PORT}`);
+server.listen(PORT, BIND_HOST, () => {
+	console.log(`Shiro web: http://${BIND_HOST}:${PORT}`);
 	console.log(`vLLM: ${vllmClient.getConfig().baseUrl} (model: ${vllmClient.getConfig().model})`);
+	if (AUTH_TOKEN) console.log("Auth: token requerido en rutas sensibles (SHIRO_AUTH_TOKEN)");
 });

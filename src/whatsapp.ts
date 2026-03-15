@@ -2,6 +2,7 @@ import * as qrcode from "qrcode-terminal";
 import WhatsAppWebJs, { Client, type Message } from "whatsapp-web.js";
 import { getState } from "./store.js";
 import { getUserProfile } from "./user-profile.js";
+import { getConfig } from "./config/config.js";
 import { buildWorkspaceContext } from "./workspace.js";
 import { MemoryManager } from "./core/memory/MemoryManager.js";
 import { runAgent } from "./core/agent/Agent.js";
@@ -17,11 +18,19 @@ const WA_ONLY_PRIVATE = process.env.WA_ONLY_PRIVATE !== "0";
 const DEFAULT_WIN_CHROME = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 const WA_CHROME_PATH = process.env.WA_CHROME_PATH?.trim() || (process.platform === "win32" ? DEFAULT_WIN_CHROME : undefined);
 
-const memory = new MemoryManager({ shortWindow: 50, summarizeEvery: 20 });
+const chatMemories = new Map<string, MemoryManager>();
 const LocalAuth = WhatsAppWebJs.LocalAuth;
 let client: Client | null = null;
 let starting = false;
 let messageQueue: Promise<void> = Promise.resolve();
+
+function getMemoryForChat(chatId: string): MemoryManager {
+	const existing = chatMemories.get(chatId);
+	if (existing) return existing;
+	const created = new MemoryManager({ shortWindow: 50, summarizeEvery: 20 });
+	chatMemories.set(chatId, created);
+	return created;
+}
 
 export type WhatsAppBridgeState = "idle" | "starting" | "qr" | "ready" | "auth_failure" | "disconnected" | "error";
 
@@ -83,16 +92,19 @@ async function processIncomingMessage(message: Message): Promise<void> {
 	if (!persistedUser) return;
 
 	const state = getState();
+	const config = getConfig();
+	const autonomous = config.autonomousMode !== false;
 	const workspaceContext = buildWorkspaceContext({ includeLongTermMemory: true });
 	setHealthActive();
 	const response = await runAgent(
 		userText,
 		{
 			llm: vllmClient,
-			memory,
+			memory: getMemoryForChat(message.from),
 			agentName: state.name,
 			tokenBudget: 8000,
-			usePlanner: true,
+			usePlanner: autonomous,
+			textOnly: !autonomous,
 			userProfile: getUserProfile(),
 		},
 		workspaceContext || undefined,

@@ -18,12 +18,27 @@ function getSystemRoot(): string {
 
 const MAX_FILE_SIZE = 512 * 1024;
 
+function normalizeForCompare(pathValue: string): string {
+	const resolved = resolve(pathValue);
+	return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+function isWithinRoot(pathValue: string, rootValue: string, allowRoot = false): boolean {
+	const pathNormalized = normalizeForCompare(pathValue);
+	const rootNormalized = normalizeForCompare(rootValue);
+	if (allowRoot && pathNormalized === rootNormalized) return true;
+	if (pathNormalized === rootNormalized) return false;
+	const sep = process.platform === "win32" ? "\\" : "/";
+	const boundaryRoot = rootNormalized.endsWith(sep) ? rootNormalized : rootNormalized + sep;
+	return pathNormalized.startsWith(boundaryRoot);
+}
+
 function resolveWorkspacePath(relativePath: string): string | null {
 	const workspace = getWorkspaceDir();
 	const normalized = relativePath.replace(/\\/g, "/").replace(/\/+/g, "/").replace(/^\//, "");
 	const full = resolve(workspace, normalized);
 	const workspaceReal = resolve(workspace);
-	if (!full.startsWith(workspaceReal) || full === workspaceReal) return null;
+	if (!isWithinRoot(full, workspaceReal, false)) return null;
 	return full;
 }
 
@@ -35,7 +50,7 @@ function resolveSystemPath(pathArg: string): string | null {
 			? resolve(normalized)
 			: resolve(root, normalized || ".");
 	const rootReal = resolve(root);
-	if (full !== rootReal && !full.startsWith(rootReal + "/") && !full.startsWith(rootReal + "\\")) return null;
+	if (!isWithinRoot(full, rootReal, true)) return null;
 	return full;
 }
 

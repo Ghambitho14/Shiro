@@ -40,10 +40,19 @@ export async function runOnboard(): Promise<void> {
 	setConfig({ abilities: abilities.trim() || undefined });
 	if (abilities.trim()) console.log("  → Guardado.\n");
 
+	// Modo autónomo (planner + herramientas)
+	const autonomous = await confirm({
+		message: "¿Activar modo autónomo (planner + herramientas)? Sí recomendado.",
+		default: getConfig().autonomousMode !== false,
+	});
+	setConfig({ autonomousMode: autonomous });
+	console.log("  → Modo autónomo:", autonomous ? "activado" : "desactivado (solo chat)\n");
+
 	// Resumen
 	const cfg = getConfig();
 	console.log("  --- Resumen ---");
 	console.log(`  Asistente:  Shiro (fijo)`);
+	console.log(`  Modo autónomo: ${(cfg.autonomousMode !== false) ? "sí" : "no (solo chat)"}`);
 	console.log(`  vLLM URL:   ${cfg.vllmBaseUrl ?? DEFAULT_VLLM}`);
 	console.log(`  Modelo:     ${cfg.model ?? DEFAULT_MODEL}`);
 	console.log(`  Habilidades: ${cfg.abilities ? "(definidas)" : "(ninguna)"}`);

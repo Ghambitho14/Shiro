@@ -11,6 +11,8 @@ export type AppConfig = {
 	vllmBaseUrl?: string;
 	vllmApiKey?: string;
 	abilities?: string;
+	/** Si true (default), usa planner + herramientas; si false, solo chat en texto. */
+	autonomousMode?: boolean;
 };
 
 const DEFAULTS: AppConfig = {
@@ -18,6 +20,7 @@ const DEFAULTS: AppConfig = {
 	vllmBaseUrl: "http://127.0.0.1:8000/v1",
 	vllmApiKey: undefined,
 	abilities: undefined,
+	autonomousMode: true,
 };
 
 function loadConfig(): AppConfig {
@@ -30,6 +33,7 @@ function loadConfig(): AppConfig {
 			vllmBaseUrl: typeof data.vllmBaseUrl === "string" ? data.vllmBaseUrl.replace(/\/+$/, "") : DEFAULTS.vllmBaseUrl,
 			vllmApiKey: typeof data.vllmApiKey === "string" ? data.vllmApiKey : DEFAULTS.vllmApiKey,
 			abilities: typeof data.abilities === "string" ? data.abilities : DEFAULTS.abilities,
+			autonomousMode: typeof data.autonomousMode === "boolean" ? data.autonomousMode : DEFAULTS.autonomousMode,
 		};
 	} catch {
 		return { ...DEFAULTS };
@@ -50,6 +54,7 @@ export function setConfig(partial: Partial<AppConfig>): AppConfig {
 		vllmBaseUrl: partial.vllmBaseUrl !== undefined ? partial.vllmBaseUrl.replace(/\/+$/, "") : current.vllmBaseUrl,
 		vllmApiKey: partial.vllmApiKey !== undefined ? partial.vllmApiKey : current.vllmApiKey,
 		abilities: partial.abilities !== undefined ? partial.abilities : current.abilities,
+		autonomousMode: partial.autonomousMode !== undefined ? partial.autonomousMode : current.autonomousMode,
 	};
 	cached = next;
 	mkdirSync(DATA_DIR, { recursive: true });
