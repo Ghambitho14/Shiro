@@ -3,7 +3,7 @@ import { getState } from "./store.js";
 import { getUserProfile } from "./user-profile.js";
 import { getConfig } from "./config/config.js";
 import { buildWorkspaceContext } from "./workspace.js";
-import { vllmClient } from "./core/llm/vllmClient.js";
+import { getLLM } from "./core/llm/getLLM.js";
 import { MemoryManager } from "./core/memory/MemoryManager.js";
 import { runAgent } from "./core/agent/Agent.js";
 
@@ -44,7 +44,7 @@ export async function runTuiChat(): Promise<void> {
 			const config = getConfig();
 			const autonomous = config.autonomousMode !== false;
 			const response = await runAgent(trimmed, {
-				llm: vllmClient,
+				llm: getLLM(),
 				memory,
 				agentName: state.name,
 				tokenBudget: 8000,

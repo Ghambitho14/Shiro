@@ -65,13 +65,15 @@ export function buildContext(input: ContextInput): { system: string; messages: M
 			})();
 	if (toolBlock) remaining -= toolBlock.length;
 
-	const recent = input.shortMemory.getRecent(30);
-	const shortBlock = eventsToContextLines(recent, Math.min(remaining - 400, 2000));
+	// Conversación simple: menos contexto para mantener el prompt conciso
+	const shortMaxChars = textOnly ? 400 : Math.min(remaining - 400, 2000);
+	const recent = input.shortMemory.getRecent(textOnly ? 10 : 30);
+	const shortBlock = eventsToContextLines(recent, shortMaxChars);
 	remaining -= shortBlock.length;
 
 	const long = input.shortMemory.getLongTerm();
 	const longBlock =
-		long && remaining > 100
+		long && remaining > 100 && !textOnly
 			? `## Memoria a largo plazo (resumen)\n${long.summary}`
 			: "";
 
@@ -90,11 +92,8 @@ export function buildContext(input: ContextInput): { system: string; messages: M
 		(longBlock ? "\n\n" + longBlock : "") +
 		workspace;
 
-	// Mensaje de usuario: si textOnly, añadimos instrucción para que el modelo responda con texto
-	const userContent =
-		textOnly
-			? `${input.goal}\n\n(Responde en una o dos frases, de forma natural.)`
-			: input.goal;
+	// Conversación simple: solo el mensaje del usuario. Modo acción: el goal tal cual.
+	const userContent = input.goal;
 	const messages: Message[] = [{ role: "user", content: userContent }];
 	return { system, messages };
 }

@@ -8,8 +8,8 @@ import { getUserProfile, setUserProfile } from "./user-profile.js";
 import { getConfig } from "./config/config.js";
 import { getHealthState, setHealthActive } from "./core/health/HealthManager.js";
 import { buildWorkspaceContext } from "./workspace.js";
-import { vllmClient } from "./core/llm/vllmClient.js";
-import { MemoryManager } from "./core/memory/MemoryManager.js";
+import { getLLM } from "./core/llm/getLLM.js";
+import { createSessionMemoryStore } from "./core/memory/SessionMemoryStore.js";
 import { runAgent } from "./core/agent/Agent.js";
 import { getAllToolNames } from "./core/tools/ToolRegistry.js";
 import {
@@ -31,16 +31,8 @@ const BIND_HOST = process.env.BIND_HOST?.trim() || "127.0.0.1";
 /** Si se define, las rutas sensibles exigen Authorization: Bearer <token>. */
 const AUTH_TOKEN = process.env.SHIRO_AUTH_TOKEN?.trim();
 
-const sessionMemories = new Map<string, MemoryManager>();
+const sessionMemoryStore = createSessionMemoryStore();
 let shuttingDown = false;
-
-function getMemoryForSession(sessionId: string): MemoryManager {
-	const existing = sessionMemories.get(sessionId);
-	if (existing) return existing;
-	const created = new MemoryManager({ shortWindow: 50, summarizeEvery: 20 });
-	sessionMemories.set(sessionId, created);
-	return created;
-}
 
 function readBody(req: import("node:http").IncomingMessage): Promise<string> {
 	return new Promise((resolve, reject) => {
@@ -164,7 +156,7 @@ const server = createServer(async (req, res) => {
 
 	if (method === "GET" && pathname === "/api/state") {
 		const state = getState();
-		const vllm = vllmClient.getConfig();
+		const vllm = getLLM().getConfig();
 		const config = getConfig();
 		sendJson(res, 200, {
 			name: state.name,
@@ -298,7 +290,7 @@ const server = createServer(async (req, res) => {
 				sendJson(res, 404, { error: "Session not found" });
 				return;
 			}
-			sessionMemories.delete(sessionId);
+			sessionMemoryStore.delete(sessionId);
 			sendJson(res, 200, { ok: true });
 			return;
 		}
@@ -389,8 +381,8 @@ const server = createServer(async (req, res) => {
 			const config = getConfig();
 			const autonomous = config.autonomousMode !== false;
 			const content = await runAgent(userContent, {
-				llm: vllmClient,
-				memory: getMemoryForSession(sessionId ?? "web-default"),
+				llm: getLLM(),
+				memory: sessionMemoryStore.getMemory(sessionId ?? "web-default"),
 				agentName: state.name,
 				tokenBudget: 8000,
 				usePlanner: autonomous,
@@ -491,6 +483,6 @@ process.on("SIGTERM", () => shutdown("SIGTERM"));
 
 server.listen(PORT, BIND_HOST, () => {
 	console.log(`Shiro web: http://${BIND_HOST}:${PORT}`);
-	console.log(`vLLM: ${vllmClient.getConfig().baseUrl} (model: ${vllmClient.getConfig().model})`);
+	console.log(`vLLM: ${getLLM().getConfig().baseUrl} (model: ${getLLM().getConfig().model})`);
 	if (AUTH_TOKEN) console.log("Auth: token requerido en rutas sensibles (SHIRO_AUTH_TOKEN)");
 });

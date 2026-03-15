@@ -4,9 +4,9 @@ import { getState } from "./store.js";
 import { getUserProfile } from "./user-profile.js";
 import { getConfig } from "./config/config.js";
 import { buildWorkspaceContext } from "./workspace.js";
-import { MemoryManager } from "./core/memory/MemoryManager.js";
+import { createSessionMemoryStore } from "./core/memory/SessionMemoryStore.js";
 import { runAgent } from "./core/agent/Agent.js";
-import { vllmClient } from "./core/llm/vllmClient.js";
+import { getLLM } from "./core/llm/getLLM.js";
 import { setHealthActive } from "./core/health/HealthManager.js";
 import { getChatSession, getOrCreateLinkedChatSession, saveChatSession, type ChatMessage } from "./chat/ChatStore.js";
 
@@ -18,18 +18,35 @@ const WA_ONLY_PRIVATE = process.env.WA_ONLY_PRIVATE !== "0";
 const DEFAULT_WIN_CHROME = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 const WA_CHROME_PATH = process.env.WA_CHROME_PATH?.trim() || (process.platform === "win32" ? DEFAULT_WIN_CHROME : undefined);
 
-const chatMemories = new Map<string, MemoryManager>();
+const chatMemoryStore = createSessionMemoryStore();
 const LocalAuth = WhatsAppWebJs.LocalAuth;
 let client: Client | null = null;
 let starting = false;
-let messageQueue: Promise<void> = Promise.resolve();
 
-function getMemoryForChat(chatId: string): MemoryManager {
-	const existing = chatMemories.get(chatId);
-	if (existing) return existing;
-	const created = new MemoryManager({ shortWindow: 50, summarizeEvery: 20 });
-	chatMemories.set(chatId, created);
-	return created;
+/** Per-chat promise chains: messages in the same chat run in order; different chats run in parallel (up to semaphore). */
+const chatQueues = new Map<string, Promise<void>>();
+
+const PROCESS_TIMEOUT_MS = Number(process.env.WA_PROCESS_TIMEOUT_MS) || 5 * 60 * 1000; // 5 min default
+const MAX_CONCURRENT_CHATS = Math.max(1, Number(process.env.WA_MAX_CONCURRENT_CHATS) || 5);
+let concurrentChats = 0;
+const pendingResolvers: Array<() => void> = [];
+
+function acquireConcurrency(): Promise<void> {
+	if (concurrentChats < MAX_CONCURRENT_CHATS) {
+		concurrentChats++;
+		return Promise.resolve();
+	}
+	return new Promise<void>((resolve) => {
+		pendingResolvers.push(resolve);
+	});
+}
+
+function releaseConcurrency(): void {
+	concurrentChats--;
+	if (pendingResolvers.length > 0 && concurrentChats < MAX_CONCURRENT_CHATS) {
+		concurrentChats++;
+		(pendingResolvers.shift() as () => void)();
+	}
 }
 
 export type WhatsAppBridgeState = "idle" | "starting" | "qr" | "ready" | "auth_failure" | "disconnected" | "error";
@@ -99,8 +116,8 @@ async function processIncomingMessage(message: Message): Promise<void> {
 	const response = await runAgent(
 		userText,
 		{
-			llm: vllmClient,
-			memory: getMemoryForChat(message.from),
+			llm: getLLM(),
+			memory: chatMemoryStore.getMemory(message.from),
 			agentName: state.name,
 			tokenBudget: 8000,
 			usePlanner: autonomous,
@@ -115,6 +132,25 @@ async function processIncomingMessage(message: Message): Promise<void> {
 	const baseMessages = latest?.messages ?? withUser;
 	saveChatSession(linked.id, [...baseMessages, { role: "assistant", content: text }]);
 	await message.reply(text);
+}
+
+/**
+ * Runs processIncomingMessage with a timeout. On timeout, logs and sends a short reply; semaphore is released by caller's finally().
+ */
+async function processWithTimeout(message: Message): Promise<void> {
+	const timeoutPromise = new Promise<never>((_, reject) => {
+		setTimeout(() => reject(new Error("WA_PROCESS_TIMEOUT")), PROCESS_TIMEOUT_MS);
+	});
+	try {
+		await Promise.race([processIncomingMessage(message), timeoutPromise]);
+	} catch (err) {
+		if (err instanceof Error && err.message === "WA_PROCESS_TIMEOUT") {
+			console.error("  Timeout procesando mensaje de WhatsApp (chat:", message.from, ")");
+			await message.reply("La respuesta está tardando demasiado. Puedes intentar de nuevo.");
+			return;
+		}
+		throw err;
+	}
 }
 
 type StartBridgeOptions = {
@@ -154,14 +190,17 @@ function attachClientEvents(waClient: Client, opts: StartBridgeOptions): void {
 	});
 
 	waClient.on("message", (message) => {
-		messageQueue = messageQueue
-			.then(async () => {
-				await processIncomingMessage(message);
-			})
+		const chatId = message.from;
+		const prev = chatQueues.get(chatId) ?? Promise.resolve();
+		const next = prev
+			.then(() => acquireConcurrency())
+			.then(() => processWithTimeout(message))
+			.finally(() => releaseConcurrency())
 			.catch((err) => {
 				const text = err instanceof Error ? err.message : String(err);
 				console.error("  Error procesando mensaje de WhatsApp:", text);
 			});
+		chatQueues.set(chatId, next);
 	});
 }
 

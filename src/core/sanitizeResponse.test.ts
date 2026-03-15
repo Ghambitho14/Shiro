@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import { strictEqual } from "node:assert";
-import { sanitizeModelResponse } from "./sanitizeResponse.js";
+import { sanitizeModelResponse, isMeaningfulResponse, FALLBACK_EMPTY_RESPONSE } from "./sanitizeResponse.js";
 
 test("sanitizeModelResponse quita bloque think al inicio", () => {
 	const raw = ` <think>
@@ -20,4 +20,24 @@ test("sanitizeModelResponse quita think en medio", () => {
 test("sanitizeModelResponse deja texto sin think igual", () => {
 	strictEqual(sanitizeModelResponse("Hola"), "Hola");
 	strictEqual(sanitizeModelResponse(""), "");
+});
+
+test("isMeaningfulResponse rechaza vacío y genéricos", () => {
+	strictEqual(isMeaningfulResponse(""), false);
+	strictEqual(isMeaningfulResponse("  "), false);
+	strictEqual(isMeaningfulResponse("Listo."), false);
+	strictEqual(isMeaningfulResponse("listo"), false);
+	strictEqual(isMeaningfulResponse("OK"), false);
+	strictEqual(isMeaningfulResponse("(Sin respuesta de texto)"), false);
+});
+
+test("isMeaningfulResponse acepta respuestas útiles", () => {
+	strictEqual(isMeaningfulResponse("El archivo contiene 3 líneas."), true);
+	strictEqual(isMeaningfulResponse("Listo. He guardado el archivo en X."), true);
+	strictEqual(isMeaningfulResponse("No encontré el archivo."), true);
+});
+
+test("FALLBACK_EMPTY_RESPONSE está definido", () => {
+	strictEqual(typeof FALLBACK_EMPTY_RESPONSE, "string");
+	strictEqual(FALLBACK_EMPTY_RESPONSE.length > 0, true);
 });
