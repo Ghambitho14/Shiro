@@ -1,12 +1,11 @@
 node_modules/
 dist/
 data/
+
 /openclaw-main/
 /CONCEPTOS.md
 /AGENTS.MD
 /CLAUDE.md
 README.md
-/.wwebjs_auth
-/.wwebjs_cache
-Shiro.rar
+
 /node_modules
