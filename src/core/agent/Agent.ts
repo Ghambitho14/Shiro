@@ -1,4 +1,5 @@
-import type { Message } from "./Types.js";
+import type { Message, ContentPart } from "./Types.js";
+import { getMessagePreview } from "./contentUtils.js";
 import type { AgentEvent } from "./Types.js";
 import type { LLMClient } from "../llm/LLMClient.js";
 import type { MemoryStore } from "../memory/MemoryStore.js";
@@ -18,6 +19,8 @@ import {
 	isMeaningfulResponse,
 	FALLBACK_EMPTY_RESPONSE,
 } from "../sanitizeResponse.js";
+import { verifyGoal } from "./Verifier.js";
+import { createRetryPolicy, getBackoffMs, shouldRetry, isRetryableError } from "../health/RetryPolicy.js";
 
 export type UserProfileForAgent = {
 	userName?: string;
@@ -34,7 +37,7 @@ export type AgentOptions = {
 	usePlanner?: boolean;
 	textOnly?: boolean;
 	allowedTools?: string[];
-	conversation?: Array<{ role: "user" | "assistant"; content: string }>;
+	conversation?: Array<{ role: "user" | "assistant"; content: string | ContentPart[] }>;
 	/** Perfil del usuario (para personalizar respuestas). */
 	userProfile?: UserProfileForAgent | null;
 };
@@ -42,6 +45,33 @@ export type AgentOptions = {
 /** Mensaje genérico al usuario cuando hay intervención interna (loop, safe_mode). No exponer detalles técnicos. */
 function getUserFacingInterventionMessage(): string {
 	return "Algo salió mal al procesar. Puedes reformular o intentar de nuevo.";
+}
+
+function getFallbackResponse(goal: string, error?: string): string {
+	const lower = goal.toLowerCase();
+	const isSpanish = /[áéíóúñ¿¡]/i.test(goal);
+	
+	if (error) {
+		logger.warn("LLM fallback activado", { error: error.slice(0, 100) });
+	}
+	
+	if (isSpanish) {
+		if (/\b(hola|hey|hi|buenas)\b/i.test(lower)) return "¡Hola! ¿En qué puedo ayudarte?";
+		if (/\b(gracias|thanks)\b/i.test(lower)) return "¡De nada! ¿Hay algo más en lo que pueda ayudarte?";
+		if (/\b(bye|adios|chau|nos vemos)\b/i.test(lower)) return "¡Hasta luego! Que te vaya bien.";
+		if (/\b(como estas|cómo estás)\b/i.test(lower)) return "Estoy bien, gracias por preguntar. ¿Y tú?";
+		if (/\b(que puedes hacer|qué puedes hacer)\b/i.test(lower)) return "Puedo leer y escribir archivos, buscar en internet, hacer cálculos, mostrar imágenes, y chatear contigo.";
+		if (/\b(quien eres|quién eres|que eres)\b/i.test(lower)) return "Soy Shiro, un asistente de IA. Estoy aquí para ayudarte con lo que necesites.";
+		return "Disculpa, tuve un problema al procesar tu solicitud. ¿Podrías intentarlo de nuevo?";
+	}
+	
+	if (/\b(hi|hello|hey|good morning)\b/i.test(lower)) return "Hi! How can I help you?";
+	if (/\b(thanks|thank you)\b/i.test(lower)) return "You're welcome! Anything else I can help with?";
+	if (/\b(bye|goodbye|see you)\b/i.test(lower)) return "Goodbye! Take care.";
+	if (/\b(how are you)\b/i.test(lower)) return "I'm doing well, thanks for asking. How about you?";
+	if (/\b(what can you do)\b/i.test(lower)) return "I can read and write files, search the web, do calculations, view images, and chat with you.";
+	if (/\b(who are you|what are you)\b/i.test(lower)) return "I'm Shiro, an AI assistant. I'm here to help you with whatever you need.";
+	return "Sorry, I had trouble processing your request. Could you try again?";
 }
 
 /** Deduplica pasos consecutivos idénticos del planner para evitar ejecutar el mismo paso varias veces. */
@@ -169,23 +199,58 @@ export async function runAgent(
 
 	const normalizedConversation = Array.isArray(conversation)
 		? conversation
-			.map((m) => ({ role: m.role, content: m.content?.trim() ?? "" }))
-			.filter((m) => (m.role === "user" || m.role === "assistant") && m.content.length > 0)
+			.map((m) => ({ role: m.role, content: m.content ?? "" }))
+			.filter((m) => {
+				if (m.role !== "user" && m.role !== "assistant") return false;
+				const preview = getMessagePreview(m.content);
+				const hasImage = Array.isArray(m.content) && m.content.some((p: ContentPart) => p.type === "image_url");
+				return preview.length > 0 || hasImage;
+			})
 		: [];
+	const hasImageInConversation = normalizedConversation.some(
+		(m) => Array.isArray(m.content) && (m.content as ContentPart[]).some((p) => p.type === "image_url"),
+	);
+	const visionInstructions = `
+## Imágenes
+El usuario puede enviar imágenes. Cuando detectes una imagen:
+1. Analiza la imagen con atención (código, texto, diagramas, capturas de pantalla, fotos)
+2. Describe lo que ves de forma clara y concisa
+3. Responde a la pregunta específica del usuario sobre la imagen
+4. Si es una captura de código, proporciona el código mencionado
+5. Si es un error o log, explica el problema que muestra`;
+	const systemWithVision = hasImageInConversation
+		? system + "\n\n" + visionInstructions
+		: system;
 	const fullMessages: Message[] = normalizedConversation.length > 0
-		? [{ role: "system", content: system }, ...normalizedConversation]
+		? [{ role: "system", content: systemWithVision }, ...normalizedConversation]
 		: [{ role: "system", content: system }, ...messages];
 	const toolsDef = getToolsDefinitionScoped(allowedTools);
-	const adaptToolResult = (
+	const retryPolicy = createRetryPolicy({ maxRetries: 3, baseDelayMs: 500 });
+	
+	const adaptToolResult = async (
 		name: string,
 		args: Record<string, unknown>,
-	): { ok: boolean; content: string; error?: string } => {
-		const r = executeToolSafeScoped(name, args, allowedTools);
-		return {
-			ok: r.ok,
-			content: r.ok ? r.content : r.error,
-			error: r.ok ? undefined : r.error,
-		};
+	): Promise<{ ok: boolean; content: string; error?: string }> => {
+		logger.info(`🔧 Ejecutando herramienta: ${name}`, { args });
+		let lastError: string | undefined;
+		for (let attempt = 0; attempt <= retryPolicy.maxRetries; attempt++) {
+			const r = await executeToolSafeScoped(name, args, allowedTools);
+			if (r.ok) {
+				logger.info(`✅ Tool ${name} ejecutada correctamente`);
+				return { ok: true, content: r.content };
+			}
+			lastError = r.error;
+			logger.warn(`❌ Tool ${name} falló:`, lastError);
+			const retryable = isRetryableError({ retryable: true, message: r.error ?? "" });
+			if (attempt < retryPolicy.maxRetries && retryable.retryable) {
+				const delay = getBackoffMs(retryPolicy, attempt);
+				logger.warn(`Tool ${name} falló, reintentando en ${delay}ms`, { attempt, error: lastError });
+				await new Promise((resolve) => setTimeout(resolve, delay));
+			} else {
+				break;
+			}
+		}
+		return { ok: false, content: "", error: lastError };
 	};
 
 	if (effectiveUsePlanner && policies.maxStepsPerRun > 0) {
@@ -198,9 +263,12 @@ export async function runAgent(
 			const stepGoal = steps[i];
 			const stepId = `step_${i}`;
 			pushEvent("tool_call", { name: "planner_step", step: stepGoal }, stepId);
+			logger.info(`📋 Ejecutando paso ${i + 1}/${steps.length}: ${stepGoal}`);
 			const result = await executeStep(llm, stepGoal, fullMessages, adaptToolResult, toolsDef);
+			logger.info(`📋 Resultado paso ${i + 1}: ok=${result.ok}, content=${result.content?.slice(0, 100)}`);
 			if (!result.ok) {
 				pushEvent("error", { content: result.error }, stepId);
+				logger.error(`❌ Paso falló: ${result.error}`);
 				return getUserFacingInterventionMessage();
 			}
 			lastContent = result.content;
@@ -217,20 +285,39 @@ export async function runAgent(
 			}
 		}
 		const sanitized = sanitizeModelResponse(lastContent);
+		const verification = verifyGoal(goal, sanitized);
+		if (!verification.satisfied) {
+			pushEvent("error", { content: verification.reason });
+		}
 		return isMeaningfulResponse(sanitized) ? sanitized : FALLBACK_EMPTY_RESPONSE;
 	}
 
 	// Modo directo: conversación simple o sin planner → chat solo texto cuando effectiveTextOnly; si no, chatWithTools
 	try {
-		const content = effectiveTextOnly
-			? (await llm.chat(fullMessages)).trim()
-			: (await llm.chatWithTools(fullMessages, toolsDef, adaptToolResult)).trim();
+		let content = "";
+		for (let attempt = 0; attempt <= retryPolicy.maxRetries; attempt++) {
+			try {
+				content = effectiveTextOnly
+					? (await llm.chat(fullMessages)).trim()
+					: (await llm.chatWithTools(fullMessages, toolsDef, adaptToolResult)).trim();
+				break;
+			} catch (err) {
+				const retryable = isRetryableError(err);
+				if (attempt < retryPolicy.maxRetries && retryable.retryable) {
+					const delay = getBackoffMs(retryPolicy, attempt);
+					logger.warn(`LLM falló, reintentando en ${delay}ms`, { attempt, error: String(err) });
+					await new Promise((resolve) => setTimeout(resolve, delay));
+				} else {
+					throw err;
+				}
+			}
+		}
 		const out = sanitizeModelResponse(content || "");
 		pushEvent("observation", { content: out });
 		return isMeaningfulResponse(out) ? out : FALLBACK_EMPTY_RESPONSE;
 	} catch (err) {
 		const msg = err instanceof Error ? err.message : String(err);
 		pushEvent("error", { content: msg });
-		throw err;
+		return getFallbackResponse(goal, msg);
 	}
 }

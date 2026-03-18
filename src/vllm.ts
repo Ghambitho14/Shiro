@@ -7,7 +7,7 @@ export { vllmClient, vllmClient as chat };
 export async function chatWithTools(
 	messages: Message[],
 	toolsDef: Array<{ type: string; function: { name: string; description?: string; parameters?: unknown } }>,
-	executeTool: (name: string, args: Record<string, unknown>) => { ok: boolean; content: string; error?: string },
+	executeTool: (name: string, args: Record<string, unknown>) => Promise<{ ok: boolean; content: string; error?: string }>,
 ): Promise<string> {
 	return vllmClient.chatWithTools(messages, toolsDef as import("./core/llm/LLMClient.js").ToolDef[], executeTool);
 }

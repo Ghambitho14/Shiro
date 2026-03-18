@@ -1,16 +1,13 @@
-import { select, input, confirm } from "@inquirer/prompts";
+import { select, input } from "@inquirer/prompts";
 import { getState } from "./store.js";
 import { getConfig, setConfig, resetConfig } from "./config.js";
+import { getLLM } from "./core/llm/getLLM.js";
 
 const MENU_OPTIONS = [
-	{ name: "Iniciar web de chat (servidor + vLLM)", value: "web" },
-	{ name: "Ver configuración", value: "list" },
-	{ name: "Personalizar Shiro (qué saber de ti)", value: "personalize" },
-	{ name: "Modo autónomo (planner + herramientas)", value: "autonomous" },
-	{ name: "Establecer modelo (vLLM)", value: "model" },
-	{ name: "Establecer URL base vLLM", value: "vllm-base" },
-	{ name: "Establecer habilidades del asistente", value: "abilities" },
-	{ name: "Resetear todo (config + nombre)", value: "reset" },
+	{ name: "Iniciar web de chat", value: "web" },
+	{ name: "Chat en terminal", value: "chat" },
+	{ name: "Verificar conexión LLM", value: "check" },
+	{ name: "Configurar LLM", value: "provider" },
 	{ name: "Salir", value: "exit" },
 ] as const;
 
@@ -46,75 +43,116 @@ export async function runTui(): Promise<void> {
 			case "web":
 				await import("./server.js");
 				return;
-			case "list": {
+			case "chat": {
+				const { runTuiChat } = await import("./tui-chat.js");
+				await runTuiChat();
+				break;
+			}
+			case "check": {
 				const cfg = getConfig();
-				const { getUserProfile } = await import("./user-profile.js");
-				const profile = getUserProfile();
-				console.log("\n--- Configuración actual ---");
-				console.log("  asistente: Shiro (fijo)");
-				console.log("  modo autónomo (planner + herramientas):", (cfg.autonomousMode !== false) ? "sí" : "no");
-				console.log("  model:", cfg.model ?? "(por defecto)");
-				console.log("  vllm-base:", cfg.vllmBaseUrl ?? "(por defecto)");
-				console.log("  vllm-api-key:", cfg.vllmApiKey ? "***" : "(no definida)");
-				console.log("  abilities:", cfg.abilities ?? "(ninguna)");
-				console.log("  sobre ti:", profile.userName ? profile.userName + (profile.about ? " + más" : "") : "(no definido)");
-				console.log("----------------------------\n");
-				break;
-			}
-			case "autonomous": {
-				const current = getConfig().autonomousMode !== false;
-				const enable = await confirm({
-					message: "¿Activar modo autónomo (planner + herramientas)? Si es no, Shiro solo responderá en texto.",
-					default: current,
-				});
-				setConfig({ autonomousMode: enable });
-				console.log("  Modo autónomo:", enable ? "activado" : "desactivado (solo chat)\n");
-				break;
-			}
-			case "personalize": {
-				const { runPersonalize } = await import("./personalize.js");
-				await runPersonalize();
-				break;
-			}
-			case "model": {
-				const value = await input({
-					message: "Modelo vLLM (ej. default o meta-llama/Llama-3.2-3B)",
-					default: getConfig().model ?? "default",
-				});
-				if (value.trim()) {
-					setConfig({ model: value.trim() });
-					console.log("  Modelo guardado.\n");
+				const provider = cfg.llmProvider ?? "vllm";
+				
+				if (provider === "ollama") {
+					const url = cfg.ollamaBaseUrl ?? "http://localhost:11434";
+					console.log(`\n  Verificando Ollama en ${url}...`);
+					try {
+						const res = await fetch(url + "/api/tags", { method: "GET" });
+						if (res.ok) {
+							const data = await res.json() as { models?: { name: string }[] };
+							const models = data.models?.map(m => m.name).join(", ") ?? "sin modelos";
+							console.log(`  ✓ Ollama conectado`);
+							console.log(`  Modelos disponibles: ${models}\n`);
+						} else {
+							console.log(`  ✗ Error: ${res.status} ${res.statusText}\n`);
+						}
+					} catch (err) {
+						const msg = err instanceof Error ? err.message : String(err);
+						console.log(`  ✗ No se pudo conectar: ${msg}\n`);
+					}
+				} else if (provider === "openrouter") {
+					const apiKey = cfg.openrouterApiKey ?? process.env.OPENROUTER_API_KEY ?? "";
+					const model = cfg.openrouterModel ?? "openai/gpt-4o-mini";
+					if (!apiKey) {
+						console.log("\n  ✗ No hay API Key de OpenRouter configurada\n");
+					} else {
+						console.log(`\n  Verificando OpenRouter (modelo: ${model})...`);
+						try {
+							const res = await fetch("https://openrouter.ai/api/v1/models", {
+								headers: { "Authorization": `Bearer ${apiKey}` },
+							});
+							if (res.ok) {
+								console.log(`  ✓ OpenRouter conectado\n`);
+							} else {
+								console.log(`  ✗ Error: ${res.status} ${res.statusText}\n`);
+							}
+						} catch (err) {
+							const msg = err instanceof Error ? err.message : String(err);
+							console.log(`  ✗ No se pudo conectar: ${msg}\n`);
+						}
+					}
+				} else {
+					const llm = getLLM();
+					const config = llm.getConfig();
+					console.log(`\n  Verificando vLLM en ${config.baseUrl}...`);
+					try {
+						const res = await fetch(config.baseUrl + "/models", {
+							method: "GET",
+							headers: config.model ? { "Authorization": `Bearer ${config.model}` } : {}
+						});
+						if (res.ok) {
+							console.log(`  ✓ vLLM conectado (modelo: ${config.model})\n`);
+						} else {
+							console.log(`  ✗ Error: ${res.status} ${res.statusText}\n`);
+						}
+					} catch (err) {
+						const msg = err instanceof Error ? err.message : String(err);
+						console.log(`  ✗ No se pudo conectar: ${msg}\n`);
+					}
 				}
 				break;
 			}
-			case "vllm-base": {
-				const value = await input({
-					message: "URL base vLLM",
-					default: getConfig().vllmBaseUrl ?? "http://127.0.0.1:8000/v1",
+			case "provider": {
+				const provider = await select({
+					message: "Elige proveedor",
+					choices: [
+						{ name: "vLLM", value: "vllm" },
+						{ name: "Ollama", value: "ollama" },
+						{ name: "OpenRouter", value: "openrouter" },
+					],
+					default: getConfig().llmProvider ?? "vllm",
 				});
-				if (value.trim()) {
-					setConfig({ vllmBaseUrl: value.trim() });
-					console.log("  URL guardada.\n");
+				
+				if (provider === "vllm") {
+					const baseUrl = await input({
+						message: "URL de vLLM",
+						default: getConfig().vllmBaseUrl ?? "http://127.0.0.1:8000/v1",
+					});
+					const model = await input({
+						message: "Modelo",
+						default: getConfig().model ?? "default",
+					});
+					setConfig({ llmProvider: "vllm", vllmBaseUrl: baseUrl.trim(), model: model.trim() });
+					console.log("  ✓ vLLM configurado\n");
 				}
-				break;
-			}
-			case "abilities": {
-				const value = await input({
-					message: "Habilidades o instrucciones (texto libre)",
-					default: getConfig().abilities ?? "",
-				});
-				setConfig({ abilities: value.trim() || undefined });
-				console.log("  Habilidades guardadas.\n");
-				break;
-			}
-			case "reset": {
-				const ok = await confirm({
-					message: "¿Resetear config y nombre? (vuelve a valores por defecto)",
-					default: false,
-				});
-				if (ok) {
-					await resetConfig(true);
-					console.log("  Todo reseteado.\n");
+				else if (provider === "ollama") {
+					const baseUrl = await input({
+						message: "URL de Ollama",
+						default: getConfig().ollamaBaseUrl ?? "http://localhost:11434",
+					});
+					const model = await input({
+						message: "Modelo (ej. llama3.2, qwen2.5)",
+						default: getConfig().ollamaModel ?? "llama3.2",
+					});
+					setConfig({ llmProvider: "ollama", ollamaBaseUrl: baseUrl.trim(), ollamaModel: model.trim() });
+					console.log("  ✓ Ollama configurado\n");
+				}
+				else if (provider === "openrouter") {
+					const apiKey = await input({
+						message: "API Key (openrouter.ai)",
+						default: getConfig().openrouterApiKey ?? "",
+					});
+					setConfig({ llmProvider: "openrouter", openrouterApiKey: apiKey.trim() });
+					console.log("  ✓ OpenRouter configurado (modelo: gpt-4o-mini por defecto)\n");
 				}
 				break;
 			}

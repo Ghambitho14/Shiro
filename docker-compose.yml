@@ -1,0 +1,25 @@
+# Shiro — servidor web en Docker
+# Uso: docker compose up -d
+# Web: http://localhost:1406 (o el puerto que definas)
+
+services:
+  shiro:
+    build: .
+    container_name: shiro
+    ports:
+      - "1406:1406"
+    environment:
+      - PORT=1406
+      - BIND_HOST=0.0.0.0
+      # Opcionales (descomenta y ajusta):
+      # - SHIRO_AUTH_TOKEN=tu-token-secreto
+      # - VLLM_BASE_URL=http://host.docker.internal:8000/v1
+      # - VLLM_MODEL=tu-modelo
+      # - WA_CLIENT_ID=shiro-docker
+    volumes:
+      # Persistir config, chats, sesión WhatsApp y workspace
+      - shiro-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  shiro-data:

@@ -2,13 +2,16 @@ import * as qrcode from "qrcode-terminal";
 import WhatsAppWebJs, { Client, type Message } from "whatsapp-web.js";
 import { getState } from "./store.js";
 import { getUserProfile } from "./user-profile.js";
-import { getConfig } from "./config/config.js";
+import { getConfig, DATA_DIR } from "./config/config.js";
+import { join } from "node:path";
 import { buildWorkspaceContext } from "./workspace.js";
 import { createSessionMemoryStore } from "./core/memory/SessionMemoryStore.js";
 import { runAgent } from "./core/agent/Agent.js";
 import { getLLM } from "./core/llm/getLLM.js";
 import { setHealthActive } from "./core/health/HealthManager.js";
 import { getChatSession, getOrCreateLinkedChatSession, saveChatSession, type ChatMessage } from "./chat/ChatStore.js";
+import type { ContentPart } from "./core/agent/Types.js";
+import { getMessagePreview } from "./core/agent/contentUtils.js";
 
 const WA_CHANNEL = "whatsapp-web";
 const WA_CLIENT_ID = process.env.WA_CLIENT_ID?.trim() || "shiro-personal";
@@ -87,11 +90,15 @@ function isTextMessage(message: Message): boolean {
 	return message.type === "chat" && typeof message.body === "string" && message.body.trim().length > 0;
 }
 
+function isImageMessage(message: Message): boolean {
+	return message.type === "image";
+}
+
 function shouldIgnoreMessage(message: Message): boolean {
 	if (!WA_REPLY_TO_OWN_MESSAGES && message.fromMe) return true;
 	if (WA_ONLY_PRIVATE && message.from.endsWith("@g.us")) return true;
 	if (WA_ALLOWED_CHAT && message.from !== WA_ALLOWED_CHAT) return true;
-	if (!isTextMessage(message)) return true;
+	if (!isTextMessage(message) && !isImageMessage(message)) return true;
 	return false;
 }
 
@@ -99,22 +106,44 @@ function buildSessionTitle(chatId: string): string {
 	return `WhatsApp ${chatId}`;
 }
 
+async function buildUserContent(message: Message): Promise<string | ContentPart[]> {
+	if (isImageMessage(message)) {
+		const caption = (typeof message.body === "string" ? message.body : "").trim();
+		const parts: ContentPart[] = [];
+		if (caption) parts.push({ type: "text", text: caption });
+		else parts.push({ type: "text", text: "¿Qué hay en esta imagen?" });
+		try {
+			const media = await message.downloadMedia();
+			if (media && media.data) {
+				const mime = media.mimetype?.startsWith("image/") ? media.mimetype : "image/jpeg";
+				parts.push({ type: "image_url", image_url: { url: `data:${mime};base64,${media.data}` } });
+			}
+		} catch (err) {
+			console.error("  Error descargando imagen de WhatsApp:", err instanceof Error ? err.message : err);
+			return caption || "El usuario envió una imagen pero no pude descargarla.";
+		}
+		return parts.length > 1 ? parts : caption || "Imagen recibida.";
+	}
+	return (typeof message.body === "string" ? message.body : "").trim();
+}
+
 async function processIncomingMessage(message: Message): Promise<void> {
 	if (shouldIgnoreMessage(message)) return;
 
-	const userText = message.body.trim();
+	const userContent = await buildUserContent(message);
 	const linked = getOrCreateLinkedChatSession(WA_CHANNEL, message.from, buildSessionTitle(message.from));
-	const withUser: ChatMessage[] = [...linked.messages, { role: "user", content: userText }];
+	const withUser: ChatMessage[] = [...linked.messages, { role: "user", content: userContent }];
 	const persistedUser = saveChatSession(linked.id, withUser);
 	if (!persistedUser) return;
 
+	const goal = getMessagePreview(userContent) || "¿Qué hay en esta imagen?";
 	const state = getState();
 	const config = getConfig();
 	const autonomous = config.autonomousMode !== false;
 	const workspaceContext = buildWorkspaceContext({ includeLongTermMemory: true });
 	setHealthActive();
 	const response = await runAgent(
-		userText,
+		goal,
 		{
 			llm: getLLM(),
 			memory: chatMemoryStore.getMemory(message.from),
@@ -122,6 +151,7 @@ async function processIncomingMessage(message: Message): Promise<void> {
 			tokenBudget: 8000,
 			usePlanner: autonomous,
 			textOnly: !autonomous,
+			conversation: withUser,
 			userProfile: getUserProfile(),
 		},
 		workspaceContext || undefined,
@@ -223,7 +253,7 @@ export async function startWhatsAppBridge(opts: StartBridgeOptions = {}): Promis
 	status.lastError = null;
 
 	const waClient = new Client({
-		authStrategy: new LocalAuth({ clientId: WA_CLIENT_ID }),
+		authStrategy: new LocalAuth({ clientId: WA_CLIENT_ID, dataPath: join(DATA_DIR, "wa-auth") }),
 		puppeteer: {
 			headless: true,
 			executablePath: WA_CHROME_PATH,

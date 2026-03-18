@@ -12,20 +12,26 @@ import { getLLM } from "./core/llm/getLLM.js";
 import { createSessionMemoryStore } from "./core/memory/SessionMemoryStore.js";
 import { runAgent } from "./core/agent/Agent.js";
 import { getAllToolNames } from "./core/tools/ToolRegistry.js";
+import { parseCommand } from "./commands.js";
 import {
 	createChatSession,
 	deleteChatSession,
 	getChatSession,
 	listChatSessions,
 	saveChatSession,
+	sanitizeMessages,
 	type ChatMessage,
 } from "./chat/ChatStore.js";
+import { getMessagePreview } from "./core/agent/contentUtils.js";
 import { getWhatsAppBridgeStatus, startWhatsAppBridge, stopWhatsAppBridge } from "./whatsapp.js";
+import { startHeartbeat, setNotificationCallback } from "./core/reminders/notifications.js";
+import { startGateway, stopGateway, getGateway } from "./gateway.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, "..", "public");
 const PORT = Number(process.env.PORT) || 1406;
-const MAX_BODY_BYTES = 1024 * 1024;
+/** 6 MB para permitir imágenes en base64 en el chat (vision). */
+const MAX_BODY_BYTES = 6 * 1024 * 1024;
 /** Por defecto solo localhost; usar BIND_HOST=0.0.0.0 para exponer. */
 const BIND_HOST = process.env.BIND_HOST?.trim() || "127.0.0.1";
 /** Si se define, las rutas sensibles exigen Authorization: Bearer <token>. */
@@ -66,28 +72,15 @@ function sendJson(res: import("node:http").ServerResponse, status: number, data:
 	send(res, status, JSON.stringify(data), "application/json; charset=utf-8");
 }
 
-function sanitizeMessages(input: unknown): ChatMessage[] {
-	if (!Array.isArray(input)) return [];
-	return input
-		.map((item) => {
-			if (!item || typeof item !== "object") return null;
-			const role = (item as { role?: unknown }).role;
-			const content = (item as { content?: unknown }).content;
-			if ((role !== "user" && role !== "assistant") || typeof content !== "string") return null;
-			const trimmed = content.trim();
-			if (!trimmed) return null;
-			return { role, content: trimmed } as ChatMessage;
-		})
-		.filter((m): m is ChatMessage => m !== null);
-}
-
 function isSensitivePath(pathname: string): boolean {
 	return (
 		pathname === "/api/chat" ||
 		pathname.startsWith("/api/whatsapp/") ||
 		pathname === "/api/user-profile" ||
 		pathname === "/api/chat-sessions" ||
-		pathname.startsWith("/api/chat-sessions/")
+		pathname === "/api/reminders" ||
+		pathname.startsWith("/api/chat-sessions/") ||
+		pathname.startsWith("/api/reminders/")
 	);
 }
 
@@ -103,7 +96,7 @@ function requireAuth(req: import("node:http").IncomingMessage, res: import("node
 }
 
 function sanitizeAllowedTools(input: unknown): string[] | undefined {
-	if (!Array.isArray(input)) return undefined;
+	if (!Array.isArray(input)) return getAllToolNames();
 	const all = new Set(getAllToolNames());
 	const unique: string[] = [];
 	for (const item of input) {
@@ -112,7 +105,7 @@ function sanitizeAllowedTools(input: unknown): string[] | undefined {
 		if (!name || !all.has(name) || unique.includes(name)) continue;
 		unique.push(name);
 	}
-	return unique.length > 0 ? unique : undefined;
+	return unique.length > 0 ? unique : getAllToolNames();
 }
 
 function isWhatsAppConfigureIntent(text: string): boolean {
@@ -167,6 +160,12 @@ const server = createServer(async (req, res) => {
 		return;
 	}
 
+	if (method === "GET" && pathname === "/api/notifications") {
+		const notifs = pendingNotifications.splice(0, 10);
+		sendJson(res, 200, { notifications: notifs });
+		return;
+	}
+
 	if (method === "GET" && pathname === "/api/health") {
 		const h = getHealthState();
 		sendJson(res, 200, {
@@ -217,7 +216,7 @@ const server = createServer(async (req, res) => {
 			body = await readBody(req);
 		} catch (err) {
 			if (isBodyTooLargeError(err)) {
-				sendJson(res, 413, { error: "Request body too large (max 1 MB)" });
+				sendJson(res, 413, { error: "Request body too large (max 6 MB)" });
 				return;
 			}
 			sendJson(res, 400, { error: "Invalid body" });
@@ -261,7 +260,7 @@ const server = createServer(async (req, res) => {
 				body = await readBody(req);
 			} catch (err) {
 				if (isBodyTooLargeError(err)) {
-					sendJson(res, 413, { error: "Request body too large (max 1 MB)" });
+					sendJson(res, 413, { error: "Request body too large (max 6 MB)" });
 					return;
 				}
 				sendJson(res, 400, { error: "Invalid body" });
@@ -302,7 +301,7 @@ const server = createServer(async (req, res) => {
 			body = await readBody(req);
 		} catch (err) {
 			if (isBodyTooLargeError(err)) {
-				sendJson(res, 413, { error: "Request body too large (max 1 MB)" });
+				sendJson(res, 413, { error: "Request body too large (max 6 MB)" });
 				return;
 			}
 			sendJson(res, 400, { error: "Invalid body" });
@@ -319,6 +318,7 @@ const server = createServer(async (req, res) => {
 			};
 			incoming = sanitizeMessages(parsed.messages);
 			allowedTools = sanitizeAllowedTools(parsed.allowedTools);
+			console.log("🛠️ Tools sanitized:", allowedTools?.length || "todas");
 			sessionId = typeof parsed.sessionId === "string" && parsed.sessionId.trim() ? parsed.sessionId.trim() : undefined;
 			if (!incoming.length) {
 				sendJson(res, 400, { error: "messages array required" });
@@ -330,8 +330,10 @@ const server = createServer(async (req, res) => {
 		}
 		const state = getState();
 		const workspaceContext = buildWorkspaceContext({ includeLongTermMemory: true });
-		const userContent = incoming[incoming.length - 1]?.content ?? "";
-		if (!userContent.trim()) {
+		const lastMessage = incoming[incoming.length - 1];
+		const userContent = getMessagePreview(lastMessage?.content ?? "");
+		const hasContent = userContent.length > 0 || (Array.isArray(lastMessage?.content) && lastMessage.content.some((p: { type: string }) => p.type === "image_url"));
+		if (!hasContent) {
 			sendJson(res, 400, { error: "Empty message" });
 			return;
 		}
@@ -380,7 +382,18 @@ const server = createServer(async (req, res) => {
 			setHealthActive();
 			const config = getConfig();
 			const autonomous = config.autonomousMode !== false;
-			const content = await runAgent(userContent, {
+			const goal = userContent.trim() || "¿Qué hay en esta imagen?";
+			
+			// Procesar comandos
+			const commandResult = parseCommand(goal, sessionId ?? "web-default");
+			if (commandResult?.executed) {
+				console.log(`📝 Comando /${goal.slice(1).split(/\s/)[0]} ejecutado`);
+				sendJson(res, 200, { content: commandResult.content });
+				return;
+			}
+			
+			console.log("🛠️ Tools:", allowedTools?.length || "todas (15)", "| Autonomous:", autonomous, "| Msg:", goal.slice(0, 30));
+			const content = await runAgent(goal, {
 				llm: getLLM(),
 				memory: sessionMemoryStore.getMemory(sessionId ?? "web-default"),
 				agentName: state.name,
@@ -410,7 +423,7 @@ const server = createServer(async (req, res) => {
 			body = await readBody(req);
 		} catch (err) {
 			if (isBodyTooLargeError(err)) {
-				sendJson(res, 413, { error: "Request body too large (max 1 MB)" });
+				sendJson(res, 413, { error: "Request body too large (max 6 MB)" });
 				return;
 			}
 			sendJson(res, 400, { error: "Invalid body" });
@@ -433,13 +446,91 @@ const server = createServer(async (req, res) => {
 		return;
 	}
 
+	// === REMINDERS API ===
+	if (method === "GET" && pathname === "/api/reminders") {
+		const { getReminders } = await import("./core/reminders/reminders.js");
+		sendJson(res, 200, { reminders: getReminders() });
+		return;
+	}
+
+	if (method === "POST" && pathname === "/api/reminders") {
+		let body = "";
+		try {
+			body = await readBody(req);
+		} catch {
+			sendJson(res, 400, { error: "Invalid body" });
+			return;
+		}
+		let payload: Record<string, unknown> = {};
+		try {
+			if (body.trim()) payload = JSON.parse(body) as Record<string, unknown>;
+		} catch {
+			sendJson(res, 400, { error: "Invalid JSON" });
+			return;
+		}
+		const { createReminder } = await import("./core/reminders/reminders.js");
+		try {
+			const reminder = createReminder({
+				title: String(payload.title || ""),
+				datetime: String(payload.datetime || ""),
+				description: payload.description ? String(payload.description) : undefined,
+				repeat: payload.repeat ? String(payload.repeat) as "daily" | "weekly" | "monthly" | "none" : "none",
+			});
+			sendJson(res, 201, { reminder });
+		} catch (err) {
+			sendJson(res, 500, { error: err instanceof Error ? err.message : "Error creating reminder" });
+		}
+		return;
+	}
+
+	if (method === "POST" && pathname.startsWith("/api/reminders/")) {
+		const id = pathname.slice("/api/reminders/".length);
+		let body = "";
+		try {
+			body = await readBody(req);
+		} catch {
+			sendJson(res, 400, { error: "Invalid body" });
+			return;
+		}
+		let payload: Record<string, unknown> = {};
+		try {
+			if (body.trim()) payload = JSON.parse(body) as Record<string, unknown>;
+		} catch {
+			sendJson(res, 400, { error: "Invalid JSON" });
+			return;
+		}
+		if (payload.action === "complete") {
+			const { completeReminder } = await import("./core/reminders/reminders.js");
+			const result = completeReminder(id);
+			if (result) {
+				sendJson(res, 200, { success: true, reminder: result });
+			} else {
+				sendJson(res, 404, { error: "Reminder not found" });
+			}
+			return;
+		}
+		if (payload.action === "delete") {
+			const { deleteReminder } = await import("./core/reminders/reminders.js");
+			const result = deleteReminder(id);
+			sendJson(res, 200, { success: result });
+			return;
+		}
+		sendJson(res, 400, { error: "Invalid action" });
+		return;
+	}
+
 	if (method === "GET" && (pathname === "/" || pathname === "/index.html")) {
 		const path = join(PUBLIC_DIR, "index.html");
 		if (!existsSync(path)) {
 			send(res, 404, "Not found");
 			return;
 		}
-		res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+		res.writeHead(200, { 
+			"Content-Type": "text/html; charset=utf-8",
+			"Cache-Control": "no-cache, no-store, must-revalidate",
+			"Pragma": "no-cache",
+			"Expires": "0"
+		});
 		res.end(readFileSync(path, "utf-8"));
 		return;
 	}
@@ -462,6 +553,7 @@ function shutdown(signal: NodeJS.Signals): void {
 	if (shuttingDown) return;
 	shuttingDown = true;
 	console.log(`\n  ${signal} recibido. Cerrando Shiro...`);
+	stopGateway();
 	server.close((err) => {
 		if (err) {
 			console.error("  Error al cerrar el servidor:", err);
@@ -478,6 +570,23 @@ function shutdown(signal: NodeJS.Signals): void {
 	}, 5000).unref();
 }
 
+const pendingNotifications: Array<{ id: string; title: string; description?: string; datetime: string; createdAt: string }> = [];
+
+setNotificationCallback((reminder) => {
+	pendingNotifications.unshift({
+		id: reminder.id,
+		title: reminder.title,
+		description: reminder.description,
+		datetime: reminder.datetime,
+		createdAt: reminder.createdAt,
+	});
+	if (pendingNotifications.length > 50) {
+		pendingNotifications.length = 50;
+	}
+});
+
+startHeartbeat();
+
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 
@@ -485,4 +594,8 @@ server.listen(PORT, BIND_HOST, () => {
 	console.log(`Shiro web: http://${BIND_HOST}:${PORT}`);
 	console.log(`vLLM: ${getLLM().getConfig().baseUrl} (model: ${getLLM().getConfig().model})`);
 	if (AUTH_TOKEN) console.log("Auth: token requerido en rutas sensibles (SHIRO_AUTH_TOKEN)");
+	
+	// Iniciar Gateway WebSocket (compartiendo servidor)
+	const gw = getGateway();
+	gw.startWithServer(server, "/ws");
 });

@@ -12,7 +12,7 @@ export type ToolDef = {
 export type ExecuteToolFn = (
 	name: string,
 	args: Record<string, unknown>,
-) => { ok: boolean; content: string; error?: string };
+) => Promise<{ ok: boolean; content: string; error?: string }>;
 
 export interface LLMClient {
 	/** Chat sin tools. Devuelve contenido de texto o lanza. */

@@ -1,7 +1,17 @@
 import type { LLMClient, ToolDef } from "./LLMClient.js";
-import type { Message } from "../agent/Types.js";
+import type { Message, ContentPart } from "../agent/Types.js";
 import { getConfig } from "../../config/config.js";
 import { sanitizeModelResponse } from "../sanitizeResponse.js";
+
+/** Ordena partes multimodales: imagen primero, luego texto (mejor para modelos de visión). */
+function normalizeContentParts(content: unknown): unknown {
+	if (!Array.isArray(content)) return content;
+	const parts = content as ContentPart[];
+	const imageParts = parts.filter((p) => p.type === "image_url");
+	const textParts = parts.filter((p) => p.type === "text");
+	if (imageParts.length === 0 || textParts.length === 0) return content;
+	return [...imageParts, ...textParts];
+}
 
 function normalizeOpenAiBaseUrl(rawBaseUrl: string): string {
 	const trimmed = rawBaseUrl.replace(/\/+$/, "");
@@ -22,11 +32,17 @@ function getVllmSettings(): { baseUrl: string; model: string; apiKey: string | u
 type VllmMessage = Record<string, unknown>;
 
 function buildRequestBody(params: { messages: VllmMessage[]; tools?: unknown[] }): Record<string, unknown> {
+	const messages = params.messages.map((m) => {
+		const content = (m as { content?: unknown }).content;
+		const normalized = normalizeContentParts(content);
+		if (normalized === content) return m;
+		return { ...m, content: normalized };
+	});
 	const body: Record<string, unknown> = {
 		model: getVllmSettings().model,
-		messages: params.messages,
+		messages,
 		stream: false,
-		max_tokens: 512,
+		max_tokens: 1024,
 		temperature: 0.7,
 	};
 	if (params.tools?.length) {
@@ -72,7 +88,7 @@ export const vllmClient: LLMClient = {
 	async chatWithTools(
 		messages: Message[],
 		toolsDef: ToolDef[],
-		executeTool: (name: string, args: Record<string, unknown>) => { ok: boolean; content: string; error?: string },
+		executeTool: (name: string, args: Record<string, unknown>) => Promise<{ ok: boolean; content: string; error?: string }>,
 	): Promise<string> {
 		const { baseUrl, apiKey } = getVllmSettings();
 		const url = `${baseUrl}/chat/completions`;
@@ -119,7 +135,7 @@ export const vllmClient: LLMClient = {
 				} catch {
 					args = {};
 				}
-				const result = executeTool(tc.function.name, args);
+				const result = await executeTool(tc.function.name, args);
 				const resultContent = result.ok ? result.content : "Error: " + (result.error ?? "unknown");
 				currentMessages.push({
 					role: "tool",

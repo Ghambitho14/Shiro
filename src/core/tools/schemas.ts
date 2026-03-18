@@ -26,12 +26,17 @@ export const listDirSystemSchema = z.object({
 	path: z.string().optional().default(""),
 });
 
+export const fetchUrlSchema = z.object({
+	url: z.string().url("URL inválida"),
+});
+
 export type ReadFileArgs = z.infer<typeof readFileSchema>;
 export type WriteFileArgs = z.infer<typeof writeFileSchema>;
 export type ListDirArgs = z.infer<typeof listDirSchema>;
 export type ReadFileSystemArgs = z.infer<typeof readFileSystemSchema>;
 export type WriteFileSystemArgs = z.infer<typeof writeFileSystemSchema>;
 export type ListDirSystemArgs = z.infer<typeof listDirSystemSchema>;
+export type FetchUrlArgs = z.infer<typeof fetchUrlSchema>;
 
 export const toolSchemas: Record<string, z.ZodType<Record<string, unknown>>> = {
 	read_file: readFileSchema,
@@ -40,4 +45,5 @@ export const toolSchemas: Record<string, z.ZodType<Record<string, unknown>>> = {
 	read_file_system: readFileSystemSchema,
 	write_file_system: writeFileSystemSchema,
 	list_dir_system: listDirSystemSchema,
+	fetch_url: fetchUrlSchema,
 };

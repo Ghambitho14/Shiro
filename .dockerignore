@@ -1,0 +1,15 @@
+node_modules
+dist
+data
+.git
+.gitignore
+.wwebjs_auth
+.wwebjs_cache
+*.md
+.env
+.env.*
+openclaw-main
+CONCEPTOS.md
+AGENTS.MD
+AGENDS.md
+CLAUDE.md

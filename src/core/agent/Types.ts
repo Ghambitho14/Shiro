@@ -1,8 +1,16 @@
 /** Tipos compartidos del agente: mensajes, eventos, pasos, resultados de tools. */
 
+/** Parte de contenido multimodal (OpenAI-compatible). */
+export type ContentPart =
+	| { type: "text"; text: string }
+	| { type: "image_url"; image_url: { url: string } };
+
+/** Contenido de un mensaje de usuario: solo texto o texto + imagen(es). */
+export type UserContent = string | ContentPart[];
+
 export type Message =
 	| { role: "system"; content: string }
-	| { role: "user"; content: string }
+	| { role: "user"; content: UserContent }
 	| { role: "assistant"; content: string | null; tool_calls?: ToolCallSpec[] }
 	| { role: "tool"; tool_call_id: string; content: string };
 

@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shiro Gateway</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e; 
+            color: #eee;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        h1 { color: #ff6b6b; margin-bottom: 20px; }
+        .container { max-width: 800px; margin: 0 auto; }
+        
+        .status-card {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            border: 1px solid #0f3460;
+        }
+        
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+        
+        .status-item {
+            background: #0f3460;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        
+        .status-item .value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #4ecdc4;
+        }
+        
+        .status-item .label {
+            font-size: 12px;
+            color: #888;
+            margin-top: 5px;
+        }
+        
+        .clients-list {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .client-item {
+            background: #0f3460;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .client-info { font-size: 14px; }
+        .client-info .id { color: #4ecdc4; }
+        .client-info .session { color: #888; font-size: 12px; }
+        
+        .connected { color: #4ecdc4; }
+        .disconnected { color: #ff6b6b; }
+        
+        .log-container {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 20px;
+            height: 300px;
+            overflow-y: auto;
+        }
+        
+        .log-entry {
+            padding: 8px;
+            margin-bottom: 5px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 13px;
+        }
+        
+        .log-entry.received { background: #1e3a5f; border-left: 3px solid #4ecdc4; }
+        .log-entry.sent { background: #1e3a5f; border-left: 3px solid #ff6b6b; }
+        .log-entry.system { background: #2d1b4e; border-left: 3px solid #a855f7; }
+        
+        .log-entry .time { color: #666; margin-right: 10px; }
+        .log-entry .type { color: #4ecdc4; margin-right: 10px; }
+        
+        button {
+            background: #4ecdc4;
+            color: #1a1a2e;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        
+        button:hover { background: #45b7aa; }
+        button.disconnect { background: #ff6b6b; }
+        button.disconnect:hover { background: #ee5a5a; }
+        
+        .controls { margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🦞 Shiro Gateway</h1>
+        
+        <div class="status-card">
+            <h2>Estado</h2>
+            <div class="status-grid">
+                <div class="status-item">
+                    <div class="value" id="status">Conectando...</div>
+                    <div class="label">Conexión</div>
+                </div>
+                <div class="status-item">
+                    <div class="value" id="clients">0</div>
+                    <div class="label">Clientes</div>
+                </div>
+                <div class="status-item">
+                    <div class="value" id="sessions">0</div>
+                    <div class="label">Sesiones</div>
+                </div>
+                <div class="status-item">
+                    <div class="value" id="uptime">0s</div>
+                    <div class="label">Uptime</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="controls">
+            <button id="connectBtn" onclick="connect()">Conectar</button>
+            <button class="disconnect" id="disconnectBtn" onclick="disconnect()" disabled>Desconectar</button>
+            <button onclick="sendPing()">Ping</button>
+        </div>
+        
+        <div class="log-container" id="log">
+            <div class="log-entry system">
+                <span class="time">[Sistema]</span>
+                Conectando al Gateway...
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let clientId = null;
+        
+        function connect() {
+            // Conectar al mismo host y puerto, pero con /ws
+            const wsUrl = `ws://${window.location.host}/ws`;
+            
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = () => {
+                addLog('system', 'Conectado al Gateway');
+                document.getElementById('status').innerHTML = '<span class="connected">Conectado</span>';
+                document.getElementById('connectBtn').disabled = true;
+                document.getElementById('disconnectBtn').disabled = false;
+            };
+            
+            ws.onmessage = (event) => {
+                try {
+                    const msg = JSON.parse(event.data);
+                    handleMessage(msg);
+                } catch (e) {
+                    addLog('received', event.data);
+                }
+            };
+            
+            ws.onclose = () => {
+                addLog('system', 'Desconectado del Gateway');
+                document.getElementById('status').innerHTML = '<span class="disconnected">Desconectado</span>';
+                document.getElementById('connectBtn').disabled = false;
+                document.getElementById('disconnectBtn').disabled = true;
+            };
+            
+            ws.onerror = (error) => {
+                addLog('system', 'Error de conexión');
+            };
+        }
+        
+        function disconnect() {
+            if (ws) {
+                ws.close();
+            }
+        }
+        
+        function sendPing() {
+            send({ type: 'ping', payload: {} });
+        }
+        
+        function send(msg) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify(msg));
+                addLog('sent', msg.type);
+            }
+        }
+        
+        function handleMessage(msg) {
+            addLog('received', msg.type, msg.payload);
+            
+            if (msg.type === 'welcome') {
+                clientId = msg.payload.clientId;
+                addLog('system', `Tu ID: ${clientId}`);
+            }
+            
+            if (msg.type === 'authenticated') {
+                document.getElementById('clients').innerText = msg.payload.clientId ? '1' : '0';
+            }
+            
+            // Actualizar estado
+            fetchStatus();
+        }
+        
+        function addLog(type, msg, payload = null) {
+            const log = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            
+            const time = new Date().toLocaleTimeString();
+            let content = `<span class="time">[${time}]</span> <span class="type">${msg}</span>`;
+            if (payload) {
+                content += `<br><pre style="margin-top:5px;color:#888;font-size:11px">${JSON.stringify(payload, null, 2)}</pre>`;
+            }
+            
+            entry.innerHTML = content;
+            log.insertBefore(entry, log.firstChild);
+        }
+        
+        function fetchStatus() {
+            fetch('/api/status')
+                .then(r => r.json())
+                .then(data => {
+                    document.getElementById('clients').innerText = data.clients || 0;
+                    document.getElementById('sessions').innerText = data.sessions || 0;
+                    document.getElementById('uptime').innerText = Math.floor(data.uptime || 0) + 's';
+                });
+        }
+        
+        // Auto connect
+        connect();
+        
+        // Actualizar estado cada 5 segundos
+        setInterval(fetchStatus, 5000);
+    </script>
+</body>
+</html>

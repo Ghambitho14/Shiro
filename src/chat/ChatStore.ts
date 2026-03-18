@@ -3,10 +3,13 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import Database from "better-sqlite3";
 import { DATA_DIR } from "../config/config.js";
+import type { ContentPart } from "../core/agent/Types.js";
+import { getMessagePreview } from "../core/agent/contentUtils.js";
 
 export type ChatMessage = {
 	role: "user" | "assistant";
-	content: string;
+	/** Texto o, en mensajes de usuario, array de partes (texto + imagen) para visión. */
+	content: string | ContentPart[];
 };
 
 export type ChatSessionMeta = {
@@ -77,32 +80,55 @@ function buildChatFilePath(id: string): string {
 }
 
 function computeTitle(messages: ChatMessage[], fallback = "Nueva sesion"): string {
-	const firstUser = messages.find((m) => m.role === "user" && m.content.trim().length > 0);
+	const firstUser = messages.find((m) => m.role === "user" && getMessagePreview(m.content).length > 0);
 	if (!firstUser) return fallback;
-	const normalized = firstUser.content.trim().replace(/\s+/g, " ");
+	const normalized = getMessagePreview(firstUser.content).replace(/\s+/g, " ");
 	if (normalized.length <= 40) return normalized;
 	return normalized.slice(0, 40) + "...";
 }
 
 function computeLastPreview(messages: ChatMessage[]): string {
-	const last = [...messages].reverse().find((m) => m.content.trim().length > 0);
+	const last = [...messages].reverse().find((m) => getMessagePreview(m.content).length > 0);
 	if (!last) return "";
-	const normalized = last.content.trim().replace(/\s+/g, " ");
+	const normalized = getMessagePreview(last.content).replace(/\s+/g, " ");
 	if (normalized.length <= 80) return normalized;
 	return normalized.slice(0, 80) + "...";
 }
 
-function sanitizeMessages(input: unknown): ChatMessage[] {
+function isContentPartArray(raw: unknown): raw is ContentPart[] {
+	if (!Array.isArray(raw)) return false;
+	return raw.every((p) => {
+		if (!p || typeof p !== "object") return false;
+		const type = (p as { type?: unknown }).type;
+		if (type === "text") return typeof (p as { text?: unknown }).text === "string";
+		if (type === "image_url") {
+			const iu = (p as { image_url?: unknown }).image_url;
+			return iu && typeof iu === "object" && typeof (iu as { url?: unknown }).url === "string";
+		}
+		return false;
+	});
+}
+
+export function sanitizeMessages(input: unknown): ChatMessage[] {
 	if (!Array.isArray(input)) return [];
 	return input
 		.map((item) => {
 			if (!item || typeof item !== "object") return null;
 			const role = (item as { role?: unknown }).role;
 			const content = (item as { content?: unknown }).content;
-			if ((role !== "user" && role !== "assistant") || typeof content !== "string") return null;
-			const trimmed = content.trim();
-			if (!trimmed) return null;
-			return { role, content: trimmed } as ChatMessage;
+			if (role !== "user" && role !== "assistant") return null;
+			if (typeof content === "string") {
+				const trimmed = content.trim();
+				if (!trimmed) return null;
+				return { role, content: trimmed } as ChatMessage;
+			}
+			if (isContentPartArray(content)) {
+				const hasText = content.some((p) => (p as ContentPart).type === "text" && String((p as { text?: string }).text).trim());
+				const hasImage = content.some((p) => (p as ContentPart).type === "image_url");
+				if (!hasText && !hasImage) return null;
+				return { role, content } as ChatMessage;
+			}
+			return null;
 		})
 		.filter((m): m is ChatMessage => m !== null);
 }

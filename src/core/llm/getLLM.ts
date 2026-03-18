@@ -1,10 +1,20 @@
 import type { LLMClient } from "./LLMClient.js";
 import { vllmClient } from "./vllmClient.js";
+import { ollamaClient } from "./ollamaClient.js";
+import { openrouterClient } from "./openrouterClient.js";
+import { getConfig } from "../../config/config.js";
 
-/**
- * Single entry point for the LLM client. For now returns the vLLM client.
- * Future: can read config/env and return a different adapter (Ollama, OpenAI, etc.).
- */
 export function getLLM(): LLMClient {
+	const cfg = getConfig();
+	const provider = cfg.llmProvider ?? "vllm";
+	
+	if (provider === "ollama") {
+		return ollamaClient;
+	}
+	
+	if (provider === "openrouter") {
+		return openrouterClient;
+	}
+	
 	return vllmClient;
 }
