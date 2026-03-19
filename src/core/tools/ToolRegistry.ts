@@ -430,6 +430,58 @@ export const TOOLS: ToolDefinition[] = [
 			'"necesito más contexto" → ask_user({question: "¿Qué esperas que haga este código?"})',
 		],
 	},
+
+	// ============ CANALES ============
+	{
+		label: "Crear Canal",
+		name: "channel_create",
+		description: "Crea un nuevo canal de comunicación (Telegram, Discord, etc). USA ESTO cuando el usuario quiera conectarse desde otra plataforma.",
+		category: "utilidades",
+		parameters: {
+			type: "object",
+			properties: {
+				name: { type: "string", description: "Nombre del canal (ej: 'Mi Telegram')" },
+				type: { type: "string", description: "Tipo: telegram, discord, slack" },
+				token: { type: "string", description: "Token del bot/API" },
+			},
+			required: ["name", "type", "token"],
+		},
+		examples: [
+			'"créame un canal de Telegram" → channel_create({name: "Telegram", type: "telegram", token: "mi-token"})',
+		],
+	},
+	{
+		label: "Listar Canales",
+		name: "channel_list",
+		description: "Lista todos los canales configurados.",
+		category: "utilidades",
+		parameters: {
+			type: "object",
+			properties: {},
+		},
+	},
+	{
+		label: "Iniciar Canal",
+		name: "channel_start",
+		description: "Inicia un canal existente. El canal debe estar creado primero.",
+		category: "utilidades",
+		parameters: {
+			type: "object",
+			properties: { id: { type: "string", description: "ID del canal" } },
+			required: ["id"],
+		},
+	},
+	{
+		label: "Eliminar Canal",
+		name: "channel_delete",
+		description: "Elimina un canal configurado.",
+		category: "utilidades",
+		parameters: {
+			type: "object",
+			properties: { id: { type: "string", description: "ID del canal" } },
+			required: ["id"],
+		},
+	},
 ];
 
 /** Conversión al formato ToolDef para el LLM */

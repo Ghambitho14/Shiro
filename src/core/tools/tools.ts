@@ -825,12 +825,93 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 				
 				if (!question) return { ok: false, error: "La pregunta es requerida" };
 				
-				// Esta tool no ejecuta nada, solo devuelve la pregunta
-				// El modelo sabe que debe hacer esta pregunta al usuario en lugar de actuar
 				return { 
 					ok: true, 
 					content: `🤔 PREGUNTA: ${question}\n\n(Responde a esta pregunta para que pueda ayudarte mejor)` 
 				};
+			}
+			case "channel_create": {
+				const { createChannel, startChannel } = await import("../channels/ChannelManager.js");
+				const name = String(args_.name ?? "").trim();
+				const type = String(args_.type ?? "").trim() as "telegram" | "discord" | "slack";
+				const token = String(args_.token ?? "").trim();
+				
+				if (!name) return { ok: false, error: "El nombre es requerido" };
+				if (!type) return { ok: false, error: "El tipo es requerido (telegram, discord, slack)" };
+				if (!token) return { ok: false, error: "El token es requerido" };
+				
+				if (!["telegram", "discord", "slack"].includes(type)) {
+					return { ok: false, error: `Tipo '${type}' no soportado. Usa: telegram, discord, slack` };
+				}
+				
+				try {
+					const channel = createChannel(name, type, { token });
+					
+					let msg = `✅ Canal creado: "${name}" (${type})\n`;
+					msg += `   ID: ${channel.id}\n`;
+					msg += `   Estado: ${channel.status}\n\n`;
+					msg += "Ahora voy a iniciar el canal...";
+					
+					// Intentar iniciar automáticamente
+					const result = await startChannel(channel.id);
+					if (result.ok) {
+						msg += `\n\n✅ Canal iniciado correctamente!`;
+						msg += `\n\nPara Telegram: Busca "@${(channel.config as { botUsername?: string }).botUsername || 'tu_bot'}" en Telegram y envíale /start`;
+					} else {
+						msg += `\n\n⚠️ El canal se creó pero no se pudo iniciar: ${result.error}`;
+					}
+					
+					return { ok: true, content: msg };
+				} catch (err) {
+					return { ok: false, error: "Error al crear canal: " + (err instanceof Error ? err.message : String(err)) };
+				}
+			}
+			case "channel_list": {
+				const { listChannels } = await import("../channels/ChannelManager.js");
+				const channels = listChannels();
+				
+				if (channels.length === 0) {
+					return { ok: true, content: "No hay canales configurados. Usa channel_create para crear uno." };
+				}
+				
+				let output = "📡 Canales configurados:\n\n";
+				for (const ch of channels) {
+					const statusIcon = ch.status === "active" ? "🟢" : ch.status === "error" ? "🔴" : "⚪";
+					output += `${statusIcon} ${ch.name} (${ch.type})\n`;
+					output += `   ID: ${ch.id}\n`;
+					output += `   Estado: ${ch.status}\n`;
+					if (ch.lastError) output += `   Error: ${ch.lastError}\n`;
+					output += "\n";
+				}
+				
+				return { ok: true, content: output };
+			}
+			case "channel_start": {
+				const { getChannel, startChannel } = await import("../channels/ChannelManager.js");
+				const id = String(args_.id ?? "").trim();
+				
+				if (!id) return { ok: false, error: "El ID del canal es requerido" };
+				
+				const channel = getChannel(id);
+				if (!channel) return { ok: false, error: "Canal no encontrado" };
+				
+				const result = await startChannel(id);
+				if (result.ok) {
+					return { ok: true, content: `✅ Canal "${channel.name}" iniciado correctamente!\n\nPara ${channel.type}: Busca tu bot y envíale /start` };
+				}
+				return { ok: false, error: `Error al iniciar: ${result.error}` };
+			}
+			case "channel_delete": {
+				const { deleteChannel } = await import("../channels/ChannelManager.js");
+				const id = String(args_.id ?? "").trim();
+				
+				if (!id) return { ok: false, error: "El ID del canal es requerido" };
+				
+				const deleted = deleteChannel(id);
+				if (deleted) {
+					return { ok: true, content: `✅ Canal eliminado: ${id}` };
+				}
+				return { ok: false, error: "Canal no encontrado" };
 			}
 			default:
 				return { ok: false, error: "Herramienta desconocida: " + name };

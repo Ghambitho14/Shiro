@@ -85,6 +85,22 @@ export const askUserSchema = z.object({
 	question: z.string().min(1, "pregunta requerida"),
 });
 
+export const channelCreateSchema = z.object({
+	name: z.string().min(1, "nombre requerido"),
+	type: z.enum(["telegram", "discord", "slack"]),
+	token: z.string().min(1, "token requerido"),
+});
+
+export const channelListSchema = z.object({});
+
+export const channelStartSchema = z.object({
+	id: z.string().min(1, "id requerido"),
+});
+
+export const channelDeleteSchema = z.object({
+	id: z.string().min(1, "id requerido"),
+});
+
 export type SearchWebArgs = z.infer<typeof searchWebSchema>;
 export type ExecArgs = z.infer<typeof execSchema>;
 export type CronCreateArgs = z.infer<typeof cronCreateSchema>;
@@ -118,4 +134,8 @@ export const toolSchemas: Record<string, z.ZodType<Record<string, unknown>>> = {
 	self_analyze: selfAnalyzeSchema,
 	self_reflect: selfReflectSchema,
 	ask_user: askUserSchema,
+	channel_create: channelCreateSchema,
+	channel_list: channelListSchema,
+	channel_start: channelStartSchema,
+	channel_delete: channelDeleteSchema,
 };

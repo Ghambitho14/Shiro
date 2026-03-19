@@ -535,6 +535,39 @@ const server = createServer(async (req, res) => {
 		return;
 	}
 
+	// Serve static files from public/ (images, scripts, styles, etc.)
+	if (method === "GET") {
+		const safePath = pathname.replace(/^\/+/, "");
+		// Prevent directory traversal
+		if (safePath && !safePath.includes("..")) {
+			const filePath = join(PUBLIC_DIR, safePath);
+			if (existsSync(filePath)) {
+				const ext = filePath.split(".").pop()?.toLowerCase() || "";
+				const contentTypes: Record<string, string> = {
+					"html": "text/html; charset=utf-8",
+					"js": "application/javascript; charset=utf-8",
+					"css": "text/css; charset=utf-8",
+					"png": "image/png",
+					"jpg": "image/jpeg",
+					"jpeg": "image/jpeg",
+					"gif": "image/gif",
+					"svg": "image/svg+xml",
+					"json": "application/json; charset=utf-8",
+					"ico": "image/x-icon",
+					"map": "application/json; charset=utf-8",
+					"woff": "font/woff",
+					"woff2": "font/woff2",
+					"ttf": "font/ttf",
+					"eot": "application/vnd.ms-fontobject",
+				};
+				const contentType = contentTypes[ext] ?? "application/octet-stream";
+				res.writeHead(200, { "Content-Type": contentType, "Cache-Control": "no-cache" });
+				res.end(readFileSync(filePath));
+				return;
+			}
+		}
+	}
+
 	send(res, 404, "Not found");
 });
 

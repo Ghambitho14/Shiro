@@ -17,6 +17,11 @@ export type AppConfig = {
 	openrouterModel?: string;
 	openrouterBaseUrl?: string;
 	abilities?: string;
+	/**
+	 * Si true (default), guarda el historial de chats en disco.
+	 * Si false, las conversaciones solo existen en memoria durante la sesión.
+	 */
+	persistChatHistory?: boolean;
 	/** Si true (default), usa planner + herramientas; si false, solo chat en texto. */
 	autonomousMode?: boolean;
 };
@@ -32,6 +37,7 @@ const DEFAULTS: AppConfig = {
 	openrouterModel: "openai/gpt-4o-mini",
 	openrouterBaseUrl: "https://openrouter.ai/api/v1",
 	abilities: undefined,
+	persistChatHistory: true,
 	autonomousMode: true,
 };
 
@@ -80,8 +86,9 @@ function loadConfig(): AppConfig {
 			openrouterModel: typeof data.openrouterModel === "string" ? data.openrouterModel.trim() : DEFAULTS.openrouterModel,
 			openrouterBaseUrl: isValidUrl(data.openrouterBaseUrl as string) ? (data.openrouterBaseUrl as string).replace(/\/+$/, "") : DEFAULTS.openrouterBaseUrl,
 			abilities: typeof data.abilities === "string" ? data.abilities : DEFAULTS.abilities,
-			autonomousMode: typeof data.autonomousMode === "boolean" ? data.autonomousMode : DEFAULTS.autonomousMode,
-		};
+			persistChatHistory: typeof data.persistChatHistory === "boolean" ? data.persistChatHistory : DEFAULTS.persistChatHistory,
+		autonomousMode: typeof data.autonomousMode === "boolean" ? data.autonomousMode : DEFAULTS.autonomousMode,
+	};
 	} catch {
 		return { ...DEFAULTS };
 	}
@@ -107,6 +114,7 @@ export function setConfig(partial: Partial<AppConfig>): AppConfig {
 		openrouterModel: partial.openrouterModel !== undefined ? partial.openrouterModel.trim() : current.openrouterModel,
 		openrouterBaseUrl: partial.openrouterBaseUrl !== undefined ? sanitizeUrl(partial.openrouterBaseUrl) : current.openrouterBaseUrl,
 		abilities: partial.abilities !== undefined ? partial.abilities : current.abilities,
+		persistChatHistory: partial.persistChatHistory !== undefined ? partial.persistChatHistory : current.persistChatHistory,
 		autonomousMode: partial.autonomousMode !== undefined ? partial.autonomousMode : current.autonomousMode,
 	};
 	cached = next;

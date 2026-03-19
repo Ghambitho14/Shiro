@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import Database from "better-sqlite3";
-import { DATA_DIR } from "../config/config.js";
+import { DATA_DIR, getConfig } from "../config/config.js";
 import type { ContentPart } from "../core/agent/Types.js";
 import { getMessagePreview } from "../core/agent/contentUtils.js";
 
@@ -27,6 +27,14 @@ export type ChatSession = ChatSessionMeta & {
 const CHAT_DIR = join(DATA_DIR, "chats");
 const DB_FILE = join(DATA_DIR, "chat-index.sqlite");
 
+// When persistChatHistory is disabled, keep sessions in memory only.
+const memorySessions = new Map<string, ChatSession>();
+const memoryLinks = new Map<string, string>();
+
+function persistChatHistory(): boolean {
+	return getConfig().persistChatHistory !== false;
+}
+
 type SessionRow = {
 	id: string;
 	title: string;
@@ -43,10 +51,14 @@ type LinkRow = {
 let db: Database.Database | null = null;
 
 function ensureDir(path: string): void {
+	if (!persistChatHistory()) return;
 	if (!existsSync(path)) mkdirSync(path, { recursive: true });
 }
 
 function getDb(): Database.Database {
+	if (!persistChatHistory()) {
+		throw new Error("Chat persistence is disabled");
+	}
 	if (db) return db;
 	ensureDir(DATA_DIR);
 	ensureDir(CHAT_DIR);
@@ -157,12 +169,14 @@ function setSessionTitle(sqlite: Database.Database, id: string, title: string): 
 }
 
 function writeSessionFile(id: string, messages: ChatMessage[]): void {
+	if (!persistChatHistory()) return;
 	ensureDir(CHAT_DIR);
 	const filePath = buildChatFilePath(id);
 	writeFileSync(filePath, JSON.stringify({ id, messages }, null, 2), "utf-8");
 }
 
 function readSessionFile(id: string): ChatMessage[] {
+	if (!persistChatHistory()) return [];
 	const filePath = buildChatFilePath(id);
 	if (!existsSync(filePath)) return [];
 	try {
@@ -175,18 +189,44 @@ function readSessionFile(id: string): ChatMessage[] {
 }
 
 export function listChatSessions(): ChatSessionMeta[] {
+	if (!persistChatHistory()) {
+		return Array.from(memorySessions.values())
+			.sort((a, b) => b.updatedAt - a.updatedAt)
+			.map(({ id, title, createdAt, updatedAt, lastPreview }) => ({
+				id,
+				title,
+				createdAt,
+				updatedAt,
+				lastPreview,
+			}));
+	}
+
 	const sqlite = getDb();
 	const rows = sqlite.prepare("SELECT id, title, file_path, created_at, updated_at, last_preview FROM chat_sessions ORDER BY updated_at DESC").all() as SessionRow[];
 	return rows.map(rowToMeta);
 }
 
 export function createChatSession(initialMessages: ChatMessage[] = []): ChatSession {
-	const sqlite = getDb();
 	const now = Date.now();
 	const id = randomUUID();
 	const cleanMessages = sanitizeMessages(initialMessages);
 	const title = computeTitle(cleanMessages);
 	const lastPreview = computeLastPreview(cleanMessages);
+
+	if (!persistChatHistory()) {
+		const session: ChatSession = {
+			id,
+			title,
+			createdAt: now,
+			updatedAt: now,
+			lastPreview,
+			messages: cleanMessages,
+		};
+		memorySessions.set(id, session);
+		return session;
+	}
+
+	const sqlite = getDb();
 	const filePath = buildChatFilePath(id);
 
 	writeSessionFile(id, cleanMessages);
@@ -214,6 +254,10 @@ export function createChatSession(initialMessages: ChatMessage[] = []): ChatSess
 }
 
 export function getChatSession(id: string): ChatSession | null {
+	if (!persistChatHistory()) {
+		return memorySessions.get(id) ?? null;
+	}
+
 	const sqlite = getDb();
 	const row = sqlite.prepare("SELECT id, title, file_path, created_at, updated_at, last_preview FROM chat_sessions WHERE id = ?").get(id) as SessionRow | undefined;
 	if (!row) return null;
@@ -224,14 +268,31 @@ export function getChatSession(id: string): ChatSession | null {
 }
 
 export function saveChatSession(id: string, messages: ChatMessage[]): ChatSession | null {
+	const cleanMessages = sanitizeMessages(messages);
+	const now = Date.now();
+	const title = computeTitle(cleanMessages);
+	const lastPreview = computeLastPreview(cleanMessages);
+
+	if (!persistChatHistory()) {
+		const existing = memorySessions.get(id);
+		if (!existing) return null;
+		const session: ChatSession = {
+			id,
+			title: title || existing.title,
+			createdAt: existing.createdAt,
+			updatedAt: now,
+			lastPreview,
+			messages: cleanMessages,
+		};
+		memorySessions.set(id, session);
+		return session;
+	}
+
 	const sqlite = getDb();
 	const row = sqlite.prepare("SELECT id, title, file_path, created_at, updated_at, last_preview FROM chat_sessions WHERE id = ?").get(id) as SessionRow | undefined;
 	if (!row) return null;
 
-	const cleanMessages = sanitizeMessages(messages);
-	const now = Date.now();
-	const title = computeTitle(cleanMessages, row.title || "Nueva sesion");
-	const lastPreview = computeLastPreview(cleanMessages);
+	const resolvedTitle = title || row.title || "Nueva sesion";
 
 	writeSessionFile(id, cleanMessages);
 
@@ -241,14 +302,14 @@ export function saveChatSession(id: string, messages: ChatMessage[]): ChatSessio
 		WHERE id = @id
 	`).run({
 		id,
-		title,
+		title: resolvedTitle,
 		updatedAt: now,
 		lastPreview,
 	});
 
 	return {
 		id,
-		title,
+		title: resolvedTitle,
 		createdAt: row.created_at,
 		updatedAt: now,
 		lastPreview,
@@ -257,6 +318,15 @@ export function saveChatSession(id: string, messages: ChatMessage[]): ChatSessio
 }
 
 export function deleteChatSession(id: string): boolean {
+	if (!persistChatHistory()) {
+		const existed = memorySessions.delete(id);
+		// Also remove any linked session entries.
+		for (const [key, sessionId] of Array.from(memoryLinks.entries())) {
+			if (sessionId === id) memoryLinks.delete(key);
+		}
+		return existed;
+	}
+
 	const sqlite = getDb();
 	const row = sqlite.prepare("SELECT id FROM chat_sessions WHERE id = ?").get(id) as { id: string } | undefined;
 	if (!row) return false;
@@ -267,13 +337,29 @@ export function deleteChatSession(id: string): boolean {
 }
 
 export function getOrCreateLinkedChatSession(channel: string, externalId: string, titleHint?: string): ChatSession {
-	const sqlite = getDb();
 	const cleanChannel = channel.trim();
 	const cleanExternalId = externalId.trim();
 	if (!cleanChannel || !cleanExternalId) {
 		throw new Error("channel y externalId son requeridos");
 	}
 
+	const key = `${cleanChannel}:${cleanExternalId}`;
+	if (!persistChatHistory()) {
+		const existingSessionId = memoryLinks.get(key);
+		if (existingSessionId) {
+			const existing = getChatSession(existingSessionId);
+			if (existing) return existing;
+		}
+
+		const created = createChatSession();
+		if (titleHint?.trim()) {
+			created.title = titleHint.trim();
+		}
+		memoryLinks.set(key, created.id);
+		return created;
+	}
+
+	const sqlite = getDb();
 	const link = sqlite.prepare(`
 		SELECT session_id
 		FROM chat_session_links

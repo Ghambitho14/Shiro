@@ -3,7 +3,6 @@ import { existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getState, setState } from "./store.js";
-import { greet } from "./greet.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -19,36 +18,18 @@ function isFirstRun(): boolean {
 function buildHelp(): string {
 	const name = getState().name;
 	return `
-${name} — ${pkg.name} v${pkg.version}
+${name} v${pkg.version}
 
-Uso:
-  pnpm tui                Hablar con el asistente en terminal
-  pnpm run config         Entrar a configuraciones (menú TUI)
-  pnpm onboard            Configuración inicial (primera vez)
-  pnpm run dev            Iniciar la web de chat
-  pnpm start server       Iniciar solo el servidor web
-  pnpm wa                 Iniciar puente WhatsApp Web (QR)
-  pnpm personalize       Qué saber de ti (para personalizar Shiro)
-  --help / --version     Ayuda o versión
-`.trim();
-}
-
-function buildShiroHelp(): string {
-	return `
 Comandos:
-  pnpm tui                Chat con el asistente en terminal
-  pnpm run config         Configuraciones (modelo, vLLM, etc.)
-  pnpm onboard            Configuración inicial (primera vez)
-  pnpm personalize        Qué saber de ti (personalizar Shiro)
-  pnpm run dev            Iniciar la web de chat
-  pnpm start server       Iniciar solo el servidor web
-  pnpm wa                 Iniciar puente WhatsApp Web (QR)
-`.trim();
-}
+  npm run tui       Chat en terminal (recomendado)
+  npm run dev       Servidor web
+  npm run wa        WhatsApp Web
+  npm run config    Configuración
+  npm run onboard   Primera configuración
+  npm run test      Tests
 
-function run(): void {
-	const name = getState().name;
-	console.log(`${name} (base en construccion)\n`);
+Mas info en: docs/COMANDOS.md
+`.trim();
 }
 
 async function main(): Promise<void> {
@@ -61,59 +42,58 @@ async function main(): Promise<void> {
 		return;
 	}
 	if (!arg) {
-		console.log(buildShiroHelp());
+		console.log(buildHelp());
 		return;
 	}
+
 	if (arg === "tui") {
 		const { runTuiChat } = await import("./tui-chat.js");
 		await runTuiChat();
 		return;
 	}
-	if (arg === "tui2" || arg === "opencode") {
-		const { runShiroTUI } = await import("./tui-opencode.js");
-		runShiroTUI();
-		return;
-	}
+
 	if (arg === "config") {
 		const { runTui } = await import("./tui.js");
 		await runTui();
 		return;
 	}
+
 	if (arg === "onboard") {
 		const { runOnboard } = await import("./onboard.js");
 		await runOnboard();
 		return;
 	}
+
 	if (arg === "personalize") {
 		const { runPersonalize } = await import("./personalize.js");
 		await runPersonalize();
 		return;
 	}
-	if (arg === "serve" || arg === "web" || arg === "server") {
+
+	if (arg === "web" || arg === "server") {
 		if (isFirstRun()) {
-			console.log("\n  Primera vez: ejecuta 'pnpm shiro onboard' para configurar.\n");
+			console.log("\n  Primera vez: ejecuta 'npm run onboard' para configurar.\n");
 			return;
 		}
 		await import("./server.js");
 		return;
 	}
-	if (arg === "whatsapp" || arg === "wa") {
+
+	if (arg === "wa" || arg === "whatsapp") {
 		const { runWhatsAppBridge } = await import("./whatsapp.js");
 		await runWhatsAppBridge();
 		return;
 	}
+
 	if (arg === "--version" || arg === "-v") {
 		console.log(pkg.version);
 		return;
 	}
-	if (arg === "greet") {
-		greet(argv[1]);
-		return;
-	}
+
 	if (arg === "set-name") {
 		const name = argv[1]?.trim();
 		if (!name) {
-			console.error("Uso: pnpm start set-name <nombre>");
+			console.error("Uso: npm start -- set-name <nombre>");
 			process.exitCode = 1;
 			return;
 		}
@@ -122,8 +102,7 @@ async function main(): Promise<void> {
 		return;
 	}
 
-	// Comando desconocido: comportamiento por defecto
-	run();
+	console.log(buildHelp());
 }
 
 void main();
