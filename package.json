@@ -8,6 +8,8 @@
     "start": "node --import tsx src/index.ts",
     "shiro": "node --import tsx src/index.ts",
     "tui": "node --import tsx src/index.ts tui",
+    "tui2": "node --import tsx src/index.ts tui2",
+    "opencode": "node --import tsx src/index.ts opencode",
     "config": "node --import tsx src/index.ts config",
     "onboard": "node --import tsx src/index.ts onboard",
     "personalize": "node --import tsx src/index.ts personalize",

@@ -276,6 +276,40 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 					return { ok: false, error: e instanceof Error ? e.message : String(e) };
 				}
 			}
+			case "exec": {
+				const command = String(args_.command ?? "").trim();
+				const timeout = args_.timeout ? Number(args_.timeout) : 30000;
+				const workingDir = args_.workingDir ? String(args_.workingDir).trim() : undefined;
+				
+				if (!command) return { ok: false, error: "El comando es requerido" };
+				if (command.length > 1000) return { ok: false, error: "Comando demasiado largo" };
+				
+				// Solo bloquear injection de comandos, no paths de Windows
+				const dangerous = /[;|`$(){}\[\]|<>]/;
+				if (dangerous.test(command)) {
+					return { ok: false, error: "El comando contiene caracteres no permitidos" };
+				}
+				
+				const { exec } = await import("node:child_process");
+				
+				return new Promise((resolve) => {
+					const opts: { timeout: number; cwd?: string } = { timeout };
+					if (workingDir) opts.cwd = workingDir;
+					
+					exec(command, opts, (error, stdout, stderr) => {
+						if (error) {
+							resolve({ 
+								ok: false, 
+								error: `Error: ${error.message}${stderr ? "\nstderr: " + stderr : ""}` 
+							});
+							return;
+						}
+						const output = stdout || "(sin salida)";
+						const errOutput = stderr ? "\n⚠️ stderr: " + stderr : "";
+						resolve({ ok: true, content: output + errOutput });
+					});
+				});
+			}
 			case "calculator": {
 				const expression = String(args_.expression ?? "").trim();
 				if (!expression) return { ok: false, error: "Expresión requerida" };
@@ -531,6 +565,272 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 				}
 				
 				return { ok: true, content: output };
+			}
+			case "cron_create": {
+				const { createCronTask } = await import("../scheduler/CronService.js");
+				const name = String(args_.name ?? "").trim();
+				const expression = String(args_.expression ?? "").trim();
+				const action = String(args_.action ?? "notify") as "notify" | "exec" | "reminder";
+				const message = args_.message ? String(args_.message) : undefined;
+				const command = args_.command ? String(args_.command) : undefined;
+				
+				if (!name) return { ok: false, error: "El nombre es requerido" };
+				if (!expression) return { ok: false, error: "La expresión es requerida" };
+				
+				const payload: Record<string, unknown> = {};
+				if (message) payload.message = message;
+				if (command) payload.command = command;
+				
+				try {
+					const task = createCronTask(name, expression, action, payload);
+					return { ok: true, content: `✅ Tarea programada creada: "${task.name}" (ID: ${task.id})\n   Frecuencia: ${task.expression}\n   Acción: ${task.action}` };
+				} catch (err) {
+					return { ok: false, error: "Error al crear tarea: " + (err instanceof Error ? err.message : String(err)) };
+				}
+			}
+			case "cron_list": {
+				const { listCronTasks } = await import("../scheduler/CronService.js");
+				const tasks = listCronTasks();
+				
+				if (tasks.length === 0) {
+					return { ok: true, content: "No hay tareas programadas." };
+				}
+				
+				let output = "📅 Tareas Programadas:\n\n";
+				for (const t of tasks) {
+					const status = t.enabled ? "✅" : "⏸️";
+					const lastRun = t.lastRun ? new Date(t.lastRun).toLocaleString() : "nunca";
+					output += `${status} ${t.name}\n`;
+					output += `   📋 ID: ${t.id}\n`;
+					output += `   ⏰ Frecuencia: ${t.expression}\n`;
+					output += `   🔧 Acción: ${t.action}\n`;
+					output += `   🕐 Último: ${lastRun}\n\n`;
+				}
+				
+				return { ok: true, content: output };
+			}
+			case "cron_delete": {
+				const { deleteCronTask } = await import("../scheduler/CronService.js");
+				const id = String(args_.id ?? "").trim();
+				
+				if (!id) return { ok: false, error: "El ID es requerido" };
+				
+				const deleted = deleteCronTask(id);
+				if (deleted) {
+					return { ok: true, content: `✅ Tarea eliminada: ${id}` };
+				}
+				return { ok: false, error: "Tarea no encontrada" };
+			}
+			case "cron_toggle": {
+				const { toggleCronTask } = await import("../scheduler/CronService.js");
+				const id = String(args_.id ?? "").trim();
+				const enabled = args_.enabled === true;
+				
+				if (!id) return { ok: false, error: "El ID es requerido" };
+				
+				const task = toggleCronTask(id, enabled);
+				if (task) {
+					const status = task.enabled ? "activada" : "desactivada";
+					return { ok: true, content: `✅ Tarea ${status}: ${task.name}` };
+				}
+				return { ok: false, error: "Tarea no encontrada" };
+			}
+			case "project_analyze": {
+				const pathArg = args_.path ? String(args_.path).trim() : ".";
+				const deep = args_.deep === true;
+				
+				const { readFileSync, readdirSync, statSync, existsSync } = await import("node:fs");
+				const { resolve, join } = await import("node:path");
+				
+				const workspace = getWorkspaceDir();
+				const projectPath = resolve(workspace, pathArg);
+				
+				if (!existsSync(projectPath)) {
+					return { ok: false, error: "El path no existe: " + projectPath };
+				}
+				
+				const stat = statSync(projectPath);
+				if (!stat.isDirectory()) {
+					return { ok: false, error: "No es un directorio" };
+				}
+				
+				const analyzeDir = (dir: string, depth = 0): string => {
+					if (depth > (deep ? 4 : 2)) return "";
+					
+					const entries = readdirSync(dir);
+					let output = "";
+					const indent = "  ".repeat(depth);
+					
+					for (const entry of entries.slice(0, 20)) {
+						const fullPath = join(dir, entry);
+						const entryStat = statSync(fullPath);
+						
+						if (entry.startsWith(".") || entry === "node_modules") continue;
+						
+						if (entryStat.isDirectory()) {
+							output += `${indent}📁 ${entry}/\n`;
+							output += analyzeDir(fullPath, depth + 1);
+						} else {
+							const ext = entry.split(".").pop();
+							const icons: Record<string, string> = {
+								ts: "🔷", tsx: "⚛️", js: "🟨", jsx: "⚛️",
+								json: "📋", md: "📝", yml: "⚙️", yaml: "⚙️",
+								sh: "🖥️", ps1: "💠",
+							};
+							output += `${indent}${icons[ext || ""] || "📄"} ${entry}\n`;
+						}
+					}
+					return output;
+				};
+				
+				// Detectar tecnologías
+				const techDetect: Record<string, string[]> = {
+					"Node.js": ["package.json", "pnpm-lock.yaml", "tsconfig.json"],
+					"Python": ["pyproject.toml", "requirements.txt", "setup.py"],
+					"Docker": ["Dockerfile", "docker-compose.yml"],
+					"TypeScript": [".ts", ".tsx"],
+				};
+				
+				let output = `📊 Análisis de: ${pathArg}\n\n`;
+				output += `📁 Estructura:\n${analyzeDir(projectPath)}\n`;
+				
+				// Detectar config
+				const configFiles = ["package.json", "tsconfig.json", "docker-compose.yml", ".env.example"];
+				output += `\n⚙️ Archivos de config:\n`;
+				for (const cf of configFiles) {
+					if (existsSync(resolve(projectPath, cf))) {
+						output += `  ✓ ${cf}\n`;
+					}
+				}
+				
+				output += `\n💡 Puedes usar "self_modify" para modificar archivos de Shiro`;
+				
+				return { ok: true, content: output };
+			}
+			case "self_modify": {
+				const file = args_.file ? String(args_.file).trim() : "";
+				const search = args_.search ? String(args_.search).trim() : "";
+				const replace = args_.replace ? String(args_.replace) : "";
+				
+				if (!file) return { ok: false, error: "El archivo es requerido" };
+				if (!search) return { ok: false, error: "El texto a buscar es requerido" };
+				
+				// Solo permitir archivos en src/
+				if (!file.startsWith("src/") && !file.startsWith("./src/")) {
+					return { ok: false, error: "Solo puedes modificar archivos en src/" };
+				}
+				
+				const { readFileSync, writeFileSync, existsSync } = await import("node:fs");
+				const { resolve } = await import("node:path");
+				
+				const workspace = getWorkspaceDir();
+				const filePath = resolve(workspace, file);
+				
+				// Verificar que está dentro del workspace
+				if (!filePath.startsWith(resolve(workspace))) {
+					return { ok: false, error: "Path fuera del workspace" };
+				}
+				
+				if (!existsSync(filePath)) {
+					return { ok: false, error: "Archivo no existe: " + file };
+				}
+				
+				const content = readFileSync(filePath, "utf-8");
+				
+				if (!content.includes(search)) {
+					return { ok: false, error: "Texto no encontrado en el archivo. Asegúrate de que el texto sea exacto." };
+				}
+				
+				if (replace) {
+					const newContent = content.replace(search, replace);
+					writeFileSync(filePath, newContent, "utf-8");
+					return { ok: true, content: `✅ Modificado: ${file}\n\nAntes:\n${search.slice(0, 100)}...\n\nDespués:\n${replace.slice(0, 100)}...` };
+				} else {
+					// Solo buscar
+					const lines = content.split("\n");
+					let found = false;
+					for (let i = 0; i < lines.length; i++) {
+						if (lines[i].includes(search)) {
+							found = true;
+							const start = Math.max(0, i - 2);
+							const end = Math.min(lines.length, i + 3);
+							return { 
+								ok: true, 
+								content: `✅ Encontrado en línea ${i + 1}:\n\n${lines.slice(start, end).join("\n")}` 
+							};
+						}
+					}
+					return { ok: false, error: "Texto no encontrado" };
+				}
+			}
+			case "git": {
+				const command = args_.command ? String(args_.command).trim() : "";
+				const repoPath = args_.repoPath ? String(args_.repoPath).trim() : ".";
+				
+				if (!command) return { ok: false, error: "El comando git es requerido" };
+				
+				const { exec } = await import("node:child_process");
+				const { resolve } = await import("node:path");
+				
+				const workspace = getWorkspaceDir();
+				const cwd = resolve(workspace, repoPath);
+				
+				return new Promise((resolve) => {
+					exec("git " + command, { cwd, timeout: 30000 }, (error, stdout, stderr) => {
+						if (error) {
+							resolve({ 
+								ok: false, 
+								error: `Git error: ${error.message}${stderr ? "\n" + stderr : ""}` 
+							});
+							return;
+						}
+						resolve({ 
+							ok: true, 
+							content: stdout || "(sin salida)" + (stderr ? "\n⚠️ " + stderr : "") 
+						});
+					});
+				});
+			}
+			case "self_analyze": {
+				const { selfAnalyze } = await import("../self/SelfReflection.js");
+				const result = await selfAnalyze();
+				return { ok: true, content: result };
+			}
+			case "self_reflect": {
+				const { listReflections, getPendingReflections } = await import("../self/SelfReflection.js");
+				const pendingOnly = args_.pending === true;
+				
+				const reflections = pendingOnly ? getPendingReflections() : listReflections();
+				
+				if (reflections.length === 0) {
+					return { ok: true, content: "No hay reflexiones registradas." };
+				}
+				
+				let output = pendingOnly ? "📝 Reflexiones pendientes:\n\n" : "📝 Historial de reflexiones:\n\n";
+				
+				for (const r of reflections) {
+					const status = r.implemented ? "✅" : "⏳";
+					output += `${status} [${r.timestamp.slice(0, 10)}] ${r.trigger}\n`;
+					output += `   📊 ${r.analysis.slice(0, 80)}...\n`;
+					if (r.suggestions.length > 0) {
+						output += `   💡 ${r.suggestions[0].slice(0, 60)}...\n`;
+					}
+					output += "\n";
+				}
+				
+				return { ok: true, content: output };
+			}
+			case "ask_user": {
+				const question = args_.question ? String(args_.question).trim() : "";
+				
+				if (!question) return { ok: false, error: "La pregunta es requerida" };
+				
+				// Esta tool no ejecuta nada, solo devuelve la pregunta
+				// El modelo sabe que debe hacer esta pregunta al usuario en lugar de actuar
+				return { 
+					ok: true, 
+					content: `🤔 PREGUNTA: ${question}\n\n(Responde a esta pregunta para que pueda ayudarte mejor)` 
+				};
 			}
 			default:
 				return { ok: false, error: "Herramienta desconocida: " + name };

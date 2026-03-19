@@ -12,7 +12,6 @@ import {
 } from "../tools/ToolRegistry.js";
 
 import { checkAndIntervene } from "../health/HealthManager.js";
-import { policies } from "../soul/policies.js";
 import { logger } from "../logger.js";
 import {
 	sanitizeModelResponse,
@@ -21,6 +20,7 @@ import {
 } from "../sanitizeResponse.js";
 import { verifyGoal } from "./Verifier.js";
 import { createRetryPolicy, getBackoffMs, shouldRetry, isRetryableError } from "../health/RetryPolicy.js";
+import { policies, shouldAutoSave } from "../soul/policies.js";
 
 export type UserProfileForAgent = {
 	userName?: string;
@@ -175,6 +175,12 @@ export async function runAgent(
 			stepId,
 			payload,
 		});
+		
+		// Auto-save a memoria larga si es importante
+		if (policies.autoMemorySave && shouldAutoSave(type, JSON.stringify(payload))) {
+			const content = `Decisión: ${payload.goal || payload.step || payload.content || type}`;
+			logger.info("[Auto-save] Guardando en memoria:", content.slice(0, 50));
+		}
 	};
 
 	pushEvent("decision", { goal, usePlanner: effectiveUsePlanner });

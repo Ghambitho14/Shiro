@@ -587,8 +587,18 @@ setNotificationCallback((reminder) => {
 
 startHeartbeat();
 
-process.on("SIGINT", () => shutdown("SIGINT"));
-process.on("SIGTERM", () => shutdown("SIGTERM"));
+// Inicializar scheduler de tareas programadas
+import { initCronScheduler, stopCronScheduler } from "./core/scheduler/CronService.js";
+initCronScheduler();
+
+process.on("SIGINT", () => {
+	stopCronScheduler();
+	shutdown("SIGINT");
+});
+process.on("SIGTERM", () => {
+	stopCronScheduler();
+	shutdown("SIGTERM");
+});
 
 server.listen(PORT, BIND_HOST, () => {
 	console.log(`Shiro web: http://${BIND_HOST}:${PORT}`);

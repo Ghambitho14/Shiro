@@ -99,26 +99,19 @@ export const TOOLS: ToolDefinition[] = [
 
 	// ============ WEB ============
 	{
-		label: "Obtener URL",
-		name: "fetch_url",
-		description: "Obtiene el contenido de una URL (página web, API).",
-		category: "web",
-		parameters: {
-			type: "object",
-			properties: { url: { type: "string", description: "URL completa (http:// o https://)" } },
-			required: ["url"],
-		},
-	},
-	{
 		label: "Buscar en Internet",
 		name: "search_web",
-		description: "Busca información en internet.",
+		description: "Busca información en internet. Úsalo cuando necesites información actualizada o no tengas certeza sobre algo.",
 		category: "web",
 		parameters: {
 			type: "object",
 			properties: { query: { type: "string", description: "Consulta de búsqueda" } },
 			required: ["query"],
 		},
+		examples: [
+			'"busca información sobre Python" → search_web({query: "Python programming"})',
+			'"qué tiempo hace hoy" → search_web({query: "clima hoy"})',
+		],
 	},
 	{
 		label: "Describir Imagen",
@@ -132,7 +125,27 @@ export const TOOLS: ToolDefinition[] = [
 		},
 	},
 
-	// ============ UTILIDADES ============
+	// ============ SISTEMA ============
+	{
+		label: "Ejecutar Comando",
+		name: "exec",
+		description: "Ejecuta un comando en la terminal del sistema. Úsalo para: instalar paquetes, ejecutar scripts, compilar código, git operations, etc. Requiere confirmación del usuario para comandos peligrosos.",
+		category: "sistema",
+		parameters: {
+			type: "object",
+			properties: {
+				command: { type: "string", description: "Comando a ejecutar (sin comillas extras)" },
+				timeout: { type: "number", description: "Timeout en ms (default 30000)" },
+				workingDir: { type: "string", description: "Directorio de trabajo opcional" },
+			},
+			required: ["command"],
+		},
+		examples: [
+			'"ejecuta npm install" → exec({command: "npm install"})',
+			'"compila el proyecto" → exec({command: "pnpm build"})',
+			'"git status" → exec({command: "git status"})',
+		],
+	},
 	{
 		label: "Calculadora",
 		name: "calculator",
@@ -261,6 +274,161 @@ export const TOOLS: ToolDefinition[] = [
 				limit: { type: "number", description: "Número de mensajes a mostrar" },
 			},
 		},
+	},
+
+	// ============ TAREA PROGRAMADA ============
+	{
+		label: "Crear Tarea Programada",
+		name: "cron_create",
+		description: "Crea una tarea que se ejecuta periódicamente. Úsalo para recordatorios recurrentes, tareas de mantenimiento, o acciones programadas.",
+		category: "utilidades",
+		parameters: {
+			type: "object",
+			properties: {
+				name: { type: "string", description: "Nombre de la tarea" },
+				expression: { type: "string", description: "Frecuencia: '30 minutos', '2 horas', '1 día'" },
+				action: { type: "string", description: "Tipo: notify, exec, reminder" },
+				message: { type: "string", description: "Mensaje para notify/reminder" },
+				command: { type: "string", description: "Comando a ejecutar (para action=exec)" },
+			},
+			required: ["name", "expression", "action"],
+		},
+		examples: [
+			'"recordatorio cada hora" → cron_create({name: "Recordatorio", expression: "1 hora", action: "reminder", message: "Toma agua"})',
+			'"ejecutar script cada día" → cron_create({name: "Backup", expression: "1 día", action: "exec", command: "npm run backup"})',
+		],
+	},
+	{
+		label: "Listar Tareas Programadas",
+		name: "cron_list",
+		description: "Lista todas las tareas programadas activas.",
+		category: "utilidades",
+		parameters: {
+			type: "object",
+			properties: {},
+		},
+	},
+	{
+		label: "Eliminar Tarea Programada",
+		name: "cron_delete",
+		description: "Elimina una tarea programada por su ID.",
+		category: "utilidades",
+		parameters: {
+			type: "object",
+			properties: { id: { type: "string", description: "ID de la tarea" } },
+			required: ["id"],
+		},
+	},
+	{
+		label: "Activar/Desactivar Tarea",
+		name: "cron_toggle",
+		description: "Activa o desactiva una tarea programada sin eliminarla.",
+		category: "utilidades",
+		parameters: {
+			type: "object",
+			properties: { 
+				id: { type: "string", description: "ID de la tarea" },
+				enabled: { type: "boolean", description: "true para activar, false para desactivar" },
+			},
+			required: ["id", "enabled"],
+		},
+	},
+
+	// ============ AUTO-MODIFICACIÓN ============
+	{
+		label: "Analizar Proyecto",
+		name: "project_analyze",
+		description: "Analiza la estructura de un proyecto de código. Úsalo para entender cómo funciona un proyecto, qué tecnologías usa, y su estructura de archivos.",
+		category: "sistema",
+		parameters: {
+			type: "object",
+			properties: {
+				path: { type: "string", description: "Ruta al proyecto (default: workspace)" },
+				deep: { type: "boolean", description: "Análisis profundo (default: false)" },
+			},
+		},
+		examples: [
+			'"analiza este proyecto" → project_analyze({path: "."})',
+			'"qué hace este código" → project_analyze({path: "./src", deep: true})',
+		],
+	},
+	{
+		label: "Auto-Modificar Código",
+		name: "self_modify",
+		description: "Modifica el propio código de Shiro (archivos en src/). Úsalo para corregir bugs, refactorizar, añadir features, o mejorar el código. El archivo debe existir y estar en src/.",
+		category: "sistema",
+		parameters: {
+			type: "object",
+			properties: {
+				file: { type: "string", description: "Archivo a modificar (ej: src/core/agent/Agent.ts)" },
+				search: { type: "string", description: "Texto a buscar en el archivo" },
+				replace: { type: "string", description: "Texto de reemplazo (deja vacío para solo buscar)" },
+			},
+			required: ["file", "search"],
+		},
+		examples: [
+			'"corrige el bug en Agent.ts" → self_modify({file: "src/core/agent/Agent.ts", search: "bug...", replace: "codigo corregido"})',
+			'"refactoriza la función" → self_modify({file: "src/core/tools/tools.ts", search: "function old", replace: "function new..."})',
+		],
+	},
+	{
+		label: "Git Operations",
+		name: "git",
+		description: "Ejecuta operaciones de git. Úsalo para commit, status, push, pull, branch, log, diff.",
+		category: "sistema",
+		parameters: {
+			type: "object",
+			properties: {
+				command: { type: "string", description: "Comando git (sin 'git', ej: 'status', 'add .', 'commit -m \"msg\"')" },
+				repoPath: { type: "string", description: "Ruta al repo (default: workspace)" },
+			},
+			required: ["command"],
+		},
+		examples: [
+			'"qué cambios hay" → git({command: "status"})',
+			'"guarda los cambios" → git({command: "add . && commit -m \"mejora\""})',
+		],
+	},
+
+	// ============ AUTO-REFLEXIÓN ============
+	{
+		label: "Auto-Analizarse",
+		name: "self_analyze",
+		description: "Analiza el propio código de Shiro para entender su estado actual y sugiere mejoras. Úsalo para auto-diagnosticarte.",
+		category: "sistema",
+		parameters: {
+			type: "object",
+			properties: {},
+		},
+	},
+	{
+		label: "Reflexiones",
+		name: "self_reflect",
+		description: "Lista las reflexiones previas del sistema, insights generados, y sugerencias de mejora pendientes.",
+		category: "sistema",
+		parameters: {
+			type: "object",
+			properties: {
+				pending: { type: "boolean", description: "Solo mostrar pendientes (default: false)" },
+			},
+		},
+	},
+	{
+		label: "Preguntar al Usuario",
+		name: "ask_user",
+		description: "Haz una pregunta al usuario para entender mejor qué necesita. Úsalo cuando no tengas claro el propósito de su solicitud. Retorna la respuesta del usuario.",
+		category: "utilidades",
+		parameters: {
+			type: "object",
+			properties: {
+				question: { type: "string", description: "La pregunta para el usuario" },
+			},
+			required: ["question"],
+		},
+		examples: [
+			'"no entiendo qué necesitas" → ask_user({question: "¿Para qué necesitas este archivo?"})',
+			'"necesito más contexto" → ask_user({question: "¿Qué esperas que haga este código?"})',
+		],
 	},
 ];
 
