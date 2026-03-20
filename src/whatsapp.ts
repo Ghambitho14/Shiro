@@ -140,6 +140,8 @@ async function processIncomingMessage(message: Message): Promise<void> {
 	const state = getState();
 	const config = getConfig();
 	const autonomous = config.autonomousMode === true;
+	const webTools = ["search_web", "fetch_url", "get_weather"];
+	const effectiveAllowedTools = autonomous ? undefined : webTools;
 	const workspaceContext = buildWorkspaceContext({ includeLongTermMemory: true });
 	setHealthActive();
 	const response = await runAgent(
@@ -149,7 +151,8 @@ async function processIncomingMessage(message: Message): Promise<void> {
 			memory: chatMemoryStore.getMemory(message.from),
 			agentName: state.name,
 			tokenBudget: 8000,
-			textOnly: !autonomous,
+			textOnly: false,
+			allowedTools: effectiveAllowedTools,
 			explainMode: config.explainMode,
 			conversation: withUser,
 			userProfile: getUserProfile(),

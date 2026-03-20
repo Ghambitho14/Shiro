@@ -281,12 +281,17 @@ class ShiroTUI {
 				.slice(-20)
 				.map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
 
+			const autonomous = this.config.autonomousMode === true;
+			const webTools = ["search_web", "fetch_url", "get_weather"];
+			const effectiveAllowedTools = autonomous ? undefined : webTools;
+
 			const response = await runAgent(msg, {
 				llm: getLLM(),
 				memory: this.memory,
 				agentName: this.state.name,
 				tokenBudget: 8000,
-				textOnly: this.config.autonomousMode === false,
+				textOnly: false,
+				allowedTools: effectiveAllowedTools,
 				explainMode: this.config.explainMode,
 				userProfile: getUserProfile(),
 				conversation,

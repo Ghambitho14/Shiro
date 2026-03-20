@@ -412,6 +412,16 @@ const server = createServer(async (req, res) => {
 			setHealthActive();
 			const config = getConfig();
 			const autonomous = config.autonomousMode === true;
+				const webTools = ["search_web", "fetch_url", "get_weather"];
+				const effectiveAllowedTools =
+					autonomous
+						? allowedTools
+						: (() => {
+								// Cumplir “siempre internet”: en modo no-autónomo limitamos a web-tools.
+								const incoming = Array.isArray(allowedTools) ? allowedTools : [];
+								const filtered = incoming.filter((t) => webTools.includes(t));
+								return (filtered.length ? filtered : webTools) as string[];
+							})();
 			const goal = userContent.trim() || "¿Qué hay en esta imagen?";
 			
 			// Procesar comandos
@@ -422,14 +432,21 @@ const server = createServer(async (req, res) => {
 				return;
 			}
 			
-			console.log("🛠️ Tools:", allowedTools?.length || "todas (15)", "| Autonomous:", autonomous, "| Msg:", goal.slice(0, 30));
+			console.log(
+				"🛠️ Tools:",
+				(effectiveAllowedTools as string[] | undefined)?.length || "todas (15)",
+				"| Autonomous:",
+				autonomous,
+				"| Msg:",
+				goal.slice(0, 30),
+			);
 			const content = await runAgent(goal, {
 				llm: getLLM(),
 				memory: sessionMemoryStore.getMemory(sessionId ?? "web-default"),
 				agentName: state.name,
 				tokenBudget: 8000,
-				textOnly: !autonomous,
-				allowedTools,
+				textOnly: false,
+				allowedTools: effectiveAllowedTools,
 				explainMode: config.explainMode,
 				conversation: incoming,
 				userProfile: getUserProfile(),

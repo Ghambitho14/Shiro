@@ -12,6 +12,19 @@ export const searchWebTool: ToolDefinition = {
 	},
 };
 
+function normalizeDuckDuckGoUrl(href: string): string {
+	// DuckDuckGo suele devolver links tipo "/l/?uddg=<encoded>&..." en vez de la URL final.
+	try {
+		const candidate = href.startsWith("http") ? href : `https://duckduckgo.com${href}`;
+		const url = new URL(candidate);
+		const uddg = url.searchParams.get("uddg");
+		if (uddg) return uddg;
+		return url.toString();
+	} catch {
+		return href;
+	}
+}
+
 export async function executeSearchWeb(args: Record<string, unknown>): Promise<{ ok: boolean; content: string }> {
 	const query = String(args.query ?? "").trim();
 	if (!query) return { ok: false, content: "Query de búsqueda requerida" };
@@ -32,16 +45,20 @@ export async function executeSearchWeb(args: Record<string, unknown>): Promise<{
 
 		const text = await res.text();
 		const results: string[] = [];
-		const titleRegex = /<a class="result__a"[^>]*href="[^"]*"[^>]*>([^<]+)<\/a>/g;
+		const titleRegex = /<a class="result__a"[^>]*href="([^"]+)"[^>]*>([^<]+)<\/a>/g;
 		const snippetRegex = /<a class="result__snippet"[^>]*>([^<]+)<\/a>/g;
 		let match;
 		let count = 0;
 
 		while ((match = titleRegex.exec(text)) !== null && count < 5) {
-			const title = match[1].replace(/<[^>]+>/g, "").trim();
+			const url = normalizeDuckDuckGoUrl(match[1]);
+			const title = match[2].replace(/<[^>]+>/g, "").trim();
 			const snippetMatch = snippetRegex.exec(text);
 			const snippet = snippetMatch ? snippetMatch[1].replace(/<[^>]+>/g, "").trim() : "";
-			results.push(`${count + 1}. ${title}${snippet ? " - " + snippet : ""}`);
+
+			const urlLine = url ? `\n   URL: ${url}` : "";
+			const snippetLine = snippet ? `\n   Snippet: ${snippet}` : "";
+			results.push(`${count + 1}. ${title}${urlLine}${snippetLine}`);
 			count++;
 		}
 
