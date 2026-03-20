@@ -44,8 +44,8 @@ export async function runTui(): Promise<void> {
 				await import("./server.js");
 				return;
 			case "chat": {
-				const { runTuiChat } = await import("./tui-chat.js");
-				await runTuiChat();
+				const { runShiroTUI } = await import("./tui-opencode.js");
+				await runShiroTUI();
 				break;
 			}
 			case "check": {

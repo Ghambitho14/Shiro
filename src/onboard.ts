@@ -40,19 +40,28 @@ export async function runOnboard(): Promise<void> {
 	setConfig({ abilities: abilities.trim() || undefined });
 	if (abilities.trim()) console.log("  → Guardado.\n");
 
-	// Modo autónomo (planner + herramientas)
+	// Modo autónomo (herramientas)
 	const autonomous = await confirm({
-		message: "¿Activar modo autónomo (planner + herramientas)? Sí recomendado.",
+		message: "¿Activar modo autónomo (herramientas)? Sí recomendado.",
 		default: getConfig().autonomousMode !== false,
 	});
 	setConfig({ autonomousMode: autonomous });
 	console.log("  → Modo autónomo:", autonomous ? "activado" : "desactivado (solo chat)\n");
+
+	// Explicación de tools
+	const explain = await input({
+		message: "¿Cómo quieres que Shiro explique el uso de herramientas? (off|brief|on)",
+		default: (getConfig().explainMode ?? "off"),
+	});
+	setConfig({ explainMode: (explain.trim() === "off" || explain.trim() === "on" || explain.trim() === "brief") ? (explain.trim() as "off" | "brief" | "on") : "brief" });
+	console.log("  → explainMode:", getConfig().explainMode, "\n");
 
 	// Resumen
 	const cfg = getConfig();
 	console.log("  --- Resumen ---");
 	console.log(`  Asistente:  Shiro (fijo)`);
 	console.log(`  Modo autónomo: ${(cfg.autonomousMode !== false) ? "sí" : "no (solo chat)"}`);
+	console.log(`  Explain tools: ${cfg.explainMode ?? "brief"}`);
 	console.log(`  vLLM URL:   ${cfg.vllmBaseUrl ?? DEFAULT_VLLM}`);
 	console.log(`  Modelo:     ${cfg.model ?? DEFAULT_MODEL}`);
 	console.log(`  Habilidades: ${cfg.abilities ? "(definidas)" : "(ninguna)"}`);

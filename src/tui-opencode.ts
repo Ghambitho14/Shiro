@@ -27,6 +27,10 @@ const COLORS = {
 	bgL: "\x1b[48;5;238m",
 };
 
+function safeRepeat(count: number): string {
+	return " ".repeat(Math.max(0, count));
+}
+
 function clearScreen() {
 	process.stdout.write("\x1b[2J\x1b[3J");
 }
@@ -99,11 +103,11 @@ class ShiroTUI {
 		process.stdout.write(`${COLORS.bgL}${COLORS.C} Shiro ${COLORS.W} ${COLORS.bgD}${COLORS.Gr}│${COLORS.W} ${COLORS.Gr}Terminal${COLORS.W}    ${COLORS.Gr}│${COLORS.W} ${COLORS.Gr}Editor${COLORS.W}     ${COLORS.Gr}│${COLORS.W} ${COLORS.Gr}Status${COLORS.W}`);
 		
 		process.stdout.write(`\x1b[2;1H`);
-		process.stdout.write(COLORS.Gr + "─".repeat(sidebarW) + "┼" + "─".repeat(mainW) + "┤" + COLORS.W);
+		process.stdout.write(COLORS.Gr + "─".repeat(Math.max(0, sidebarW)) + "┼" + "─".repeat(Math.max(0, mainW)) + "┤" + COLORS.W);
 		
 		for (let y = 3; y < H - 8; y++) {
 			process.stdout.write(`\x1b[${y};1H`);
-			process.stdout.write(COLORS.Gr + "│" + COLORS.W + " ".repeat(sidebarW - 2));
+			process.stdout.write(COLORS.Gr + "│" + COLORS.W + safeRepeat(sidebarW - 2));
 			process.stdout.write(`\x1b[${y};${sidebarW + 1}H`);
 			process.stdout.write(COLORS.Gr + "│" + COLORS.W);
 		}
@@ -113,21 +117,21 @@ class ShiroTUI {
 		
 		for (let y = 3; y < H - 8; y++) {
 			process.stdout.write(`\x1b[${y};${sidebarW + 2}H`);
-			process.stdout.write(" ".repeat(mainW - 1));
+			process.stdout.write(safeRepeat(mainW - 1));
 		}
 		
 		const statusY = H - 7;
 		process.stdout.write(`\x1b[${statusY};1H`);
-		process.stdout.write(COLORS.Gr + "├" + "─".repeat(sidebarW) + "┼" + "─".repeat(mainW) + "┤" + COLORS.W);
+		process.stdout.write(COLORS.Gr + "├" + "─".repeat(Math.max(0, sidebarW)) + "┼" + "─".repeat(Math.max(0, mainW)) + "┤" + COLORS.W);
 		
 		const inputY = H - 5;
 		process.stdout.write(`\x1b[${inputY};1H`);
-		process.stdout.write(`${COLORS.Gr}│${COLORS.K}➤ ${COLORS.W}${" ".repeat(sidebarW - 3)}`);
+		process.stdout.write(`${COLORS.Gr}│${COLORS.K}➤ ${COLORS.W}${safeRepeat(sidebarW - 3)}`);
 		process.stdout.write(`\x1b[${inputY};${sidebarW + 1}H`);
 		process.stdout.write(`${COLORS.Gr}│${COLORS.W}`);
 		
 		process.stdout.write(`\x1b[${H - 1};1H`);
-		process.stdout.write(COLORS.bgD + COLORS.Gr + " /ayuda /salir /status /files " + " ".repeat(W - 50) + COLORS.W);
+		process.stdout.write(COLORS.bgD + COLORS.Gr + " /ayuda /salir /status /files " + safeRepeat(W - 50) + COLORS.W);
 	}
 	
 	private drawChat() {
@@ -155,6 +159,7 @@ class ShiroTUI {
 	}
 	
 	private wrapText(text: string, maxW: number): string[] {
+		if (maxW <= 1) return [text.slice(0, 1)];
 		const words = text.split(" ");
 		const lines: string[] = [];
 		let line = "";
@@ -239,6 +244,22 @@ class ShiroTUI {
 			this.showStatus();
 			return;
 		}
+
+		if (cmd.startsWith("/explain") || cmd.startsWith("/explica")) {
+			const parts = msg.trim().split(/\s+/);
+			const mode = (parts[1] ?? "").toLowerCase();
+			if (mode === "off" || mode === "brief" || mode === "on") {
+				const { setConfig, getConfig } = await import("./config/config.js");
+				setConfig({ explainMode: mode });
+				this.config = getConfig();
+				this.history.push({ role: "system", content: `explainMode = ${mode}`, timestamp: Date.now() });
+			} else {
+				this.history.push({ role: "system", content: "Uso: /explain off|brief|on", timestamp: Date.now() });
+			}
+			this.drawLayout();
+			this.drawChat();
+			return;
+		}
 		
 		if (cmd === "/files") {
 			this.showFiles();
@@ -253,14 +274,22 @@ class ShiroTUI {
 		process.stdout.write(`${COLORS.Gr}🤔 Pensando...${COLORS.W}`);
 		
 		try {
+			// Para que el comportamiento sea consistente con `server.ts` y `whatsapp.ts`,
+			// pasamos el historial (solo user/assistant) como contexto conversacional.
+			const conversation = this.history
+				.filter((m) => m.role === "user" || m.role === "assistant")
+				.slice(-20)
+				.map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+
 			const response = await runAgent(msg, {
 				llm: getLLM(),
 				memory: this.memory,
 				agentName: this.state.name,
 				tokenBudget: 8000,
-				usePlanner: this.config.autonomousMode !== false,
 				textOnly: this.config.autonomousMode === false,
+				explainMode: this.config.explainMode,
 				userProfile: getUserProfile(),
+				conversation,
 			}, this.workspaceContext || undefined);
 			
 			this.history.push({

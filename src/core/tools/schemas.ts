@@ -101,6 +101,21 @@ export const channelDeleteSchema = z.object({
 	id: z.string().min(1, "id requerido"),
 });
 
+export const createReminderSchema = z.object({
+	title: z.string().min(1, "título requerido"),
+	datetime: z.string().min(1, "fecha y hora requerida"),
+	description: z.string().optional(),
+	repeat: z.enum(["daily", "weekly", "monthly", "none"]).optional().default("none"),
+});
+
+export const listRemindersSchema = z.object({
+	include_completed: z.boolean().optional().default(false),
+});
+
+export const completeReminderSchema = z.object({
+	id: z.string().min(1, "id requerido"),
+});
+
 export type SearchWebArgs = z.infer<typeof searchWebSchema>;
 export type ExecArgs = z.infer<typeof execSchema>;
 export type CronCreateArgs = z.infer<typeof cronCreateSchema>;
@@ -138,4 +153,7 @@ export const toolSchemas: Record<string, z.ZodType<Record<string, unknown>>> = {
 	channel_list: channelListSchema,
 	channel_start: channelStartSchema,
 	channel_delete: channelDeleteSchema,
+	create_reminder: createReminderSchema,
+	list_reminders: listRemindersSchema,
+	complete_reminder: completeReminderSchema,
 };

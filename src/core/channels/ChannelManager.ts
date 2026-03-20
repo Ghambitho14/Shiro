@@ -157,6 +157,7 @@ function generateTelegramBridge(channel: Channel): string {
 
 import { getLLM } from "../../llm/getLLM.js";
 import { runAgent } from "../../agent/Agent.js";
+import { getConfig } from "../../config/config.js";
 import { createSessionMemoryStore } from "../../memory/SessionMemoryStore.js";
 import { MemoryManager } from "../../memory/MemoryManager.js";
 import { getUserProfile } from "../../user-profile.js";
@@ -191,7 +192,8 @@ async function handleUpdate(update: { message?: { chat: { id: number }; text?: s
 			memory,
 			agentName: SHIRO_NAME,
 			tokenBudget: 8000,
-			usePlanner: true,
+			textOnly: false,
+			explainMode: getConfig().explainMode,
 			userProfile: getUserProfile(),
 		}, workspaceContext ?? undefined);
 		

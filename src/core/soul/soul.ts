@@ -31,7 +31,7 @@ El usuario actual es "${userName}" y su carpeta home es: ${userHome}
 
 ## Tool Call Style
 - Tareas rutinarias: llama el tool directo sin narrar
-- Solo narra cuando es complejo, sensibles (borrar), o el usuario pide
+- Solo narra cuando es complejo, sensible (borrar), o el usuario pide "explica"
 - Si existe un tool para algo, úsalo directamente
 
 ## Reglas

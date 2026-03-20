@@ -110,9 +110,11 @@ function sanitizeAllowedTools(input: unknown): string[] | undefined {
 
 function isWhatsAppConfigureIntent(text: string): boolean {
 	const t = text.toLowerCase();
-	return (t.includes("whatsapp") && (t.includes("config") || t.includes("conectar") || t.includes("iniciar")))
+	return (t.includes("whatsapp") && (t.includes("config") || t.includes("conectar") || t.includes("iniciar") || t.includes("hablar") || t.includes("activar")))
 		|| t.includes("quiero configurar whatsapp")
-		|| t.includes("activar whatsapp");
+		|| t.includes("activar whatsapp")
+		|| t.includes("hablar por whatsapp")
+		|| t.includes("conectar whatsapp");
 }
 
 function isWhatsAppStopIntent(text: string): boolean {
@@ -139,7 +141,7 @@ const server = createServer(async (req, res) => {
 
 	res.setHeader("Access-Control-Allow-Origin", "*");
 	res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-	res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+	res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 	if (method === "OPTIONS") {
 		res.writeHead(204);
 		res.end();
@@ -151,11 +153,14 @@ const server = createServer(async (req, res) => {
 		const state = getState();
 		const vllm = getLLM().getConfig();
 		const config = getConfig();
+		const waStatus = getWhatsAppBridgeStatus();
+		const waQr = waStatus.qr ? await (await import("qrcode")).toDataURL(waStatus.qr, { margin: 1, width: 280 }) : null;
 		sendJson(res, 200, {
 			name: state.name,
 			vllm,
 			abilities: config.abilities ?? null,
 			autonomousMode: config.autonomousMode ?? true,
+			whatsapp: { ...waStatus, qrDataUrl: waQr },
 		});
 		return;
 	}
@@ -206,7 +211,8 @@ const server = createServer(async (req, res) => {
 	}
 
 	if (method === "GET" && pathname === "/api/chat-sessions") {
-		sendJson(res, 200, { sessions: listChatSessions() });
+		const sessions = await listChatSessions();
+		sendJson(res, 200, { sessions });
 		return;
 	}
 
@@ -232,7 +238,7 @@ const server = createServer(async (req, res) => {
 			sendJson(res, 400, { error: "Invalid JSON" });
 			return;
 		}
-		const session = createChatSession(initialMessages);
+		const session = await createChatSession(initialMessages);
 		sendJson(res, 201, { session });
 		return;
 	}
@@ -245,7 +251,7 @@ const server = createServer(async (req, res) => {
 		}
 
 		if (method === "GET") {
-			const session = getChatSession(sessionId);
+			const session = await getChatSession(sessionId);
 			if (!session) {
 				sendJson(res, 404, { error: "Session not found" });
 				return;
@@ -274,7 +280,7 @@ const server = createServer(async (req, res) => {
 				sendJson(res, 400, { error: "Invalid JSON" });
 				return;
 			}
-			const session = saveChatSession(sessionId, messages);
+			const session = await saveChatSession(sessionId, messages);
 			if (!session) {
 				sendJson(res, 404, { error: "Session not found" });
 				return;
@@ -284,7 +290,7 @@ const server = createServer(async (req, res) => {
 		}
 
 		if (method === "DELETE") {
-			const ok = deleteChatSession(sessionId);
+			const ok = await deleteChatSession(sessionId);
 			if (!ok) {
 				sendJson(res, 404, { error: "Session not found" });
 				return;
@@ -339,14 +345,38 @@ const server = createServer(async (req, res) => {
 		}
 		if (isWhatsAppConfigureIntent(userContent)) {
 			try {
+				console.log("[WhatsApp] Iniciando configuración...");
 				await startWhatsAppBridge({ printQrToConsole: true });
-				const data = await buildWhatsAppResponse();
+				console.log("[WhatsApp] Cliente iniciado, esperando QR...");
+				
+				// Esperar hasta que aparezca el QR o pase timeout
+				let attempts = 0;
+				const maxAttempts = 20; // 20 * 500ms = 10 segundos
+				let data;
+				while (attempts < maxAttempts) {
+					await new Promise(r => setTimeout(r, 500));
+					data = await buildWhatsAppResponse();
+					if (data.qrDataUrl || data.status.state === "ready" || data.status.lastError) {
+						break;
+					}
+					attempts++;
+				}
+				
+				console.log("[WhatsApp] Estado final:", data.status.state, "| QR:", data.qrDataUrl ? "sí" : "no", "| Error:", data.status.lastError);
 				const base = data.status.state === "ready"
 					? "WhatsApp ya está conectado."
-					: "Listo. Inicié la configuración de WhatsApp.";
-				const content = data.qrDataUrl
+					: "Inicié la configuración de WhatsApp.";
+				let extraInfo = "";
+			if (data.status.lastError) {
+				extraInfo = `\n\n⚠️ Error anterior: ${data.status.lastError}`;
+			} else if (!data.qrDataUrl && data.status.state !== "ready") {
+				extraInfo = "\n\n📝 El código QR debería aparecer en la consola del servidor (terminal donde ejecutaste Shiro). Si no lo ves, espera unos segundos y pregunta de nuevo \"estado whatsapp\".";
+			}
+			const content = data.status.state === "ready"
+				? "WhatsApp ya está conectado y funcionando."
+				: data.qrDataUrl
 					? `${base} Escanea el código QR que te muestro abajo desde WhatsApp > Dispositivos vinculados.`
-					: `${base} Esperando QR... si no aparece en unos segundos, vuelve a pedir: "configurar whatsapp".`;
+					: `${base} Preparando QR...${extraInfo}`;
 				sendJson(res, 200, { content, whatsapp: { ...data.status, qrDataUrl: data.qrDataUrl } });
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
@@ -381,7 +411,7 @@ const server = createServer(async (req, res) => {
 		try {
 			setHealthActive();
 			const config = getConfig();
-			const autonomous = config.autonomousMode !== false;
+			const autonomous = config.autonomousMode === true;
 			const goal = userContent.trim() || "¿Qué hay en esta imagen?";
 			
 			// Procesar comandos
@@ -398,9 +428,9 @@ const server = createServer(async (req, res) => {
 				memory: sessionMemoryStore.getMemory(sessionId ?? "web-default"),
 				agentName: state.name,
 				tokenBudget: 8000,
-				usePlanner: autonomous,
 				textOnly: !autonomous,
 				allowedTools,
+				explainMode: config.explainMode,
 				conversation: incoming,
 				userProfile: getUserProfile(),
 			}, workspaceContext ?? undefined);
@@ -574,8 +604,8 @@ const server = createServer(async (req, res) => {
 server.on("error", (err: NodeJS.ErrnoException) => {
 	if (err.code === "EADDRINUSE") {
 		console.error(`\n  El puerto ${PORT} ya está en uso. Cierra el otro proceso o usa otro puerto:`);
-		console.error(`  Windows: set PORT=1407 && pnpm run dev`);
-		console.error(`  Linux/Mac: PORT=1407 pnpm run dev\n`);
+		console.error(`  Windows (PowerShell): $env:PORT=1407; npm run dev`);
+		console.error(`  Linux/Mac: PORT=1407 npm run dev\n`);
 	} else {
 		console.error(err);
 	}

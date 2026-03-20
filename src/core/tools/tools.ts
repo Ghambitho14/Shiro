@@ -82,10 +82,18 @@ function validateArgs(name: string, args: Record<string, unknown>): { ok: true; 
 }
 
 export async function executeTool(name: string, args: Record<string, unknown>): Promise<ToolResult> {
+	const hasSchema = Boolean(toolSchemas[name]);
+	let validatedData: Record<string, unknown> | null = null;
+	if (hasSchema) {
+		const validated = validateArgs(name, args);
+		if (!validated.ok) return { ok: false, error: validated.error };
+		validatedData = validated.data;
+	}
+
 	// Primero verificar si hay un ejecutor registrado para esta tool
 	if (hasToolExecutor(name)) {
 		const executor = getToolExecutor(name)!;
-		const result = await executor(args);
+		const result = await executor(validatedData ?? args);
 		if (result.ok) {
 			return { ok: true, content: result.content };
 		}

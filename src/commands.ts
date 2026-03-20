@@ -1,4 +1,4 @@
-import { getConfig } from "./config/config.js";
+import { getConfig, setConfig } from "./config/config.js";
 import { getLLM } from "./core/llm/getLLM.js";
 import { getHealthState } from "./core/health/HealthManager.js";
 import { metrics } from "./core/health/metrics.js";
@@ -37,6 +37,7 @@ export function parseCommand(message: string, sessionId: string): CommandResult 
 - URL: ${llmConfig.baseUrl}
 
 **Herramientas:** ${config.autonomousMode ? "🟢 Autonomous" : "🔴 Solo chat"}
+**Explain tools:** ${config.explainMode ?? "off"}
 
 **Health:**
 - Status: ${health.status}
@@ -63,11 +64,13 @@ export function parseCommand(message: string, sessionId: string): CommandResult 
 - \`/reset\` - Reiniciar conversación
 - \`/new\` - Nueva sesión
 - \`/compact\` - Compactar contexto
+- \`/provider\` - Ver proveedor actual
+- \`/explain off|brief|on\` - Configura si Shiro explica el uso de tools
 - \`/help\` - Mostrar esta ayuda
 
 **Ejemplos:**
-- "/status" → Ver información del sistema
-- "/reset" → Empezar conversación desde cero`;
+- "/explain brief" → Shiro mencionará qué tools usó (breve)
+- "/explain off" → Shiro no mencionará tools (estilo OpenClaw)`;
 
 			return { executed: true, content, shouldContinue: false };
 		}
@@ -84,6 +87,26 @@ export function parseCommand(message: string, sessionId: string): CommandResult 
 - Ollama: ${config.ollamaBaseUrl}
 - OpenRouter: ${config.openrouterApiKey ? "Configurado" : "Sin API Key"}`;
 			return { executed: true, content, shouldContinue: false };
+		}
+
+		case "explain":
+		case "explica": {
+			const modeRaw = (args[0] ?? "").toLowerCase().trim();
+			const mode = (modeRaw === "off" || modeRaw === "brief" || modeRaw === "on") ? modeRaw : "";
+			if (!mode) {
+				const current = getConfig().explainMode ?? "off";
+				return {
+					executed: true,
+					content: `Uso: \`/explain off|brief|on\`\nActual: \`${current}\`\n\n- off: no menciona tools\n- brief: nota corta si usó tools\n- on: lista tools usadas`,
+					shouldContinue: false,
+				};
+			}
+			setConfig({ explainMode: mode as "off" | "brief" | "on" });
+			return {
+				executed: true,
+				content: `✅ Listo. explainMode = \`${mode}\``,
+				shouldContinue: false,
+			};
 		}
 
 		default: {

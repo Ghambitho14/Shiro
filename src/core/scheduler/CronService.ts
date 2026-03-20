@@ -110,6 +110,11 @@ export function deleteCronTask(id: string): boolean {
 	const index = tasks.findIndex(t => t.id === id);
 	
 	if (index === -1) return false;
+	const existing = scheduledTimeouts.get(id);
+	if (existing) {
+		clearInterval(existing);
+		scheduledTimeouts.delete(id);
+	}
 	
 	tasks.splice(index, 1);
 	saveTasks(tasks);
@@ -128,6 +133,12 @@ export function toggleCronTask(id: string, enabled: boolean): CronTask | undefin
 	
 	if (enabled) {
 		scheduleTask(task);
+	} else {
+		const existing = scheduledTimeouts.get(id);
+		if (existing) {
+			clearInterval(existing);
+			scheduledTimeouts.delete(id);
+		}
 	}
 	
 	return task;
@@ -140,12 +151,22 @@ function scheduleTask(task: CronTask): void {
 	
 	const existing = scheduledTimeouts.get(task.id);
 	if (existing) {
-		clearTimeout(existing);
+		clearInterval(existing);
 	}
 	
 	const { interval } = parseCronExpression(task.expression);
 	
 	const timeout = setInterval(async () => {
+		// Revalidar estado en disco para evitar que tareas desactivadas/borradas sigan ejecutándose.
+		const latest = loadTasks().find(t => t.id === task.id);
+		if (!latest || !latest.enabled) {
+			const current = scheduledTimeouts.get(task.id);
+			if (current) {
+				clearInterval(current);
+				scheduledTimeouts.delete(task.id);
+			}
+			return;
+		}
 		task.lastRun = new Date().toISOString();
 		task.nextRun = new Date(Date.now() + interval).toISOString();
 		saveTasks(loadTasks().map(t => t.id === task.id ? task : t));

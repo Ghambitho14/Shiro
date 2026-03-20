@@ -1124,6 +1124,7 @@
 				<span class="hc-dot green" id="hc-gateway-dot"></span>
 				<span>Gateway</span>
 			</div>
+			<button class="hc-btn" id="whatsapp-btn" title="WhatsApp">💬</button>
 			<button class="theme-btn" id="theme-btn" title="Cambiar tema">🌙</button>
 		</div>
 	</header>
@@ -1920,6 +1921,11 @@ chatForm.addEventListener("submit", async (e) => {
 		renderMessages();
 		addLog(`Chat: mensaje enviado (${text.slice(0, 30)}...)`);
 
+		// Show WhatsApp QR if present
+		if (d.whatsapp?.qrDataUrl) {
+			showWhatsAppModal(d);
+		}
+
 		// Save session
 		await api("/api/chat-sessions/" + encodeURIComponent(state.activeSessionId), {
 			method: "PUT",
@@ -2188,6 +2194,69 @@ async function init() {
 
 	addLog("Sistema iniciado");
 }
+
+// ===== WHATSAPP =====
+const whatsappBtn = document.getElementById("whatsapp-btn");
+let waModal = null;
+
+function showWhatsAppModal(data) {
+	if (!waModal) {
+		waModal = document.createElement("div");
+		waModal.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.8);display:flex;align-items:center;justify-content:center;z-index:9999;";
+		waModal.innerHTML = `
+			<div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:1.5rem;max-width:400px;width:90%;text-align:center;">
+				<h3 style="margin:0 0 1rem;color:var(--text-primary)">WhatsApp</h3>
+				<div id="wa-modal-content"></div>
+				<button id="wa-modal-close" style="margin-top:1rem;padding:0.5rem 1rem;background:var(--accent);color:#fff;border:none;border-radius:var(--radius-sm);cursor:pointer;">Cerrar</button>
+			</div>`;
+		waModal.querySelector("#wa-modal-close").addEventListener("click", () => waModal?.remove());
+		document.body.appendChild(waModal);
+	}
+	
+	const content = data.whatsapp;
+	const state = content?.state || "unknown";
+	let html = `<div style="margin-bottom:1rem;color:var(--text-secondary)">Estado: <strong>${state}</strong></div>`;
+	
+	if (content?.qrDataUrl) {
+		html += `<img src="${content.qrDataUrl}" style="max-width:250px;border-radius:var(--radius-sm);margin:1rem 0;">`;
+		html += `<p style="color:var(--text-muted);font-size:0.8rem">Escanea este QR desde WhatsApp → Dispositivos vinculados</p>`;
+	} else if (state === "ready") {
+		html += `<p style="color:var(--success)">✅ WhatsApp conectado y funcionando</p>`;
+	} else {
+		html += `<p style="color:var(--text-muted)">${content?.lastError || "Esperando..."}</p>`;
+		html += `<button id="wa-connect-btn" style="margin-top:0.5rem;padding:0.5rem 1rem;background:var(--accent);color:#fff;border:none;border-radius:var(--radius-sm);cursor:pointer;">Conectar WhatsApp</button>`;
+	}
+	
+	waModal.querySelector("#wa-modal-content").innerHTML = html;
+	
+	const connectBtn = waModal.querySelector("#wa-connect-btn");
+	if (connectBtn) {
+		connectBtn.addEventListener("click", async () => {
+			connectBtn.textContent = "Conectando...";
+			connectBtn.disabled = true;
+			await api("/api/chat", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ messages: [{ role: "user", content: "configurar whatsapp" }] })
+			});
+			setTimeout(async () => {
+				const stateData = await api("/api/state");
+				showWhatsAppModal(stateData);
+			}, 3000);
+		});
+	}
+}
+
+whatsappBtn.addEventListener("click", async () => {
+	try {
+		const d = await api("/api/state");
+		console.log("WhatsApp state:", d.whatsapp);
+		showWhatsAppModal(d);
+	} catch (e) {
+		console.error("Error getting WhatsApp state:", e);
+		alert("Error: " + e.message);
+	}
+});
 
 init().catch(console.error);
 </script>

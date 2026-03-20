@@ -32,6 +32,13 @@ export type AgentOptions = {
 	tokenBudget?: number;
 	textOnly?: boolean;
 	allowedTools?: string[];
+	/**
+	 * Explicación de herramientas usadas en la respuesta.
+	 * - off: nunca
+	 * - brief: una línea corta si se usaron tools
+	 * - on: lista corta de tools usadas
+	 */
+	explainMode?: "off" | "brief" | "on";
 	conversation?: Array<{ role: "user" | "assistant"; content: string | ContentPart[] }>;
 	userProfile?: UserProfileForAgent | null;
 };
@@ -80,9 +87,18 @@ export async function runAgent(
 		tokenBudget = 8000,
 		textOnly = false,
 		allowedTools,
+		explainMode = "off",
 		conversation,
 		userProfile,
 	} = opts;
+
+	const wantExplain = (() => {
+		const t = (goal || "").toLowerCase();
+		return /\b(explica|explicame|explícame|que hiciste|qué hiciste|como lo hiciste|cómo lo hiciste|pasos|tools|herramientas)\b/i.test(t);
+	})();
+
+	const effectiveExplainMode: "off" | "brief" | "on" =
+		wantExplain && explainMode === "off" ? "brief" : explainMode;
 
 	const runId = `run_${Date.now()}`;
 
@@ -134,14 +150,49 @@ export async function runAgent(
 	const toolsDef = getToolsDefinitionScoped(allowedTools);
 	const retryPolicy = createRetryPolicy({ maxRetries: 3, baseDelayMs: 500 });
 
+	type ToolCallTrace = { name: string; ok: boolean; argsKeys: string[] };
+	const usedTools: ToolCallTrace[] = [];
+
+	function safeArgsKeys(args: Record<string, unknown>): string[] {
+		try {
+			return Object.keys(args ?? {}).slice(0, 12);
+		} catch {
+			return [];
+		}
+	}
+
+	function buildToolExplanation(): string {
+		if (effectiveExplainMode === "off") return "";
+		if (!usedTools.length) return "";
+		const uniq: ToolCallTrace[] = [];
+		const seen = new Set<string>();
+		for (const t of usedTools) {
+			if (seen.has(t.name)) continue;
+			seen.add(t.name);
+			uniq.push(t);
+		}
+		if (effectiveExplainMode === "brief") {
+			return `\n\nNota: usé herramientas (${uniq.map((t) => t.name).join(", ")}).`;
+		}
+		if (effectiveExplainMode !== "on") return "";
+		const lines = uniq.map((t) => {
+			const keys = t.argsKeys.length ? ` args: ${t.argsKeys.join(", ")}` : "";
+			const status = t.ok ? "ok" : "falló";
+			return `- ${t.name} (${status})${keys}`;
+		});
+		return `\n\nHerramientas usadas:\n${lines.join("\n")}`;
+	}
+
 	const adaptToolResult = async (
 		name: string,
 		args: Record<string, unknown>,
 	): Promise<{ ok: boolean; content: string; error?: string }> => {
 		logger.info(`🔧 Tool: ${name}`);
+		pushEvent("tool_call", { name, argsKeys: safeArgsKeys(args) });
 		let lastError: string | undefined;
 		for (let attempt = 0; attempt <= retryPolicy.maxRetries; attempt++) {
 			const r = await executeToolSafeScoped(name, args, allowedTools);
+			usedTools.push({ name, ok: r.ok, argsKeys: safeArgsKeys(args) });
 			if (r.ok) {
 				return { ok: true, content: r.content };
 			}
@@ -180,7 +231,8 @@ export async function runAgent(
 		}
 		const out = sanitizeModelResponse(content || "");
 		pushEvent("observation", { content: out });
-		return isMeaningfulResponse(out) ? out : FALLBACK_EMPTY_RESPONSE;
+		const finalText = isMeaningfulResponse(out) ? out : FALLBACK_EMPTY_RESPONSE;
+		return finalText + buildToolExplanation();
 	} catch (err) {
 		const msg = err instanceof Error ? err.message : String(err);
 		pushEvent("error", { content: msg });

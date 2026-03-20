@@ -47,8 +47,8 @@ async function main(): Promise<void> {
 	}
 
 	if (arg === "tui") {
-		const { runTuiChat } = await import("./tui-chat.js");
-		await runTuiChat();
+		const { runShiroTUI } = await import("./tui-opencode.js");
+		await runShiroTUI();
 		return;
 	}
 

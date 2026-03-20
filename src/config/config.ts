@@ -22,8 +22,15 @@ export type AppConfig = {
 	 * Si false, las conversaciones solo existen en memoria durante la sesión.
 	 */
 	persistChatHistory?: boolean;
-	/** Si true (default), usa planner + herramientas; si false, solo chat en texto. */
+	/** Si true (default), usa herramientas; si false, solo chat en texto. */
 	autonomousMode?: boolean;
+	/**
+	 * Explicación de uso de herramientas:
+	 * - off: nunca menciona herramientas
+	 * - brief: una línea corta si usó herramientas (default)
+	 * - on: lista corta de herramientas usadas
+	 */
+	explainMode?: "off" | "brief" | "on";
 };
 
 const DEFAULTS: AppConfig = {
@@ -39,6 +46,7 @@ const DEFAULTS: AppConfig = {
 	abilities: undefined,
 	persistChatHistory: true,
 	autonomousMode: true,
+	explainMode: "off",
 };
 
 function isValidUrl(url: string): boolean {
@@ -56,17 +64,21 @@ function isValidModel(model: string | undefined): boolean {
 	return trimmed.length > 0 && trimmed.length <= 100;
 }
 
-function sanitizeUrl(url: string | undefined): string {
-	if (!url || typeof url !== "string") return DEFAULTS.vllmBaseUrl!;
+function sanitizeUrl(url: string | undefined, fallback: string): string {
+	if (!url || typeof url !== "string") return fallback;
 	const cleaned = url.replace(/\/+$/, "").trim();
-	if (!cleaned) return DEFAULTS.vllmBaseUrl!;
-	return isValidUrl(cleaned) ? cleaned : DEFAULTS.vllmBaseUrl!;
+	if (!cleaned) return fallback;
+	return isValidUrl(cleaned) ? cleaned : fallback;
 }
 
 function sanitizeModel(model: string | undefined): string {
 	if (!model || typeof model !== "string") return DEFAULTS.model!;
 	const trimmed = model.trim();
 	return isValidModel(trimmed) ? trimmed : DEFAULTS.model!;
+}
+
+function sanitizeExplainMode(v: unknown): "off" | "brief" | "on" {
+	return v === "off" || v === "brief" || v === "on" ? v : (DEFAULTS.explainMode ?? "brief");
 }
 
 function loadConfig(): AppConfig {
@@ -87,8 +99,9 @@ function loadConfig(): AppConfig {
 			openrouterBaseUrl: isValidUrl(data.openrouterBaseUrl as string) ? (data.openrouterBaseUrl as string).replace(/\/+$/, "") : DEFAULTS.openrouterBaseUrl,
 			abilities: typeof data.abilities === "string" ? data.abilities : DEFAULTS.abilities,
 			persistChatHistory: typeof data.persistChatHistory === "boolean" ? data.persistChatHistory : DEFAULTS.persistChatHistory,
-		autonomousMode: typeof data.autonomousMode === "boolean" ? data.autonomousMode : DEFAULTS.autonomousMode,
-	};
+			autonomousMode: typeof data.autonomousMode === "boolean" ? data.autonomousMode : DEFAULTS.autonomousMode,
+			explainMode: sanitizeExplainMode(data.explainMode),
+		};
 	} catch {
 		return { ...DEFAULTS };
 	}
@@ -105,17 +118,18 @@ export function setConfig(partial: Partial<AppConfig>): AppConfig {
 	const current = getConfig();
 	const next: AppConfig = {
 		model: partial.model !== undefined ? sanitizeModel(partial.model) : current.model,
-		vllmBaseUrl: partial.vllmBaseUrl !== undefined ? sanitizeUrl(partial.vllmBaseUrl) : current.vllmBaseUrl,
+		vllmBaseUrl: partial.vllmBaseUrl !== undefined ? sanitizeUrl(partial.vllmBaseUrl, DEFAULTS.vllmBaseUrl!) : current.vllmBaseUrl,
 		vllmApiKey: partial.vllmApiKey !== undefined ? partial.vllmApiKey : current.vllmApiKey,
 		llmProvider: partial.llmProvider !== undefined ? partial.llmProvider : current.llmProvider,
 		ollamaModel: partial.ollamaModel !== undefined ? partial.ollamaModel.trim() : current.ollamaModel,
-		ollamaBaseUrl: partial.ollamaBaseUrl !== undefined ? sanitizeUrl(partial.ollamaBaseUrl) : current.ollamaBaseUrl,
+		ollamaBaseUrl: partial.ollamaBaseUrl !== undefined ? sanitizeUrl(partial.ollamaBaseUrl, DEFAULTS.ollamaBaseUrl!) : current.ollamaBaseUrl,
 		openrouterApiKey: partial.openrouterApiKey !== undefined ? partial.openrouterApiKey : current.openrouterApiKey,
 		openrouterModel: partial.openrouterModel !== undefined ? partial.openrouterModel.trim() : current.openrouterModel,
-		openrouterBaseUrl: partial.openrouterBaseUrl !== undefined ? sanitizeUrl(partial.openrouterBaseUrl) : current.openrouterBaseUrl,
+		openrouterBaseUrl: partial.openrouterBaseUrl !== undefined ? sanitizeUrl(partial.openrouterBaseUrl, DEFAULTS.openrouterBaseUrl!) : current.openrouterBaseUrl,
 		abilities: partial.abilities !== undefined ? partial.abilities : current.abilities,
 		persistChatHistory: partial.persistChatHistory !== undefined ? partial.persistChatHistory : current.persistChatHistory,
 		autonomousMode: partial.autonomousMode !== undefined ? partial.autonomousMode : current.autonomousMode,
+		explainMode: partial.explainMode !== undefined ? sanitizeExplainMode(partial.explainMode) : current.explainMode,
 	};
 	cached = next;
 	mkdirSync(DATA_DIR, { recursive: true });

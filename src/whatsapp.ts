@@ -131,15 +131,15 @@ async function processIncomingMessage(message: Message): Promise<void> {
 	if (shouldIgnoreMessage(message)) return;
 
 	const userContent = await buildUserContent(message);
-	const linked = getOrCreateLinkedChatSession(WA_CHANNEL, message.from, buildSessionTitle(message.from));
+	const linked = await getOrCreateLinkedChatSession(WA_CHANNEL, message.from, buildSessionTitle(message.from));
 	const withUser: ChatMessage[] = [...linked.messages, { role: "user", content: userContent }];
-	const persistedUser = saveChatSession(linked.id, withUser);
+	const persistedUser = await saveChatSession(linked.id, withUser);
 	if (!persistedUser) return;
 
 	const goal = getMessagePreview(userContent) || "¿Qué hay en esta imagen?";
 	const state = getState();
 	const config = getConfig();
-	const autonomous = config.autonomousMode !== false;
+	const autonomous = config.autonomousMode === true;
 	const workspaceContext = buildWorkspaceContext({ includeLongTermMemory: true });
 	setHealthActive();
 	const response = await runAgent(
@@ -149,8 +149,8 @@ async function processIncomingMessage(message: Message): Promise<void> {
 			memory: chatMemoryStore.getMemory(message.from),
 			agentName: state.name,
 			tokenBudget: 8000,
-			usePlanner: autonomous,
 			textOnly: !autonomous,
+			explainMode: config.explainMode,
 			conversation: withUser,
 			userProfile: getUserProfile(),
 		},
@@ -158,9 +158,9 @@ async function processIncomingMessage(message: Message): Promise<void> {
 	);
 	const text = response.trim() || "(Sin respuesta de texto)";
 
-	const latest = getChatSession(linked.id);
+	const latest = await getChatSession(linked.id);
 	const baseMessages = latest?.messages ?? withUser;
-	saveChatSession(linked.id, [...baseMessages, { role: "assistant", content: text }]);
+	await saveChatSession(linked.id, [...baseMessages, { role: "assistant", content: text }]);
 	await message.reply(text);
 }
 
@@ -189,6 +189,7 @@ type StartBridgeOptions = {
 
 function attachClientEvents(waClient: Client, opts: StartBridgeOptions): void {
 	waClient.on("qr", (qr) => {
+		console.log("  [WhatsApp] QR recibido!");
 		status.lastQr = qr;
 		status.lastQrAt = new Date().toISOString();
 		setState("qr");
@@ -197,6 +198,14 @@ function attachClientEvents(waClient: Client, opts: StartBridgeOptions): void {
 			qrcode.generate(qr, { small: true });
 			console.log("");
 		}
+	});
+
+	waClient.on("loading_screen", (percent, message) => {
+		console.log(`  [WhatsApp] Cargando: ${percent}% - ${message}`);
+	});
+
+	waClient.on("change_state", (state) => {
+		console.log(`  [WhatsApp] Estado cambiado: ${state}`);
 	});
 
 	waClient.on("ready", () => {
@@ -247,28 +256,50 @@ export function getWhatsAppBridgeStatus(): Omit<WhatsAppBridgeStatus, "lastQr"> 
 }
 
 export async function startWhatsAppBridge(opts: StartBridgeOptions = {}): Promise<void> {
-	if (client || starting) return;
+	if (client) {
+		console.log("  [WhatsApp] Cliente ya existe, destructurando...");
+		try { await client.destroy(); } catch {}
+		client = null;
+	}
+	if (starting) {
+		console.log("  [WhatsApp] Ya está iniciándose, esperando...");
+		await new Promise(r => setTimeout(r, 5000));
+		return;
+	}
 	starting = true;
 	setState("starting");
 	status.lastError = null;
 
+	console.log("  [WhatsApp] Iniciando cliente...");
+	if (WA_CHROME_PATH) {
+		console.log("  [WhatsApp] Usando Chrome:", WA_CHROME_PATH);
+	} else {
+		console.log("  [WhatsApp] Sin Chrome personalizado, puppeteer usará el bundled");
+	}
+
 	const waClient = new Client({
 		authStrategy: new LocalAuth({ clientId: WA_CLIENT_ID, dataPath: join(DATA_DIR, "wa-auth") }),
-		puppeteer: {
+		puppeteer: WA_CHROME_PATH ? {
 			headless: true,
 			executablePath: WA_CHROME_PATH,
+			args: ["--no-sandbox", "--disable-setuid-sandbox"],
+		} : {
+			headless: true,
 			args: ["--no-sandbox", "--disable-setuid-sandbox"],
 		},
 	});
 
 	client = waClient;
 	attachClientEvents(waClient, opts);
-	void waClient.initialize()
+	waClient.initialize()
+		.then(() => {
+			console.log("  [WhatsApp] Cliente inicializado correctamente");
+		})
 		.catch((err) => {
 			const text = err instanceof Error ? err.message : String(err);
 			setState("error", text);
 			client = null;
-			console.error("  Error al iniciar WhatsApp bridge:", text);
+			console.error("  [WhatsApp] Error al inicializar:", text);
 		})
 		.finally(() => {
 			starting = false;
