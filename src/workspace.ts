@@ -38,6 +38,31 @@ Lista corta de cosas que revisar cuando haya un heartbeat (ej. recordatorios, co
 Si no hay nada que hacer, responde HEARTBEAT_OK.
 `;
 
+const TOOLS_TEMPLATE = `# TOOLS.md — Guía de herramientas
+
+Reglas prácticas para elegir herramientas de forma consistente.
+
+## Principios
+
+- Usa la herramienta más segura que resuelva la tarea.
+- Lee antes de escribir o ejecutar.
+- Para cambios en código: primero inspecciona, luego modifica, luego verifica.
+- Si una acción es destructiva (borrar, sobreescribir, ejecutar comandos riesgosos), pide confirmación.
+
+## Preferencias
+
+- Archivos del proyecto: \`read_file\`, \`write_file\`, \`list_dir\`.
+- Sistema local: \`read_file_system\`, \`write_file_system\`, \`list_dir_system\`.
+- Investigación externa: \`search_web\`.
+- Comandos: \`exec\` solo cuando aporte valor frente a herramientas específicas.
+
+## Información en tiempo real
+
+- Partidos, torneos (Valorant, LoL, etc.), noticias, horarios, clima del día: **siempre** \`search_web\` primero; no inventes calendarios.
+- Escribe queries concretas (juego, liga, fecha o "today").
+- Opcional: si el usuario da una URL oficial, \`fetch_url\` puede complementar (texto/HTML).
+`;
+
 function ensureDir(path: string): void {
 	if (!existsSync(path)) mkdirSync(path, { recursive: true });
 }
@@ -55,6 +80,8 @@ export function ensureWorkspace(): void {
 	writeIfMissing(join(WORKSPACE_DIR, "SOUL.md"), SOUL_TEMPLATE);
 	writeIfMissing(join(WORKSPACE_DIR, "HEARTBEAT.md"), HEARTBEAT_TEMPLATE);
 	writeIfMissing(join(WORKSPACE_DIR, "MEMORY.md"), "# MEMORY.md — Memoria a largo plazo\n\nHechos, decisiones y contexto que quieres recordar.\n");
+	writeIfMissing(join(WORKSPACE_DIR, "TOOLS.md"), TOOLS_TEMPLATE);
+	ensureDir(join(WORKSPACE_DIR, "skills"));
 }
 
 function readFileSafe(filePath: string): string | null {
@@ -108,13 +135,21 @@ export function readHeartbeat(): string | null {
 	return readFileSafe(join(WORKSPACE_DIR, "HEARTBEAT.md"));
 }
 
+/** Contenido de TOOLS.md (heurísticas de uso de herramientas). */
+export function readToolsGuide(): string | null {
+	ensureWorkspace();
+	return readFileSafe(join(WORKSPACE_DIR, "TOOLS.md"));
+}
+
 /** Construye el bloque de contexto (soul + memory) para inyectar en el system prompt. */
 export function buildWorkspaceContext(opts: { includeLongTermMemory?: boolean } = {}): string {
 	const soul = readSoul();
+	const toolsGuide = readToolsGuide();
 	const recent = readMemoryRecent();
 	const longTerm = opts.includeLongTermMemory ? readMemoryLongTerm() : null;
 	const parts: string[] = [];
 	if (soul) parts.push("## SOUL.md (quién eres)\n" + soul);
+	if (toolsGuide) parts.push("## TOOLS.md (guía de herramientas)\n" + toolsGuide);
 	if (recent) parts.push("## Memoria reciente (hoy/ayer)\n" + recent);
 	if (longTerm) parts.push("## MEMORY.md (memoria a largo plazo)\n" + longTerm);
 	return parts.length ? parts.join("\n\n") : "";

@@ -31,6 +31,14 @@ export type AppConfig = {
 	 * - on: lista corta de herramientas usadas
 	 */
 	explainMode?: "off" | "brief" | "on";
+	/** Número máximo de rondas de tool-calls por respuesta. */
+	maxToolIterations?: number;
+	/** Límite de caracteres por resultado de herramienta enviado al modelo. */
+	maxToolResultChars?: number;
+	/** Rutas (absolutas o relativas al CWD) con skills */ 
+	skillPaths?: string[];
+	/** Máximo de caracteres totales de skills inyectados. */
+	skillsMaxChars?: number;
 };
 
 const DEFAULTS: AppConfig = {
@@ -47,6 +55,10 @@ const DEFAULTS: AppConfig = {
 	persistChatHistory: true,
 	autonomousMode: true,
 	explainMode: "off",
+	maxToolIterations: 10,
+	maxToolResultChars: 12000,
+	skillPaths: [],
+	skillsMaxChars: 3000,
 };
 
 function isValidUrl(url: string): boolean {
@@ -81,6 +93,26 @@ function sanitizeExplainMode(v: unknown): "off" | "brief" | "on" {
 	return v === "off" || v === "brief" || v === "on" ? v : (DEFAULTS.explainMode ?? "brief");
 }
 
+function sanitizePositiveInt(v: unknown, fallback: number, min: number, max: number): number {
+	const n = typeof v === "number" ? v : Number(v);
+	if (!Number.isFinite(n)) return fallback;
+	const value = Math.trunc(n);
+	if (value < min || value > max) return fallback;
+	return value;
+}
+
+function sanitizeStringArray(v: unknown): string[] {
+	if (!Array.isArray(v)) return [];
+	const out: string[] = [];
+	for (const item of v) {
+		if (typeof item !== "string") continue;
+		const clean = item.trim();
+		if (!clean || out.includes(clean)) continue;
+		out.push(clean);
+	}
+	return out;
+}
+
 function loadConfig(): AppConfig {
 	if (!existsSync(CONFIG_FILE)) return { ...DEFAULTS };
 	try {
@@ -101,6 +133,10 @@ function loadConfig(): AppConfig {
 			persistChatHistory: typeof data.persistChatHistory === "boolean" ? data.persistChatHistory : DEFAULTS.persistChatHistory,
 			autonomousMode: typeof data.autonomousMode === "boolean" ? data.autonomousMode : DEFAULTS.autonomousMode,
 			explainMode: sanitizeExplainMode(data.explainMode),
+			maxToolIterations: sanitizePositiveInt(data.maxToolIterations, DEFAULTS.maxToolIterations ?? 10, 1, 40),
+			maxToolResultChars: sanitizePositiveInt(data.maxToolResultChars, DEFAULTS.maxToolResultChars ?? 12000, 500, 200000),
+			skillPaths: sanitizeStringArray(data.skillPaths),
+			skillsMaxChars: sanitizePositiveInt(data.skillsMaxChars, DEFAULTS.skillsMaxChars ?? 3000, 500, 20000),
 		};
 	} catch {
 		return { ...DEFAULTS };
@@ -130,6 +166,16 @@ export function setConfig(partial: Partial<AppConfig>): AppConfig {
 		persistChatHistory: partial.persistChatHistory !== undefined ? partial.persistChatHistory : current.persistChatHistory,
 		autonomousMode: partial.autonomousMode !== undefined ? partial.autonomousMode : current.autonomousMode,
 		explainMode: partial.explainMode !== undefined ? sanitizeExplainMode(partial.explainMode) : current.explainMode,
+		maxToolIterations: partial.maxToolIterations !== undefined
+			? sanitizePositiveInt(partial.maxToolIterations, DEFAULTS.maxToolIterations ?? 10, 1, 40)
+			: current.maxToolIterations,
+		maxToolResultChars: partial.maxToolResultChars !== undefined
+			? sanitizePositiveInt(partial.maxToolResultChars, DEFAULTS.maxToolResultChars ?? 12000, 500, 200000)
+			: current.maxToolResultChars,
+		skillPaths: partial.skillPaths !== undefined ? sanitizeStringArray(partial.skillPaths) : (current.skillPaths ?? []),
+		skillsMaxChars: partial.skillsMaxChars !== undefined
+			? sanitizePositiveInt(partial.skillsMaxChars, DEFAULTS.skillsMaxChars ?? 3000, 500, 20000)
+			: current.skillsMaxChars,
 	};
 	cached = next;
 	mkdirSync(DATA_DIR, { recursive: true });

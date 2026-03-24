@@ -12,7 +12,7 @@
     "config": "node --import tsx src/index.ts config",
     "onboard": "node --import tsx src/index.ts onboard",
     "personalize": "node --import tsx src/index.ts personalize",
-    "test": "node --import tsx --test src/core/agent/ContextBuilder.test.ts src/core/health/LoopDetector.test.ts src/core/memory/Summarizer.test.ts src/core/memory/MemoryManager.test.ts src/core/tools/tools.test.ts src/core/sanitizeResponse.test.ts"
+    "test": "node --import tsx --test src/core/agent/ContextBuilder.test.ts src/core/health/LoopDetector.test.ts src/core/memory/Summarizer.test.ts src/core/memory/MemoryManager.test.ts src/core/tools/tools.test.ts src/core/tools/registryAlignment.test.ts src/core/sanitizeResponse.test.ts"
   },
   "dependencies": {
     "@inquirer/prompts": "^8.3.0",

@@ -114,7 +114,7 @@ function buildChatFilePath(id: string): string {
 	return join(CHAT_DIR, `${id}.json`);
 }
 
-function computeTitle(messages: ChatMessage[], fallback = "Nueva sesion"): string {
+function computeTitle(messages: ChatMessage[], fallback = "Nueva sesión"): string {
 	const firstUser = messages.find((m) => m.role === "user" && getMessagePreview(m.content).length > 0);
 	if (!firstUser) return fallback;
 	const normalized = getMessagePreview(firstUser.content).replace(/\s+/g, " ");
@@ -324,7 +324,7 @@ export async function saveChatSession(id: string, messages: ChatMessage[]): Prom
 	const row = stmt.getAsObject() as SessionRow;
 	stmt.free();
 
-	const resolvedTitle = title || row.title || "Nueva sesion";
+	const resolvedTitle = title || row.title || "Nueva sesión";
 
 	writeSessionFile(id, cleanMessages);
 
@@ -339,6 +339,30 @@ export async function saveChatSession(id: string, messages: ChatMessage[]): Prom
 		lastPreview,
 		messages: cleanMessages,
 	};
+}
+
+export async function renameChatSession(id: string, title: string): Promise<ChatSession | null> {
+	const trimmed = title.trim();
+	if (!trimmed) return null;
+	const now = Date.now();
+	if (!persistChatHistory()) {
+		const existing = memorySessions.get(id);
+		if (!existing) return null;
+		const session: ChatSession = { ...existing, title: trimmed, updatedAt: now };
+		memorySessions.set(id, session);
+		return session;
+	}
+	const sqlite = await getDb();
+	const stmt = sqlite.prepare("SELECT id FROM chat_sessions WHERE id = ?");
+	stmt.bind([id]);
+	if (!stmt.step()) {
+		stmt.free();
+		return null;
+	}
+	stmt.free();
+	sqlite.run("UPDATE chat_sessions SET title = ?, updated_at = ? WHERE id = ?", [trimmed, now, id]);
+	saveDb();
+	return getChatSession(id);
 }
 
 export async function deleteChatSession(id: string): Promise<boolean> {

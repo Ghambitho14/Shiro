@@ -11,10 +11,12 @@ services:
     environment:
       - PORT=1406
       - BIND_HOST=0.0.0.0
-      # Opcionales (descomenta y ajusta):
+      # Opcionales (descomenta y ajusta; ver DEPLOY.md):
       # - SHIRO_AUTH_TOKEN=tu-token-secreto
+      # - OPENROUTER_API_KEY=tu-clave
       # - VLLM_BASE_URL=http://host.docker.internal:8000/v1
       # - VLLM_MODEL=tu-modelo
+      # - VLLM_API_KEY=
       # - WA_CLIENT_ID=shiro-docker
     volumes:
       # Persistir config, chats, sesión WhatsApp y workspace

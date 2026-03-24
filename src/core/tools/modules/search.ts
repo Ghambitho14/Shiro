@@ -32,17 +32,41 @@ export async function executeSearchWeb(args: Record<string, unknown>): Promise<{
 
 		const text = await res.text();
 		const results: string[] = [];
-		const titleRegex = /<a class="result__a"[^>]*href="[^"]*"[^>]*>([^<]+)<\/a>/g;
-		const snippetRegex = /<a class="result__snippet"[^>]*>([^<]+)<\/a>/g;
-		let match;
-		let count = 0;
 
-		while ((match = titleRegex.exec(text)) !== null && count < 5) {
-			const title = match[1].replace(/<[^>]+>/g, "").trim();
-			const snippetMatch = snippetRegex.exec(text);
-			const snippet = snippetMatch ? snippetMatch[1].replace(/<[^>]+>/g, "").trim() : "";
-			results.push(`${count + 1}. ${title}${snippet ? " - " + snippet : ""}`);
-			count++;
+		/** Quitar marcas HTML y compactar espacios (los snippets llevan &lt;b&gt;, etc.). */
+		const stripHtml = (raw: string) =>
+			raw
+				.replace(/<[^>]+>/g, "")
+				.replace(/&nbsp;/gi, " ")
+				.replace(/&#x27;/gi, "'")
+				.replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number.parseInt(n, 10)))
+				.replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(Number.parseInt(h, 16)))
+				.replace(/&amp;/g, "&")
+				.replace(/&lt;/g, "<")
+				.replace(/&gt;/g, ">")
+				.replace(/&quot;/g, '"')
+				.replace(/\s+/g, " ")
+				.trim();
+
+		// DDG HTML usa <a rel="nofollow" class="result__a">; el regex antiguo exigía class al inicio y no coincidía nunca.
+		const blockRe =
+			/<div class="(result results_links results_links_deep[^"]*)">([\s\S]*?)<div class="clear"><\/div>/g;
+		let blockMatch: RegExpExecArray | null;
+		while ((blockMatch = blockRe.exec(text)) !== null && results.length < 8) {
+			const blockClasses = blockMatch[1];
+			if (blockClasses.includes("result--ad")) continue;
+
+			const body = blockMatch[2];
+			const titleM = /<a[^>]*\bclass="result__a"[^>]*>([\s\S]*?)<\/a>/i.exec(body);
+			if (!titleM) continue;
+
+			const title = stripHtml(titleM[1]);
+			if (!title) continue;
+
+			const snippetM = /<a[^>]*\bclass="result__snippet"[^>]*>([\s\S]*?)<\/a>/i.exec(body);
+			const snippet = snippetM ? stripHtml(snippetM[1]) : "";
+
+			results.push(`${results.length + 1}. ${title}${snippet ? " — " + snippet : ""}`);
 		}
 
 		if (results.length === 0) {

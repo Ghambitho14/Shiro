@@ -18,6 +18,7 @@ import {
 	deleteChatSession,
 	getChatSession,
 	listChatSessions,
+	renameChatSession,
 	saveChatSession,
 	sanitizeMessages,
 	type ChatMessage,
@@ -72,9 +73,15 @@ function sendJson(res: import("node:http").ServerResponse, status: number, data:
 	send(res, status, JSON.stringify(data), "application/json; charset=utf-8");
 }
 
+function sendSseData(res: import("node:http").ServerResponse, payload: Record<string, unknown>): void {
+	if (res.writableEnded) return;
+	res.write(`data: ${JSON.stringify(payload)}\n\n`);
+}
+
 function isSensitivePath(pathname: string): boolean {
 	return (
 		pathname === "/api/chat" ||
+		pathname === "/api/chat/stream" ||
 		pathname.startsWith("/api/whatsapp/") ||
 		pathname === "/api/user-profile" ||
 		pathname === "/api/chat-sessions" ||
@@ -260,6 +267,41 @@ const server = createServer(async (req, res) => {
 			return;
 		}
 
+		if (method === "PATCH") {
+			let body = "";
+			try {
+				body = await readBody(req);
+			} catch (err) {
+				if (isBodyTooLargeError(err)) {
+					sendJson(res, 413, { error: "Request body too large (max 6 MB)" });
+					return;
+				}
+				sendJson(res, 400, { error: "Invalid body" });
+				return;
+			}
+			let title: string | undefined;
+			try {
+				if (body.trim()) {
+					const parsed = JSON.parse(body) as { title?: unknown };
+					title = typeof parsed.title === "string" ? parsed.title.trim() : undefined;
+				}
+			} catch {
+				sendJson(res, 400, { error: "Invalid JSON" });
+				return;
+			}
+			if (!title) {
+				sendJson(res, 400, { error: "title required" });
+				return;
+			}
+			const session = await renameChatSession(sessionId, title);
+			if (!session) {
+				sendJson(res, 404, { error: "Session not found" });
+				return;
+			}
+			sendJson(res, 200, { session });
+			return;
+		}
+
 		if (method === "PUT") {
 			let body = "";
 			try {
@@ -301,7 +343,7 @@ const server = createServer(async (req, res) => {
 		}
 	}
 
-	if (method === "POST" && pathname === "/api/chat") {
+	if (method === "POST" && (pathname === "/api/chat" || pathname === "/api/chat/stream")) {
 		let body: string;
 		try {
 			body = await readBody(req);
@@ -343,6 +385,7 @@ const server = createServer(async (req, res) => {
 			sendJson(res, 400, { error: "Empty message" });
 			return;
 		}
+		const streamSse = pathname === "/api/chat/stream";
 		if (isWhatsAppConfigureIntent(userContent)) {
 			try {
 				console.log("[WhatsApp] Iniciando configuración...");
@@ -377,7 +420,18 @@ const server = createServer(async (req, res) => {
 				: data.qrDataUrl
 					? `${base} Escanea el código QR que te muestro abajo desde WhatsApp > Dispositivos vinculados.`
 					: `${base} Preparando QR...${extraInfo}`;
-				sendJson(res, 200, { content, whatsapp: { ...data.status, qrDataUrl: data.qrDataUrl } });
+				const waPayload = { ...data.status, qrDataUrl: data.qrDataUrl };
+				if (streamSse) {
+					res.writeHead(200, {
+						"Content-Type": "text/event-stream; charset=utf-8",
+						"Cache-Control": "no-cache, no-transform",
+						Connection: "keep-alive",
+					});
+					sendSseData(res, { type: "done", content, whatsapp: waPayload });
+					res.end();
+				} else {
+					sendJson(res, 200, { content, whatsapp: waPayload });
+				}
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
 				sendJson(res, 502, { error: `No pude iniciar WhatsApp: ${message}` });
@@ -388,10 +442,19 @@ const server = createServer(async (req, res) => {
 			try {
 				await stopWhatsAppBridge();
 				const data = await buildWhatsAppResponse();
-				sendJson(res, 200, {
-					content: "He detenido el puente de WhatsApp. Si quieres volver a conectarlo, dime: configurar whatsapp.",
-					whatsapp: { ...data.status, qrDataUrl: data.qrDataUrl },
-				});
+				const stopContent = "He detenido el puente de WhatsApp. Si quieres volver a conectarlo, dime: configurar whatsapp.";
+				const waPayload = { ...data.status, qrDataUrl: data.qrDataUrl };
+				if (streamSse) {
+					res.writeHead(200, {
+						"Content-Type": "text/event-stream; charset=utf-8",
+						"Cache-Control": "no-cache, no-transform",
+						Connection: "keep-alive",
+					});
+					sendSseData(res, { type: "done", content: stopContent, whatsapp: waPayload });
+					res.end();
+				} else {
+					sendJson(res, 200, { content: stopContent, whatsapp: waPayload });
+				}
 			} catch (err) {
 				const message = err instanceof Error ? err.message : String(err);
 				sendJson(res, 502, { error: `No pude detener WhatsApp: ${message}` });
@@ -405,7 +468,18 @@ const server = createServer(async (req, res) => {
 				: data.qrDataUrl
 					? "WhatsApp está esperando QR. Te lo muestro abajo."
 					: `WhatsApp está en estado: ${data.status.state}.`;
-			sendJson(res, 200, { content, whatsapp: { ...data.status, qrDataUrl: data.qrDataUrl } });
+			const waPayload = { ...data.status, qrDataUrl: data.qrDataUrl };
+			if (streamSse) {
+				res.writeHead(200, {
+					"Content-Type": "text/event-stream; charset=utf-8",
+					"Cache-Control": "no-cache, no-transform",
+					Connection: "keep-alive",
+				});
+				sendSseData(res, { type: "done", content, whatsapp: waPayload });
+				res.end();
+			} else {
+				sendJson(res, 200, { content, whatsapp: waPayload });
+			}
 			return;
 		}
 		try {
@@ -418,11 +492,50 @@ const server = createServer(async (req, res) => {
 			const commandResult = parseCommand(goal, sessionId ?? "web-default");
 			if (commandResult?.executed) {
 				console.log(`📝 Comando /${goal.slice(1).split(/\s/)[0]} ejecutado`);
-				sendJson(res, 200, { content: commandResult.content });
+				if (streamSse) {
+					res.writeHead(200, {
+						"Content-Type": "text/event-stream; charset=utf-8",
+						"Cache-Control": "no-cache, no-transform",
+						Connection: "keep-alive",
+					});
+					sendSseData(res, { type: "done", content: commandResult.content });
+					res.end();
+				} else {
+					sendJson(res, 200, { content: commandResult.content });
+				}
 				return;
 			}
 			
 			console.log("🛠️ Tools:", allowedTools?.length || "todas (15)", "| Autonomous:", autonomous, "| Msg:", goal.slice(0, 30));
+			if (streamSse) {
+				res.writeHead(200, {
+					"Content-Type": "text/event-stream; charset=utf-8",
+					"Cache-Control": "no-cache, no-transform",
+					Connection: "keep-alive",
+				});
+				sendSseData(res, { type: "start" });
+				try {
+					const content = await runAgent(goal, {
+						llm: getLLM(),
+						memory: sessionMemoryStore.getMemory(sessionId ?? "web-default"),
+						agentName: state.name,
+						tokenBudget: 8000,
+						textOnly: !autonomous,
+						allowedTools,
+						explainMode: config.explainMode,
+						conversation: incoming,
+						userProfile: getUserProfile(),
+						onStreamDelta: (chunk) => sendSseData(res, { type: "delta", text: chunk }),
+					}, workspaceContext ?? undefined);
+					sendSseData(res, { type: "done", content });
+					res.end();
+				} catch (errIn) {
+					const msgIn = errIn instanceof Error ? errIn.message : String(errIn);
+					sendSseData(res, { type: "error", message: msgIn });
+					res.end();
+				}
+				return;
+			}
 			const content = await runAgent(goal, {
 				llm: getLLM(),
 				memory: sessionMemoryStore.getMemory(sessionId ?? "web-default"),
@@ -437,7 +550,12 @@ const server = createServer(async (req, res) => {
 			sendJson(res, 200, { content });
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);
-			sendJson(res, 502, { error: message });
+			if (streamSse && res.headersSent) {
+				sendSseData(res, { type: "error", message });
+				res.end();
+			} else {
+				sendJson(res, 502, { error: message });
+			}
 		}
 		return;
 	}

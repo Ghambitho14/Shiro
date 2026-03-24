@@ -2,6 +2,7 @@ import type { LLMClient, ToolDef } from "./LLMClient.js";
 import type { Message, ContentPart } from "../agent/Types.js";
 import { getConfig } from "../../config/config.js";
 import { sanitizeModelResponse } from "../sanitizeResponse.js";
+import { getMaxToolIterations, normalizeToolResult } from "./toolRuntime.js";
 
 /** Ordena partes multimodales: imagen primero, luego texto (mejor para modelos de visión). */
 function normalizeContentParts(content: unknown): unknown {
@@ -52,8 +53,6 @@ function buildRequestBody(params: { messages: VllmMessage[]; tools?: unknown[] }
 	return body;
 }
 
-const MAX_TOOL_ITERATIONS = 10;
-
 export const vllmClient: LLMClient = {
 	async chat(messages: Message[]): Promise<string> {
 		const { baseUrl, apiKey } = getVllmSettings();
@@ -97,8 +96,9 @@ export const vllmClient: LLMClient = {
 
 		let currentMessages: VllmMessage[] = messages.map((m) => ({ ...m })) as VllmMessage[];
 		let iterations = 0;
+		const maxToolIterations = getMaxToolIterations();
 
-		while (iterations < MAX_TOOL_ITERATIONS) {
+		while (iterations < maxToolIterations) {
 			iterations++;
 			const body = buildRequestBody({ messages: currentMessages, tools: toolsDef });
 			const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
@@ -128,7 +128,7 @@ export const vllmClient: LLMClient = {
 				return sanitizeModelResponse(content.trim() || "(Sin respuesta de texto)");
 			}
 
-			for (const tc of toolCalls) {
+			const toolResults = await Promise.all(toolCalls.map(async (tc) => {
 				let args: Record<string, unknown> = {};
 				try {
 					args = JSON.parse(tc.function.arguments || "{}") as Record<string, unknown>;
@@ -136,11 +136,19 @@ export const vllmClient: LLMClient = {
 					args = {};
 				}
 				const result = await executeTool(tc.function.name, args);
-				const resultContent = result.ok ? result.content : "Error: " + (result.error ?? "unknown");
-				currentMessages.push({
-					role: "tool",
+				const resultContent = result.ok
+					? normalizeToolResult(result.content)
+					: normalizeToolResult("Error: " + (result.error ?? "unknown"));
+				return {
 					tool_call_id: tc.id,
 					content: resultContent,
+				};
+			}));
+			for (const toolResult of toolResults) {
+				currentMessages.push({
+					role: "tool",
+					tool_call_id: toolResult.tool_call_id,
+					content: toolResult.content,
 				});
 			}
 		}

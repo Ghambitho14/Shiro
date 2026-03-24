@@ -41,6 +41,8 @@ export type AgentOptions = {
 	explainMode?: "off" | "brief" | "on";
 	conversation?: Array<{ role: "user" | "assistant"; content: string | ContentPart[] }>;
 	userProfile?: UserProfileForAgent | null;
+	/** Si se define, se invoca con trozos del texto final (tras tools y sanitizado). */
+	onStreamDelta?: (chunk: string) => void;
 };
 
 function getUserFacingInterventionMessage(): string {
@@ -90,6 +92,7 @@ export async function runAgent(
 		explainMode = "off",
 		conversation,
 		userProfile,
+		onStreamDelta,
 	} = opts;
 
 	const wantExplain = (() => {
@@ -232,7 +235,14 @@ export async function runAgent(
 		const out = sanitizeModelResponse(content || "");
 		pushEvent("observation", { content: out });
 		const finalText = isMeaningfulResponse(out) ? out : FALLBACK_EMPTY_RESPONSE;
-		return finalText + buildToolExplanation();
+		const composed = finalText + buildToolExplanation();
+		if (onStreamDelta && composed.length > 0) {
+			const step = 28;
+			for (let i = 0; i < composed.length; i += step) {
+				onStreamDelta(composed.slice(i, i + step));
+			}
+		}
+		return composed;
 	} catch (err) {
 		const msg = err instanceof Error ? err.message : String(err);
 		pushEvent("error", { content: msg });

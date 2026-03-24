@@ -14,12 +14,9 @@ ENV WA_CHROME_PATH=/usr/bin/chromium
 
 WORKDIR /app
 
-# pnpm
-RUN corepack enable && corepack prepare pnpm@latest --activate
-COPY package.json pnpm-lock.yaml* ./
+COPY package.json package-lock.json* ./
 
-# Dependencias (better-sqlite3 compila nativo)
-RUN pnpm install --frozen-lockfile || pnpm install
+RUN npm ci || npm install
 
 COPY src ./src
 COPY public ./public

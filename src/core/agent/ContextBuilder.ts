@@ -5,6 +5,7 @@ import { eventsToContextLines } from "../memory/serializers.js";
 import { getSoul } from "../soul/soul.js";
 import { getToolsDefinition } from "../tools/ToolRegistry.js";
 import { isSafeMode } from "../health/HealthManager.js";
+import { loadRelevantSkills } from "../skills/SkillLoader.js";
 
 export type UserProfileInput = {
 	userName?: string;
@@ -26,7 +27,7 @@ export type ContextInput = {
 	userProfile?: UserProfileInput | null;
 };
 
-/** Prioridad: SOUL > goal > short memory > tool context > long memory. Truncado por tokenBudget (approx 4 chars/token). */
+/** Prioridad: SOUL > perfil > workspace > skills > tools > memoria > mensaje del usuario. */
 export function buildContext(input: ContextInput): { system: string; messages: Message[] } {
 	const approxCharsPerToken = 4;
 	const budgetChars = Math.floor(input.tokenBudget * approxCharsPerToken);
@@ -51,9 +52,6 @@ export function buildContext(input: ContextInput): { system: string; messages: M
 				return "\n\n" + text;
 			})()
 		: "";
-	const goalBlock = `## Mensaje del usuario\n${input.goal}`;
-	remaining -= goalBlock.length;
-
 	const toolBlock = textOnly
 		? ""
 		: (() => {
@@ -64,6 +62,16 @@ export function buildContext(input: ContextInput): { system: string; messages: M
 				return `## Herramientas disponibles\n${toolsManifest}`;
 			})();
 	if (toolBlock) remaining -= toolBlock.length;
+
+	const workspaceBlock = input.workspaceContext
+		? `## Contexto workspace\n${input.workspaceContext.slice(0, Math.min(remaining, 4000))}`
+		: "";
+	if (workspaceBlock) remaining -= workspaceBlock.length;
+
+	const skillsBlock = textOnly
+		? ""
+		: loadRelevantSkills(input.goal, Math.max(800, Math.min(remaining, 2500)));
+	if (skillsBlock) remaining -= skillsBlock.length;
 
 	// Conversación simple: menos contexto para mantener el prompt conciso
 	const shortMaxChars = textOnly ? 400 : Math.min(remaining - 400, 2000);
@@ -77,20 +85,15 @@ export function buildContext(input: ContextInput): { system: string; messages: M
 			? `## Memoria a largo plazo (resumen)\n${long.summary}`
 			: "";
 
-	const workspace = input.workspaceContext
-		? `\n\n--- Contexto workspace ---\n${input.workspaceContext.slice(0, Math.min(remaining, 3000))}`
-		: "";
-
 	const system =
 		soul +
 		safeNote +
 		userBlock +
-		"\n\n" +
-		goalBlock +
+		(workspaceBlock ? "\n\n" + workspaceBlock : "") +
+		(skillsBlock ? "\n\n" + skillsBlock : "") +
 		(toolBlock ? "\n\n" + toolBlock : "") +
 		(shortBlock ? "\n\n## Eventos recientes\n" + shortBlock : "") +
-		(longBlock ? "\n\n" + longBlock : "") +
-		workspace;
+		(longBlock ? "\n\n" + longBlock : "");
 
 	// Conversación simple: solo el mensaje del usuario. Modo acción: el goal tal cual.
 	const userContent = input.goal;

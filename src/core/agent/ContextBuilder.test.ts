@@ -14,7 +14,6 @@ test("buildContext respects token budget and includes soul", () => {
 	strictEqual(typeof out.system, "string");
 	strictEqual(out.system.length > 0, true);
 	strictEqual(out.system.includes("TestAgent"), true);
-	strictEqual(out.system.includes("Mensaje del usuario"), true);
 	strictEqual(Array.isArray(out.messages), true);
 	strictEqual(out.messages.length >= 1, true);
 	strictEqual(out.messages[0].role, "user");

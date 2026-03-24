@@ -101,17 +101,36 @@ export const TOOLS: ToolDefinition[] = [
 	{
 		label: "Buscar en Internet",
 		name: "search_web",
-		description: "Busca información en internet. Úsalo cuando necesites información actualizada o no tengas certeza sobre algo.",
+		description:
+			"Búsqueda web (noticias, deportes, esports, horarios de partidos, resultados, eventos, precios, clima). Obligatorio cuando el usuario pide datos que cambian en el tiempo o no están en tu conocimiento estático; no respondas 'no sé' sin haber buscado. Incluye en la query fecha, juego/liga o ciudad cuando aplique.",
 		category: "web",
 		parameters: {
 			type: "object",
-			properties: { query: { type: "string", description: "Consulta de búsqueda" } },
+			properties: {
+				query: {
+					type: "string",
+					description: "Consulta específica (ej: 'Valorant VCT 2026 schedule March', 'partidos hoy liga MX')",
+				},
+			},
 			required: ["query"],
 		},
 		examples: [
 			'"busca información sobre Python" → search_web({query: "Python programming"})',
 			'"qué tiempo hace hoy" → search_web({query: "clima hoy"})',
+			'"qué partidos de valorant hay" → search_web({query: "Valorant esports matches today 2026"})',
 		],
+	},
+	{
+		label: "Obtener URL",
+		name: "fetch_url",
+		description:
+			"Obtiene el contenido textual de una URL (HTML, JSON, XML). Úsalo cuando el usuario da un enlace oficial o quieres comprobar una fuente concreta; complementa a search_web.",
+		category: "web",
+		parameters: {
+			type: "object",
+			properties: { url: { type: "string", description: "URL completa (https://...)" } },
+			required: ["url"],
+		},
 	},
 	{
 		label: "Describir Imagen",

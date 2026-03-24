@@ -705,6 +705,42 @@
 			border-bottom: 1px solid var(--border);
 		}
 
+		.chat-sessions-title {
+			font-size: 0.78rem;
+			font-weight: 600;
+			color: var(--text-secondary);
+			margin-bottom: 0.5rem;
+			letter-spacing: 0.02em;
+			text-transform: uppercase;
+		}
+
+		.session-search {
+			width: 100%;
+			margin-bottom: 0.5rem;
+			padding: 0.35rem 0.5rem;
+			font-size: 0.78rem;
+			border-radius: var(--radius-sm);
+			border: 1px solid var(--border);
+			background: var(--bg-app);
+			color: var(--text-primary);
+			box-sizing: border-box;
+		}
+
+		.session-group-label {
+			font-size: 0.68rem;
+			font-weight: 600;
+			color: var(--text-dim);
+			padding: 0.45rem 0.5rem 0.15rem;
+			text-transform: uppercase;
+			letter-spacing: 0.04em;
+		}
+
+		#chat-session-list {
+			flex: 1;
+			overflow-y: auto;
+			padding: 0.5rem;
+		}
+
 		.chat-main-area {
 			flex: 1;
 			display: flex;
@@ -952,6 +988,11 @@
 			border-color: var(--accent);
 		}
 
+		.session-item:focus-visible {
+			outline: 2px solid var(--accent);
+			outline-offset: 2px;
+		}
+
 		.session-icon { font-size: 0.9rem; color: var(--text-muted); }
 		.session-info { flex: 1; min-width: 0; }
 		.session-title {
@@ -965,6 +1006,14 @@
 		.session-time {
 			font-size: 0.65rem;
 			color: var(--text-dim);
+		}
+		.session-preview {
+			font-size: 0.68rem;
+			color: var(--text-muted);
+			margin-top: 0.1rem;
+			white-space: nowrap;
+			overflow: hidden;
+			text-overflow: ellipsis;
 		}
 		.session-del {
 			opacity: 0;
@@ -1124,8 +1173,8 @@
 				<span class="hc-dot green" id="hc-gateway-dot"></span>
 				<span>Gateway</span>
 			</div>
-			<button class="hc-btn" id="whatsapp-btn" title="WhatsApp">💬</button>
-			<button class="theme-btn" id="theme-btn" title="Cambiar tema">🌙</button>
+			<button type="button" class="hc-btn" id="whatsapp-btn" title="WhatsApp" aria-label="WhatsApp">💬</button>
+			<button type="button" class="theme-btn" id="theme-btn" title="Cambiar tema" aria-label="Cambiar tema claro u oscuro">🌙</button>
 		</div>
 	</header>
 
@@ -1133,13 +1182,15 @@
 	<div class="workspace-wrap">
 
 	<!-- ===== VIEW: CHAT ===== -->
-	<div class="workspace active" id="view-chat" data-view="chat">
+		<div class="workspace active" id="view-chat" data-view="chat">
 		<div class="chat-layout">
-			<div class="chat-sessions-sidebar">
+			<div class="chat-sessions-sidebar" id="chat-sidebar">
 				<div class="chat-sessions-header">
-					<button class="btn btn-primary" id="new-chat-btn" style="width:100%; padding:0.5rem;">➕ Nueva</button>
+					<div class="chat-sessions-title">Historial de chats</div>
+					<input type="search" class="session-search" id="session-search" placeholder="Buscar…" autocomplete="off" aria-label="Buscar en el historial de chats">
+					<button type="button" class="btn btn-primary" id="new-chat-btn" style="width:100%; padding:0.5rem;" aria-label="Nueva conversación">➕ Nueva</button>
 				</div>
-				<div class="session-list" id="chat-session-list"></div>
+				<div class="session-list" id="chat-session-list" role="list" aria-label="Lista de conversaciones"></div>
 			</div>
 			<div class="chat-main-area">
 				<div class="error-banner" id="chat-error"></div>
@@ -1567,6 +1618,7 @@ const state = {
 	wsConnected: false,
 	ws: null,
 	enabledTools: new Set(),
+	sessionFilter: "",
 };
 
 // ===== TOOLS STATE =====
@@ -1725,9 +1777,12 @@ async function loadHealth() {
 // ===== SESSIONS =====
 async function loadSessions() {
 	try {
-		state.sessions = await api("/api/chat-sessions");
-		renderSessionList();
-	} catch { state.sessions = []; }
+		const d = await api("/api/chat-sessions");
+		state.sessions = Array.isArray(d.sessions) ? d.sessions : [];
+	} catch {
+		state.sessions = [];
+	}
+	renderSessionList();
 }
 
 async function createSession() {
@@ -1769,59 +1824,150 @@ async function deleteSession(id) {
 	} catch (e) { showError(e.message); }
 }
 
+function startOfLocalDay(ms) {
+	const d = new Date(ms);
+	d.setHours(0, 0, 0, 0);
+	return d.getTime();
+}
+
+function sessionGroupLabel(updatedAt) {
+	const now = Date.now();
+	const today = startOfLocalDay(now);
+	const y = new Date(now);
+	y.setDate(y.getDate() - 1);
+	const yesterday = startOfLocalDay(y.getTime());
+	const u = startOfLocalDay(updatedAt);
+	if (u >= today) return "Hoy";
+	if (u >= yesterday) return "Ayer";
+	return "Anteriores";
+}
+
 function renderSessionList() {
 	const dashEl = document.getElementById("dash-session-list");
 	const chatEl = document.getElementById("chat-session-list");
 
 	function makeHtml() {
 		if (state.sessions.length === 0) {
-			return '<div style="color:var(--text-dim);font-size:0.78rem;padding:0.5rem;">Sin sesiones</div>';
+			return '<div style="color:var(--text-dim);font-size:0.78rem;padding:0.5rem;">No hay historial todavía</div>';
 		}
-		return state.sessions.map(s => `
-			<div class="session-item ${s.id === state.activeSessionId ? "active" : ""}">
-				<span class="session-icon">💬</span>
+		const q = (state.sessionFilter || "").trim().toLowerCase();
+		const filtered = !q
+			? state.sessions.slice()
+			: state.sessions.filter((s) =>
+				(s.title || "").toLowerCase().includes(q) || (s.lastPreview || "").toLowerCase().includes(q));
+		filtered.sort((a, b) => b.updatedAt - a.updatedAt);
+		if (filtered.length === 0) {
+			return '<div style="color:var(--text-dim);font-size:0.78rem;padding:0.5rem;">No hay conversaciones que coincidan</div>';
+		}
+		let lastLabel = null;
+		const blocks = [];
+		for (const s of filtered) {
+			const label = sessionGroupLabel(s.updatedAt);
+			if (label !== lastLabel) {
+				lastLabel = label;
+				blocks.push(`<div class="session-group-label" role="presentation">${label}</div>`);
+			}
+			const escTitle = String(s.title || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+			const escPrev = s.lastPreview
+				? String(s.lastPreview).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;")
+				: "";
+			blocks.push(`
+			<div class="session-item ${s.id === state.activeSessionId ? "active" : ""}" data-id="${s.id}" role="listitem" tabindex="0">
+				<span class="session-icon" aria-hidden="true">💬</span>
 				<div class="session-info">
-					<div class="session-title">${s.title}</div>
+					<div class="session-title">${escTitle}</div>
 					<div class="session-time">${new Date(s.updatedAt).toLocaleString()}</div>
+					${escPrev ? `<div class="session-preview">${escPrev}</div>` : ""}
 				</div>
-				<button class="session-del" data-id="${s.id}" title="Eliminar">×</button>
-			</div>
-		`).join("");
+				<button type="button" class="session-del" data-id="${s.id}" title="Eliminar" aria-label="Eliminar conversación">×</button>
+			</div>`);
+		}
+		return blocks.join("");
 	}
 
 	if (dashEl) {
 		dashEl.innerHTML = makeHtml();
 		dashEl.querySelectorAll(".session-item").forEach(item => {
 			item.addEventListener("click", (e) => {
-				if (!e.target.classList.contains("session-del")) {
-					switchSession(item.querySelector(".session-del").dataset.id);
+				if (!e.target.closest(".session-del")) {
+					switchSession(item.dataset.id);
 				}
+			});
+			item.addEventListener("keydown", (e) => {
+				if (e.key !== "Enter") return;
+				if (e.target.closest(".session-del")) return;
+				switchSession(item.dataset.id);
 			});
 		});
 		dashEl.querySelectorAll(".session-del").forEach(btn => {
 			btn.addEventListener("click", (e) => { e.stopPropagation(); deleteSession(btn.dataset.id); });
 		});
+		bindSessionRenameTitles(dashEl);
 	}
 
 	if (chatEl) {
 		chatEl.innerHTML = makeHtml();
 		chatEl.querySelectorAll(".session-item").forEach(item => {
 			item.addEventListener("click", (e) => {
-				if (!e.target.classList.contains("session-del")) {
-					switchSession(item.querySelector(".session-del").dataset.id);
+				if (!e.target.closest(".session-del")) {
+					switchSession(item.dataset.id);
 				}
+			});
+			item.addEventListener("keydown", (e) => {
+				if (e.key !== "Enter") return;
+				if (e.target.closest(".session-del")) return;
+				switchSession(item.dataset.id);
 			});
 		});
 		chatEl.querySelectorAll(".session-del").forEach(btn => {
 			btn.addEventListener("click", (e) => { e.stopPropagation(); deleteSession(btn.dataset.id); });
 		});
+		bindSessionRenameTitles(chatEl);
 	}
 
 	document.getElementById("dash-sessions").textContent = String(state.sessions.length);
 	document.getElementById("dash-messages").textContent = String(state.messages.length);
 }
 
+function bindSessionRenameTitles(root) {
+	if (!root) return;
+	root.querySelectorAll(".session-title").forEach((el) => {
+		el.addEventListener("dblclick", async (e) => {
+			e.stopPropagation();
+			e.preventDefault();
+			const item = el.closest(".session-item");
+			const id = item?.dataset.id;
+			if (!id || state.busy) return;
+			const session = state.sessions.find((x) => x.id === id);
+			const next = window.prompt("Nombre de la conversación", session?.title || "");
+			if (next === null) return;
+			const t = next.trim();
+			if (!t) return;
+			try {
+				await api("/api/chat-sessions/" + encodeURIComponent(id), {
+					method: "PATCH",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ title: t }),
+				});
+				await loadSessions();
+				addLog("Sesión renombrada");
+			} catch (err) {
+				showError(err.message);
+			}
+		});
+	});
+}
+
 // ===== MESSAGES =====
+function formatMessageTime(m) {
+	if (m.ts == null) return "";
+	try {
+		return new Date(m.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+	} catch {
+		return "";
+	}
+}
+
 function renderMessages() {
 	const container = document.getElementById("chat-messages");
 	const empty = document.getElementById("chat-empty");
@@ -1838,15 +1984,19 @@ function renderMessages() {
 		return;
 	}
 
-	container.innerHTML = state.messages.map(m => `
+	container.innerHTML = state.messages.map(m => {
+		const timePart = formatMessageTime(m);
+		const who = m.role === "user" ? "Tú" : "Shiro";
+		const sub = timePart ? `${who} · ${timePart}` : who;
+		return `
 		<div class="msg-row ${m.role}">
 			<div class="msg-avatar ${m.role === "user" ? "user-emoji" : ""}">${m.role === "user" ? "👤" : `<img src="/Shiro.PNG?t=2" alt="Shiro" onerror="this.style.display='none'">`}</div>
 			<div class="msg-body">
 				<div class="msg-bubble">${typeof m.content === "string" ? m.content : JSON.stringify(m.content)}</div>
-				<div class="msg-time">${m.role === "user" ? "Tú" : "Shiro"} · ${new Date().toLocaleTimeString()}</div>
+				<div class="msg-time">${sub}</div>
 			</div>
-		</div>
-	`).join("");
+		</div>`;
+	}).join("");
 
 	container.scrollTop = container.scrollHeight;
 }
@@ -1869,6 +2019,78 @@ function addThinking() {
 
 function clearThinking() {
 	document.getElementById("thinking-msg")?.remove();
+}
+
+let streamRenderRaf = null;
+
+async function postChatStream(body, onDelta) {
+	const r = await fetch("/api/chat/stream", {
+		method: "POST",
+		headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+		body: JSON.stringify(body),
+	});
+	const ct = (r.headers.get("content-type") || "").toLowerCase();
+	if (!r.ok) {
+		let msg = "Error " + r.status;
+		try {
+			const j = await r.json();
+			if (j.error) msg = j.error;
+		} catch {
+			try {
+				msg = (await r.text()) || msg;
+			} catch {
+				/* ignore */
+			}
+		}
+		throw new Error(msg);
+	}
+	if (!ct.includes("text/event-stream")) {
+		const j = await r.json();
+		if (j.error) throw new Error(j.error);
+		if (onDelta && j.content) onDelta(j.content);
+		return { content: j.content || "", whatsapp: j.whatsapp };
+	}
+	const reader = r.body.getReader();
+	const dec = new TextDecoder();
+	let buf = "";
+	let full = "";
+	let whatsapp = null;
+	while (true) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		buf += dec.decode(value, { stream: true });
+		let sep;
+		while ((sep = buf.indexOf("\n\n")) >= 0) {
+			const block = buf.slice(0, sep);
+			buf = buf.slice(sep + 2);
+			for (const line of block.split("\n")) {
+				if (!line.startsWith("data: ")) continue;
+				let evt;
+				try {
+					evt = JSON.parse(line.slice(6));
+				} catch {
+					continue;
+				}
+				if (evt.type === "delta" && evt.text) {
+					full += evt.text;
+					if (onDelta) {
+						if (streamRenderRaf) cancelAnimationFrame(streamRenderRaf);
+						streamRenderRaf = requestAnimationFrame(() => {
+							streamRenderRaf = null;
+							onDelta(full);
+						});
+					}
+				}
+				if (evt.type === "done") {
+					if (evt.content != null && evt.content !== "") full = evt.content;
+					if (evt.whatsapp) whatsapp = evt.whatsapp;
+					if (onDelta) onDelta(full);
+				}
+				if (evt.type === "error") throw new Error(evt.message || "Error en stream");
+			}
+		}
+	}
+	return { content: full, whatsapp };
 }
 
 // ===== CHAT FORM =====
@@ -1898,45 +2120,61 @@ chatForm.addEventListener("submit", async (e) => {
 	state.pendingImage = null;
 	document.getElementById("attach-img-btn").style.color = "";
 
-	state.messages.push({ role: "user", content });
+	const payloadMessages = () => {
+		const list = state.messages.slice();
+		const last = list[list.length - 1];
+		if (last && last.role === "assistant") {
+			const c = last.content;
+			const emptyStr = typeof c === "string" && !String(c).trim();
+			if (emptyStr) list.pop();
+		}
+		return [
+			{ role: "system", content: "Eres Shiro, un asistente IA útil." },
+			...list.map(({ role, content: c }) => ({ role, content: c })),
+		];
+	};
+
+	state.messages.push({ role: "user", content, ts: Date.now() });
 	renderMessages();
 	setBusy(true);
-	addThinking();
+
+	state.messages.push({ role: "assistant", content: "", ts: Date.now() });
+	renderMessages();
 
 	try {
-		const d = await api("/api/chat", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				messages: [{ role: "system", content: "Eres Shiro, un asistente IA útil." }, ...state.messages],
+		const { content: reply, whatsapp } = await postChatStream(
+			{
+				messages: payloadMessages(),
 				sessionId: state.activeSessionId,
-				allowedTools: [...state.enabledTools]
-			})
-		});
+				allowedTools: [...state.enabledTools],
+			},
+			(partial) => {
+				state.messages[state.messages.length - 1].content = partial;
+				renderMessages();
+			},
+		);
 
-		clearThinking();
-		if (d.error) throw new Error(d.error);
-
-		state.messages.push({ role: "assistant", content: d.content });
+		state.messages[state.messages.length - 1].content = reply;
 		renderMessages();
 		addLog(`Chat: mensaje enviado (${text.slice(0, 30)}...)`);
 
-		// Show WhatsApp QR if present
-		if (d.whatsapp?.qrDataUrl) {
-			showWhatsAppModal(d);
+		if (whatsapp?.qrDataUrl) {
+			showWhatsAppModal({ whatsapp });
 		}
 
-		// Save session
 		await api("/api/chat-sessions/" + encodeURIComponent(state.activeSessionId), {
 			method: "PUT",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ messages: state.messages })
+			body: JSON.stringify({ messages: state.messages.map(({ role, content: c }) => ({ role, content: c })) }),
 		});
 		await loadSessions();
 	} catch (e) {
-		clearThinking();
+		if (state.messages.length && state.messages[state.messages.length - 1].role === "assistant") {
+			state.messages.pop();
+		}
 		showError(e.message);
 		addLog(e.message, "error");
+		renderMessages();
 	}
 
 	setBusy(false);
@@ -1972,7 +2210,7 @@ if (imageInput && attachImgBtn) {
 			attachImgBtn.style.color = "var(--accent)";
 			addLog("Imagen adjuntada");
 		};
-		reader.readAsDataURL(reader.result);
+		reader.readAsDataURL(file);
 	});
 }
 
@@ -2186,6 +2424,11 @@ async function init() {
 
 	renderMessages();
 	document.getElementById("sidebar-session-id").textContent = state.activeSessionId ? state.activeSessionId.slice(0, 8) + "..." : "—";
+
+	document.getElementById("session-search")?.addEventListener("input", (e) => {
+		state.sessionFilter = e.target.value || "";
+		renderSessionList();
+	});
 
 	connectGateway();
 

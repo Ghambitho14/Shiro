@@ -2,6 +2,7 @@ import type { LLMClient, ToolDef } from "./LLMClient.js";
 import type { Message, ContentPart } from "../agent/Types.js";
 import { sanitizeModelResponse } from "../sanitizeResponse.js";
 import { getConfig } from "../../config/config.js";
+import { getMaxToolIterations, normalizeToolResult } from "./toolRuntime.js";
 
 function getOllamaSettings(): { baseUrl: string; model: string } {
 	const cfg = getConfig();
@@ -48,8 +49,6 @@ function buildOllamaMessages(messages: Message[]): Record<string, unknown>[] {
 	});
 }
 
-const MAX_TOOL_ITERATIONS = 10;
-
 export const ollamaClient: LLMClient = {
 	async chat(messages: Message[]): Promise<string> {
 		const { baseUrl, model } = getOllamaSettings();
@@ -87,8 +86,9 @@ export const ollamaClient: LLMClient = {
 
 		let currentMessages = buildOllamaMessages(messages);
 		let iterations = 0;
+		const maxToolIterations = getMaxToolIterations();
 
-		while (iterations < MAX_TOOL_ITERATIONS) {
+		while (iterations < maxToolIterations) {
 			iterations++;
 
 			const ollamaTools = toolsDef.map((t) => ({
@@ -140,7 +140,7 @@ export const ollamaClient: LLMClient = {
 				return sanitizeModelResponse(content.trim() || "(Sin respuesta de texto)");
 			}
 
-			for (const tc of toolCalls) {
+			const toolResults = await Promise.all(toolCalls.map(async (tc) => {
 				let args: Record<string, unknown> = {};
 				try {
 					args = JSON.parse(tc.function.arguments || "{}");
@@ -148,10 +148,18 @@ export const ollamaClient: LLMClient = {
 					args = {};
 				}
 				const result = await executeTool(tc.function.name, args);
-				const resultContent = result.ok ? result.content : "Error: " + (result.error ?? "unknown");
-				currentMessages.push({
+				const resultContent = result.ok
+					? normalizeToolResult(result.content)
+					: normalizeToolResult("Error: " + (result.error ?? "unknown"));
+				return {
 					role: "tool",
 					content: resultContent,
+				};
+			}));
+			for (const toolResult of toolResults) {
+				currentMessages.push({
+					role: "tool",
+					content: toolResult.content,
 				});
 			}
 		}

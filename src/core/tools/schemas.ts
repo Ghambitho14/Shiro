@@ -116,6 +116,28 @@ export const completeReminderSchema = z.object({
 	id: z.string().min(1, "id requerido"),
 });
 
+export const describeImageSchema = z.object({
+	url: z.string().min(1, "url requerida"),
+});
+
+export const memorySearchSchema = z.object({
+	query: z.string().min(1, "query requerida"),
+	limit: z.number().optional(),
+});
+
+export const memoryAddSchema = z.object({
+	content: z.string().min(1, "contenido requerido"),
+	type: z.string().optional(),
+	tags: z.array(z.string()).optional(),
+});
+
+export const sessionsListSchema = z.object({});
+
+export const sessionsHistorySchema = z.object({
+	session_id: z.string().optional(),
+	limit: z.number().optional(),
+});
+
 export type SearchWebArgs = z.infer<typeof searchWebSchema>;
 export type ExecArgs = z.infer<typeof execSchema>;
 export type CronCreateArgs = z.infer<typeof cronCreateSchema>;
@@ -156,4 +178,9 @@ export const toolSchemas: Record<string, z.ZodType<Record<string, unknown>>> = {
 	create_reminder: createReminderSchema,
 	list_reminders: listRemindersSchema,
 	complete_reminder: completeReminderSchema,
+	describe_image: describeImageSchema,
+	memory_search: memorySearchSchema,
+	memory_add: memoryAddSchema,
+	sessions_list: sessionsListSchema,
+	sessions_history: sessionsHistorySchema,
 };
