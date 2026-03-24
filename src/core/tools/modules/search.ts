@@ -12,6 +12,19 @@ export const searchWebTool: ToolDefinition = {
 	},
 };
 
+function normalizeDuckDuckGoUrl(href: string): string {
+	// DuckDuckGo suele devolver links tipo "/l/?uddg=<encoded>&..." en vez de la URL final.
+	try {
+		const candidate = href.startsWith("http") ? href : `https://duckduckgo.com${href}`;
+		const url = new URL(candidate);
+		const uddg = url.searchParams.get("uddg");
+		if (uddg) return uddg;
+		return url.toString();
+	} catch {
+		return href;
+	}
+}
+
 export async function executeSearchWeb(args: Record<string, unknown>): Promise<{ ok: boolean; content: string }> {
 	const query = String(args.query ?? "").trim();
 	if (!query) return { ok: false, content: "Query de búsqueda requerida" };
@@ -48,7 +61,7 @@ export async function executeSearchWeb(args: Record<string, unknown>): Promise<{
 				.replace(/\s+/g, " ")
 				.trim();
 
-		// DDG HTML usa <a rel="nofollow" class="result__a">; el regex antiguo exigía class al inicio y no coincidía nunca.
+		// DDG HTML usa <a rel="nofollow" class="result__a" href="..."> (class no va siempre primero).
 		const blockRe =
 			/<div class="(result results_links results_links_deep[^"]*)">([\s\S]*?)<div class="clear"><\/div>/g;
 		let blockMatch: RegExpExecArray | null;
@@ -57,16 +70,21 @@ export async function executeSearchWeb(args: Record<string, unknown>): Promise<{
 			if (blockClasses.includes("result--ad")) continue;
 
 			const body = blockMatch[2];
-			const titleM = /<a[^>]*\bclass="result__a"[^>]*>([\s\S]*?)<\/a>/i.exec(body);
-			if (!titleM) continue;
+			const titleTag = /<a([^>]*\bclass="result__a"[^>]*)>([\s\S]*?)<\/a>/i.exec(body);
+			if (!titleTag) continue;
 
-			const title = stripHtml(titleM[1]);
+			const hrefSub = /href="([^"]*)"/i.exec(titleTag[1]);
+			const resolvedUrl = hrefSub ? normalizeDuckDuckGoUrl(hrefSub[1]) : "";
+			const title = stripHtml(titleTag[2]);
 			if (!title) continue;
 
 			const snippetM = /<a[^>]*\bclass="result__snippet"[^>]*>([\s\S]*?)<\/a>/i.exec(body);
 			const snippet = snippetM ? stripHtml(snippetM[1]) : "";
 
-			results.push(`${results.length + 1}. ${title}${snippet ? " — " + snippet : ""}`);
+			const n = results.length + 1;
+			const urlLine = resolvedUrl ? `\n   URL: ${resolvedUrl}` : "";
+			const snippetLine = snippet ? `\n   Snippet: ${snippet}` : "";
+			results.push(`${n}. ${title}${urlLine}${snippetLine}`);
 		}
 
 		if (results.length === 0) {

@@ -31,3 +31,22 @@ test("buildContext with long memory includes summary", () => {
 	});
 	strictEqual(out.system.includes("Previous session summary"), true);
 });
+
+test("buildContext limits tools manifest by allowedTools", () => {
+	const memory = new MemoryManager();
+	const out = buildContext({
+		goal: "List files",
+		agentName: "TestAgent",
+		shortMemory: memory,
+		tokenBudget: 2000,
+		allowedTools: ["search_web"],
+	});
+
+	strictEqual(out.system.includes("## Herramientas disponibles"), true);
+	const idx = out.system.indexOf("## Herramientas disponibles");
+	strictEqual(idx >= 0, true);
+	const toolSection = out.system.slice(idx);
+
+	strictEqual(toolSection.includes("search_web:"), true);
+	strictEqual(toolSection.includes("fetch_url:"), false);
+});

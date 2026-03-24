@@ -132,6 +132,7 @@ export async function runAgent(
 		tokenBudget,
 		workspaceContext,
 		textOnly,
+		allowedTools,
 		userProfile: userProfile ?? undefined,
 	});
 

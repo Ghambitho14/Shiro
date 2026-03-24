@@ -252,6 +252,20 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 				const searchUrl = `https://html.duckduckgo.com/html/?q=${encodedQuery}`;
 				const controller = new AbortController();
 				const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+				function normalizeDuckDuckGoUrl(href: string): string {
+					// DuckDuckGo suele devolver links tipo "/l/?uddg=<encoded>&..." en vez de la URL final.
+					try {
+						const candidate = href.startsWith("http") ? href : `https://duckduckgo.com${href}`;
+						const url = new URL(candidate);
+						const uddg = url.searchParams.get("uddg");
+						if (uddg) return uddg;
+						return url.toString();
+					} catch {
+						return href;
+					}
+				}
+
 				try {
 					const res = await fetch(searchUrl, {
 						signal: controller.signal,
@@ -261,15 +275,19 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 					if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
 					const text = await res.text();
 					const results: string[] = [];
-					const titleRegex = /<a class="result__a"[^>]*href="[^"]*"[^>]*>([^<]+)<\/a>/g;
+					const titleRegex = /<a class="result__a"[^>]*href="([^"]+)"[^>]*>([^<]+)<\/a>/g;
 					const snippetRegex = /<a class="result__snippet"[^>]*>([^<]+)<\/a>/g;
 					let match;
 					let count = 0;
 					while ((match = titleRegex.exec(text)) !== null && count < 5) {
-						const title = match[1].replace(/<[^>]+>/g, "").trim();
+						const url = normalizeDuckDuckGoUrl(match[1]);
+						const title = match[2].replace(/<[^>]+>/g, "").trim();
 						const snippetMatch = snippetRegex.exec(text);
 						const snippet = snippetMatch ? snippetMatch[1].replace(/<[^>]+>/g, "").trim() : "";
-						results.push(`${count + 1}. ${title}${snippet ? " - " + snippet : ""}`);
+
+						const urlLine = url ? `\n   URL: ${url}` : "";
+						const snippetLine = snippet ? `\n   Snippet: ${snippet}` : "";
+						results.push(`${count + 1}. ${title}${urlLine}${snippetLine}`);
 						count++;
 					}
 					if (results.length === 0) {

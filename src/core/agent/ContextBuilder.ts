@@ -3,7 +3,7 @@ import type { LongTermSummary } from "./Types.js";
 import type { MemoryStore } from "../memory/MemoryStore.js";
 import { eventsToContextLines } from "../memory/serializers.js";
 import { getSoul } from "../soul/soul.js";
-import { getToolsDefinition } from "../tools/ToolRegistry.js";
+import { getToolsDefinitionScoped } from "../tools/ToolRegistry.js";
 import { isSafeMode } from "../health/HealthManager.js";
 import { loadRelevantSkills } from "../skills/SkillLoader.js";
 
@@ -21,6 +21,8 @@ export type ContextInput = {
 	tokenBudget: number;
 	toolsManifest?: string;
 	workspaceContext?: string;
+	/** Si se especifica, el system prompt lista solo estas tools. */
+	allowedTools?: string[];
 	/** Si true, no se incluyen herramientas en el contexto (solo respuesta en texto). */
 	textOnly?: boolean;
 	/** Perfil del usuario para personalizar respuestas (nombre, idioma, sobre ti). */
@@ -55,7 +57,7 @@ export function buildContext(input: ContextInput): { system: string; messages: M
 	const toolBlock = textOnly
 		? ""
 		: (() => {
-				const toolsDef = getToolsDefinition(true);
+				const toolsDef = getToolsDefinitionScoped(input.allowedTools);
 				const toolsManifest =
 					input.toolsManifest ??
 					toolsDef.map((t) => t.function.name + ": " + (t.function.description ?? "")).join("; ");
