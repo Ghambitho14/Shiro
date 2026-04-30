@@ -3,25 +3,41 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Shiro Gateway</title>
+    <title>Shiro Gateway Console</title>
     <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { 
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #1a1a2e; 
-            color: #eee;
-            min-height: 100vh;
-            padding: 20px;
+        :root {
+            --bg: #0b1020;
+            --bg-soft: #111832;
+            --bg-card: #121b33;
+            --border: #25345b;
+            --text: #e2e8f0;
+            --muted: #94a3b8;
+            --accent: #6366f1;
+            --success: #10b981;
+            --danger: #ef4444;
+            --shadow: 0 14px 30px rgba(2, 8, 23, 0.35);
         }
-        h1 { color: #ff6b6b; margin-bottom: 20px; }
-        .container { max-width: 800px; margin: 0 auto; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background:
+                radial-gradient(900px 500px at -10% -20%, rgba(99, 102, 241, 0.18), transparent 60%),
+                radial-gradient(700px 400px at 120% -10%, rgba(59, 130, 246, 0.12), transparent 60%),
+                var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 24px;
+        }
+        h1 { color: var(--text); margin-bottom: 16px; letter-spacing: -0.02em; }
+        .container { max-width: 980px; margin: 0 auto; }
         
         .status-card {
-            background: #16213e;
-            border-radius: 12px;
+            background: var(--bg-card);
+            border-radius: 14px;
             padding: 20px;
             margin-bottom: 20px;
-            border: 1px solid #0f3460;
+            border: 1px solid var(--border);
+            box-shadow: var(--shadow);
         }
         
         .status-grid {
@@ -32,35 +48,38 @@
         }
         
         .status-item {
-            background: #0f3460;
+            background: var(--bg-soft);
             padding: 15px;
-            border-radius: 8px;
+            border-radius: 10px;
             text-align: center;
+            border: 1px solid var(--border);
         }
         
         .status-item .value {
             font-size: 24px;
             font-weight: bold;
-            color: #4ecdc4;
+            color: var(--accent);
         }
         
         .status-item .label {
             font-size: 12px;
-            color: #888;
+            color: var(--muted);
             margin-top: 5px;
         }
         
         .clients-list {
-            background: #16213e;
-            border-radius: 12px;
+            background: var(--bg-card);
+            border-radius: 14px;
             padding: 20px;
             margin-bottom: 20px;
+            border: 1px solid var(--border);
+            box-shadow: var(--shadow);
         }
         
         .client-item {
-            background: #0f3460;
+            background: var(--bg-soft);
             padding: 12px;
-            border-radius: 8px;
+            border-radius: 10px;
             margin-bottom: 10px;
             display: flex;
             justify-content: space-between;
@@ -68,56 +87,58 @@
         }
         
         .client-info { font-size: 14px; }
-        .client-info .id { color: #4ecdc4; }
-        .client-info .session { color: #888; font-size: 12px; }
+        .client-info .id { color: var(--accent); }
+        .client-info .session { color: var(--muted); font-size: 12px; }
         
-        .connected { color: #4ecdc4; }
-        .disconnected { color: #ff6b6b; }
+        .connected { color: var(--success); }
+        .disconnected { color: var(--danger); }
         
         .log-container {
-            background: #16213e;
-            border-radius: 12px;
+            background: var(--bg-card);
+            border-radius: 14px;
             padding: 20px;
             height: 300px;
             overflow-y: auto;
+            border: 1px solid var(--border);
+            box-shadow: var(--shadow);
         }
         
         .log-entry {
             padding: 8px;
             margin-bottom: 5px;
-            border-radius: 4px;
-            font-family: monospace;
+            border-radius: 8px;
+            font-family: ui-monospace, "JetBrains Mono", monospace;
             font-size: 13px;
         }
         
-        .log-entry.received { background: #1e3a5f; border-left: 3px solid #4ecdc4; }
-        .log-entry.sent { background: #1e3a5f; border-left: 3px solid #ff6b6b; }
-        .log-entry.system { background: #2d1b4e; border-left: 3px solid #a855f7; }
+        .log-entry.received { background: #162747; border-left: 3px solid #3b82f6; }
+        .log-entry.sent { background: #1f2c46; border-left: 3px solid var(--accent); }
+        .log-entry.system { background: #1e1f3f; border-left: 3px solid #a855f7; }
         
-        .log-entry .time { color: #666; margin-right: 10px; }
-        .log-entry .type { color: #4ecdc4; margin-right: 10px; }
+        .log-entry .time { color: #64748b; margin-right: 10px; }
+        .log-entry .type { color: #93c5fd; margin-right: 10px; }
         
         button {
-            background: #4ecdc4;
-            color: #1a1a2e;
+            background: var(--accent);
+            color: #fff;
             border: none;
             padding: 10px 20px;
-            border-radius: 8px;
+            border-radius: 10px;
             cursor: pointer;
             font-weight: bold;
             margin-right: 10px;
         }
         
-        button:hover { background: #45b7aa; }
-        button.disconnect { background: #ff6b6b; }
-        button.disconnect:hover { background: #ee5a5a; }
+        button:hover { filter: brightness(1.08); }
+        button.disconnect { background: var(--danger); }
+        button.disconnect:hover { filter: brightness(1.06); }
         
-        .controls { margin-top: 20px; }
+        .controls { margin: 20px 0; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🦞 Shiro Gateway</h1>
+        <h1>Shiro Gateway Console</h1>
         
         <div class="status-card">
             <h2>Estado</h2>

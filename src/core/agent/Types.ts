@@ -20,7 +20,7 @@ export type ToolCallSpec = {
 	function: { name: string; arguments: string };
 };
 
-export type EventType = "plan" | "tool_call" | "observation" | "error" | "summary" | "decision";
+export type EventType = "plan" | "step_status" | "tool_call" | "observation" | "error" | "summary" | "decision";
 
 export type AgentEvent = {
 	type: EventType;

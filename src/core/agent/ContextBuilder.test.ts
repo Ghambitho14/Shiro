@@ -50,3 +50,16 @@ test("buildContext limits tools manifest by allowedTools", () => {
 	strictEqual(toolSection.includes("search_web:"), true);
 	strictEqual(toolSection.includes("fetch_url:"), false);
 });
+
+test("buildContext incluye prompt del rol cuando se especifica", () => {
+	const memory = new MemoryManager();
+	const out = buildContext({
+		goal: "Implementa una función",
+		agentName: "TestAgent",
+		shortMemory: memory,
+		tokenBudget: 2500,
+		role: "dev",
+	});
+
+	strictEqual(out.system.includes("## Modo: Desarrollador"), true);
+});

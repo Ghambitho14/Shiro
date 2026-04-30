@@ -39,6 +39,8 @@ export type AppConfig = {
 	skillPaths?: string[];
 	/** Máximo de caracteres totales de skills inyectados. */
 	skillsMaxChars?: number;
+	/** Rol del agente: default, dev, analyst, hacker */
+	role?: "default" | "dev" | "analyst" | "hacker";
 };
 
 const DEFAULTS: AppConfig = {
@@ -59,6 +61,7 @@ const DEFAULTS: AppConfig = {
 	maxToolResultChars: 12000,
 	skillPaths: [],
 	skillsMaxChars: 3000,
+	role: "default",
 };
 
 function isValidUrl(url: string): boolean {
@@ -137,6 +140,9 @@ function loadConfig(): AppConfig {
 			maxToolResultChars: sanitizePositiveInt(data.maxToolResultChars, DEFAULTS.maxToolResultChars ?? 12000, 500, 200000),
 			skillPaths: sanitizeStringArray(data.skillPaths),
 			skillsMaxChars: sanitizePositiveInt(data.skillsMaxChars, DEFAULTS.skillsMaxChars ?? 3000, 500, 20000),
+			role: data.role === "default" || data.role === "dev" || data.role === "analyst" || data.role === "hacker"
+				? data.role
+				: DEFAULTS.role,
 		};
 	} catch {
 		return { ...DEFAULTS };
@@ -176,6 +182,7 @@ export function setConfig(partial: Partial<AppConfig>): AppConfig {
 		skillsMaxChars: partial.skillsMaxChars !== undefined
 			? sanitizePositiveInt(partial.skillsMaxChars, DEFAULTS.skillsMaxChars ?? 3000, 500, 20000)
 			: current.skillsMaxChars,
+		role: partial.role !== undefined ? partial.role : current.role,
 	};
 	cached = next;
 	mkdirSync(DATA_DIR, { recursive: true });

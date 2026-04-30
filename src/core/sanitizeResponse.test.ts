@@ -1,6 +1,11 @@
 import { test } from "node:test";
 import { strictEqual } from "node:assert";
-import { sanitizeModelResponse, isMeaningfulResponse, FALLBACK_EMPTY_RESPONSE } from "./sanitizeResponse.js";
+import {
+	sanitizeModelResponse,
+	isMeaningfulResponse,
+	FALLBACK_EMPTY_RESPONSE,
+	isPotentiallyDangerousCommand,
+} from "./sanitizeResponse.js";
 
 test("sanitizeModelResponse quita bloque think al inicio", () => {
 	const raw = ` <think>
@@ -40,4 +45,15 @@ test("isMeaningfulResponse acepta respuestas útiles", () => {
 test("FALLBACK_EMPTY_RESPONSE está definido", () => {
 	strictEqual(typeof FALLBACK_EMPTY_RESPONSE, "string");
 	strictEqual(FALLBACK_EMPTY_RESPONSE.length > 0, true);
+});
+
+test("isPotentiallyDangerousCommand detecta comandos peligrosos", () => {
+	strictEqual(isPotentiallyDangerousCommand("rm -rf /"), true);
+	strictEqual(isPotentiallyDangerousCommand("echo hola && del /Q C:\\temp"), true);
+	strictEqual(isPotentiallyDangerousCommand("powershell -encodedCommand AAAA"), true);
+});
+
+test("isPotentiallyDangerousCommand permite comandos simples", () => {
+	strictEqual(isPotentiallyDangerousCommand("npm run test"), false);
+	strictEqual(isPotentiallyDangerousCommand("git status"), false);
 });

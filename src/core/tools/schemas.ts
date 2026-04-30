@@ -134,8 +134,20 @@ export const memoryAddSchema = z.object({
 export const sessionsListSchema = z.object({});
 
 export const sessionsHistorySchema = z.object({
-	session_id: z.string().optional(),
-	limit: z.number().optional(),
+	sessionId: z.string().optional(),
+	limit: z.number().optional().default(50),
+});
+
+export const executePythonSchema = z.object({
+	code: z.string().min(1, "código requerido").max(5000, "código demasiado largo"),
+	timeout: z.number().min(1000).max(30000).optional().default(10000),
+});
+
+export const httpRequestSchema = z.object({
+	url: z.string().url("URL inválida"),
+	method: z.enum(["GET", "POST", "PUT", "DELETE", "PATCH"]).default("GET"),
+	headers: z.record(z.string()).optional(),
+	body: z.string().optional(),
 });
 
 export type SearchWebArgs = z.infer<typeof searchWebSchema>;
@@ -183,4 +195,6 @@ export const toolSchemas: Record<string, z.ZodType<Record<string, unknown>>> = {
 	memory_add: memoryAddSchema,
 	sessions_list: sessionsListSchema,
 	sessions_history: sessionsHistorySchema,
+	execute_python: executePythonSchema,
+	http_request: httpRequestSchema,
 };

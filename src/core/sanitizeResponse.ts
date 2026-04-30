@@ -1,5 +1,63 @@
+const DANGEROUS_PATTERNS = [
+	"rm -rf",
+	"rm /",
+	"del /",
+	"format",
+	"exec(",
+	"eval(",
+	"__import__",
+	"compile(",
+	"subprocess.call",
+	"child_process",
+	"shell_exec",
+	"system(",
+	"popen",
+	"os.system",
+];
+
+const DANGEROUS_REGEXES = [
+	/;\s*rm\s+-rf/i,
+	/&\s*rm\s+-rf/i,
+	/\|\s*rm\s+-rf/i,
+	/rm\s+-rf\s+[\/*]/i,
+	/curl.*\|\s*sh/i,
+	/wget.*\|\s*sh/i,
+	/exec\s*\(\s*process/i,
+	/eval\s*\(/i,
+	/__import__\s*\(/i,
+	/(^|[;&|])\s*(rm|del|format)\b/i,
+	/\b(powershell|cmd)\b.*\b(enc|encodedcommand)\b/i,
+];
+
+const DANGEROUS_COMMAND_CHARS = /[;&|`$(){}\[\]<>]/;
+
+export function isPotentiallyDangerousCommand(command: string): boolean {
+	const cmd = String(command ?? "").trim();
+	if (!cmd) return false;
+	if (DANGEROUS_COMMAND_CHARS.test(cmd)) return true;
+	return DANGEROUS_REGEXES.some((re) => re.test(cmd));
+}
+
+export function sanitizeInput(userInput: string): string {
+	const input = userInput.trim();
+	
+	for (const pattern of DANGEROUS_PATTERNS) {
+		if (input.toLowerCase().includes(pattern.toLowerCase())) {
+			throw new Error("Input bloqueado: patrón peligroso detectado");
+		}
+	}
+	
+	for (const regex of DANGEROUS_REGEXES) {
+		if (regex.test(input)) {
+			throw new Error("Input bloqueado: patrón peligroso detectado");
+		}
+	}
+	
+	return input;
+}
+
 /**
- * Elimina bloques <think>...</think> del output del modelo.
+ * Elimina bloques <think>... del output del modelo.
  * Devuelve solo el texto final para el usuario.
  */
 export function sanitizeModelResponse(content: string): string {

@@ -1,4 +1,5 @@
 import { getConfig } from "../../config/config.js";
+import { getRolePrompt, type Role } from "../roles/roleManager.js";
 
 /**
  * SOUL para conversación simple: identidad y capacidades.
@@ -56,4 +57,13 @@ El usuario actual es "${userName}" y su carpeta home es: ${userHome}
 
 export function getSoul(agentName: string, textOnly = false): string {
 	return textOnly ? getSoulConversational(agentName) : getSoulAction(agentName);
+}
+
+export function getSoulWithRole(agentName: string, role: Role, textOnly = false): string {
+	const base = getSoul(agentName, textOnly);
+	const rolePrompt = getRolePrompt(role);
+	
+	if (!rolePrompt) return base;
+	
+	return base + "\n\n" + rolePrompt;
 }

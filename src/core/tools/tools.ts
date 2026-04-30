@@ -6,18 +6,22 @@ import { DATA_DIR } from "../../config/config.js";
 import { registerToolExecutor, getToolExecutor, hasToolExecutor } from "./toolExecutors.js";
 
 // Importar ejecutores de módulos separados
-import { executeFetchUrl } from "./modules/fetch.js";
+import { executeFetchUrl, executeHttpRequest } from "./modules/fetch.js";
 import { executeSearchWeb } from "./modules/search.js";
 import { executeGetWeather } from "./modules/weather.js";
 import { executeCalculator } from "./modules/calculator.js";
 import { executeGetTime } from "./modules/time.js";
+import { executePython } from "./modules/python.js";
+import { isPotentiallyDangerousCommand } from "../sanitizeResponse.js";
 
 // Registrar ejecutores
 registerToolExecutor("fetch_url", executeFetchUrl);
+registerToolExecutor("http_request", executeHttpRequest);
 registerToolExecutor("search_web", executeSearchWeb);
 registerToolExecutor("get_weather", executeGetWeather);
 registerToolExecutor("calculator", executeCalculator);
 registerToolExecutor("get_time", executeGetTime);
+registerToolExecutor("execute_python", executePython);
 
 export function getWorkspaceDir(): string {
 	return join(DATA_DIR, "workspace");
@@ -165,40 +169,6 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 				const entries = readdirSync(dirPath, { withFileTypes: true });
 				return { ok: true, content: entries.map((e: { isDirectory: () => boolean; name: string }) => (e.isDirectory() ? e.name + "/" : e.name)).join("\n") };
 			}
-			case "fetch_url": {
-				const url = String(args_.url ?? "").trim();
-				const parsed = new URL(url);
-				if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
-					return { ok: false, error: "Solo se permiten URLs http o https." };
-				const FETCH_TIMEOUT_MS = 15000;
-				const FETCH_MAX_BYTES = 150 * 1024;
-				const controller = new AbortController();
-				const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-				try {
-					const res = await fetch(url, {
-						signal: controller.signal,
-						headers: { "User-Agent": "Shiro/1.0 (AI agent)" },
-						redirect: "follow",
-					});
-					clearTimeout(timeoutId);
-					if (!res.ok) return { ok: false, error: `HTTP ${res.status}: ${res.statusText}` };
-					const contentType = (res.headers.get("content-type") ?? "").toLowerCase();
-					if (!contentType.includes("text/") && !contentType.includes("application/json") && !contentType.includes("application/xml"))
-						return { ok: false, error: "La URL no devuelve texto ni JSON (content-type: " + contentType + ")." };
-					const buf = await res.arrayBuffer();
-					if (buf.byteLength > FETCH_MAX_BYTES)
-						return { ok: false, error: "Respuesta demasiado grande (máx 150 KB)." };
-					const text = new TextDecoder("utf-8", { fatal: false }).decode(buf);
-					return { ok: true, content: text.trim() || "(Contenido vacío)" };
-				} catch (e) {
-					clearTimeout(timeoutId);
-					if (e instanceof Error) {
-						if (e.name === "AbortError") return { ok: false, error: "Timeout al conectar con la URL." };
-						return { ok: false, error: e.message };
-					}
-					return { ok: false, error: String(e) };
-				}
-			}
 			case "describe_image": {
 				const url = String(args_.url ?? "").trim();
 				if (!url) return { ok: false, error: "URL de imagen requerida" };
@@ -244,64 +214,6 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 				}
 				return { ok: true, content: "[Imagen en data URI. El modelo de visión debe analizarla.]" };
 			}
-			case "search_web": {
-				const query = String(args_.query ?? "").trim();
-				if (!query) return { ok: false, error: "Query de búsqueda requerida" };
-				if (query.length > 200) return { ok: false, error: "Query demasiado larga (máx 200 caracteres)" };
-				const encodedQuery = encodeURIComponent(query);
-				const searchUrl = `https://html.duckduckgo.com/html/?q=${encodedQuery}`;
-				const controller = new AbortController();
-				const timeoutId = setTimeout(() => controller.abort(), 15000);
-
-				function normalizeDuckDuckGoUrl(href: string): string {
-					// DuckDuckGo suele devolver links tipo "/l/?uddg=<encoded>&..." en vez de la URL final.
-					try {
-						const candidate = href.startsWith("http") ? href : `https://duckduckgo.com${href}`;
-						const url = new URL(candidate);
-						const uddg = url.searchParams.get("uddg");
-						if (uddg) return uddg;
-						return url.toString();
-					} catch {
-						return href;
-					}
-				}
-
-				try {
-					const res = await fetch(searchUrl, {
-						signal: controller.signal,
-						headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
-					});
-					clearTimeout(timeoutId);
-					if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
-					const text = await res.text();
-					const results: string[] = [];
-					const titleRegex = /<a class="result__a"[^>]*href="([^"]+)"[^>]*>([^<]+)<\/a>/g;
-					const snippetRegex = /<a class="result__snippet"[^>]*>([^<]+)<\/a>/g;
-					let match;
-					let count = 0;
-					while ((match = titleRegex.exec(text)) !== null && count < 5) {
-						const url = normalizeDuckDuckGoUrl(match[1]);
-						const title = match[2].replace(/<[^>]+>/g, "").trim();
-						const snippetMatch = snippetRegex.exec(text);
-						const snippet = snippetMatch ? snippetMatch[1].replace(/<[^>]+>/g, "").trim() : "";
-
-						const urlLine = url ? `\n   URL: ${url}` : "";
-						const snippetLine = snippet ? `\n   Snippet: ${snippet}` : "";
-						results.push(`${count + 1}. ${title}${urlLine}${snippetLine}`);
-						count++;
-					}
-					if (results.length === 0) {
-						return { ok: true, content: "No se encontraron resultados para: " + query };
-					}
-					return { ok: true, content: "Resultados de búsqueda:\n" + results.join("\n") };
-				} catch (e) {
-					clearTimeout(timeoutId);
-					if (e instanceof Error && e.name === "AbortError") {
-						return { ok: false, error: "Timeout en búsqueda" };
-					}
-					return { ok: false, error: e instanceof Error ? e.message : String(e) };
-				}
-			}
 			case "exec": {
 				const command = String(args_.command ?? "").trim();
 				const timeout = args_.timeout ? Number(args_.timeout) : 30000;
@@ -310,9 +222,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 				if (!command) return { ok: false, error: "El comando es requerido" };
 				if (command.length > 1000) return { ok: false, error: "Comando demasiado largo" };
 				
-				// Solo bloquear injection de comandos, no paths de Windows
-				const dangerous = /[;|`$(){}\[\]|<>]/;
-				if (dangerous.test(command)) {
+				if (isPotentiallyDangerousCommand(command)) {
 					return { ok: false, error: "El comando contiene caracteres no permitidos" };
 				}
 				
@@ -554,7 +464,8 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 			}
 			case "sessions_history": {
 				const { SessionTranscripts } = await import("../memory/SessionTranscripts.js");
-				const sessionId = args_.session_id ? String(args_.session_id).trim() : undefined;
+				const sessionIdRaw = args_.sessionId ?? args_.session_id;
+				const sessionId = sessionIdRaw ? String(sessionIdRaw).trim() : undefined;
 				const limit = args_.limit ? Number(args_.limit) : 20;
 				
 				const transcripts = new SessionTranscripts();

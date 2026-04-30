@@ -17,6 +17,11 @@ import {
 	FALLBACK_EMPTY_RESPONSE,
 } from "../sanitizeResponse.js";
 import { createRetryPolicy, getBackoffMs, isRetryableError } from "../health/RetryPolicy.js";
+import { getDecisionLogger, type DecisionEvent } from "./DecisionLogger.js";
+import { getConfig } from "../../config/config.js";
+import { getAllowedTools, type Role } from "../roles/roleManager.js";
+import { createExecutionPlan, type PlanStep } from "./Planner.js";
+import { executePlannedSteps } from "./PlanExecutor.js";
 
 export type UserProfileForAgent = {
 	userName?: string;
@@ -43,6 +48,7 @@ export type AgentOptions = {
 	userProfile?: UserProfileForAgent | null;
 	/** Si se define, se invoca con trozos del texto final (tras tools y sanitizado). */
 	onStreamDelta?: (chunk: string) => void;
+	role?: Role;
 };
 
 function getUserFacingInterventionMessage(): string {
@@ -93,7 +99,19 @@ export async function runAgent(
 		conversation,
 		userProfile,
 		onStreamDelta,
+		role: roleOverride,
 	} = opts;
+
+	const configuredRole = getConfig().role ?? "default";
+	const effectiveRole: Role = roleOverride ?? configuredRole;
+	const roleTools = getAllowedTools(effectiveRole);
+	const effectiveAllowedTools = (() => {
+		if (!roleTools) return allowedTools;
+		if (!allowedTools) return roleTools;
+		const roleSet = new Set(roleTools);
+		const intersected = allowedTools.filter((name) => roleSet.has(name));
+		return intersected;
+	})();
 
 	const wantExplain = (() => {
 		const t = (goal || "").toLowerCase();
@@ -104,6 +122,7 @@ export async function runAgent(
 		wantExplain && explainMode === "off" ? "brief" : explainMode;
 
 	const runId = `run_${Date.now()}`;
+	const decisionLogger = getDecisionLogger();
 
 	const pushEvent = (type: AgentEvent["type"], payload: Record<string, unknown>, stepId?: string) => {
 		memory.push({
@@ -113,9 +132,25 @@ export async function runAgent(
 			stepId,
 			payload,
 		});
+		
+		decisionLogger.log({
+			type: type as DecisionEvent["type"],
+			goal: payload.goal as string,
+			content: payload.content as string,
+			name: payload.name as string,
+			argsKeys: payload.argsKeys as string[],
+			timestamp: new Date().toISOString(),
+			runId,
+			stepId,
+		} as DecisionEvent);
 	};
 
 	pushEvent("decision", { goal });
+	const plan = createExecutionPlan(goal);
+	pushEvent("plan", { goal: plan.goal, steps: plan.steps.map((s) => s.goal) });
+	for (const step of plan.steps) {
+		pushEvent("step_status", { status: "planned", goal: step.goal }, step.id);
+	}
 
 	const recent = memory.getRecent(20);
 	const { intervened, action } = checkAndIntervene(recent);
@@ -132,8 +167,9 @@ export async function runAgent(
 		tokenBudget,
 		workspaceContext,
 		textOnly,
-		allowedTools,
+		allowedTools: effectiveAllowedTools,
 		userProfile: userProfile ?? undefined,
+		role: effectiveRole,
 	});
 
 	const normalizedConversation = Array.isArray(conversation)
@@ -151,7 +187,7 @@ export async function runAgent(
 		? [{ role: "system", content: system }, ...normalizedConversation]
 		: [{ role: "system", content: system }, ...messages];
 
-	const toolsDef = getToolsDefinitionScoped(allowedTools);
+	const toolsDef = getToolsDefinitionScoped(effectiveAllowedTools);
 	const retryPolicy = createRetryPolicy({ maxRetries: 3, baseDelayMs: 500 });
 
 	type ToolCallTrace = { name: string; ok: boolean; argsKeys: string[] };
@@ -195,7 +231,7 @@ export async function runAgent(
 		pushEvent("tool_call", { name, argsKeys: safeArgsKeys(args) });
 		let lastError: string | undefined;
 		for (let attempt = 0; attempt <= retryPolicy.maxRetries; attempt++) {
-			const r = await executeToolSafeScoped(name, args, allowedTools);
+			const r = await executeToolSafeScoped(name, args, effectiveAllowedTools);
 			usedTools.push({ name, ok: r.ok, argsKeys: safeArgsKeys(args) });
 			if (r.ok) {
 				return { ok: true, content: r.content };
@@ -213,26 +249,34 @@ export async function runAgent(
 		return { ok: false, content: "", error: lastError };
 	};
 
-	// Simple: chat directo con tools
+	// Orquestación: plan explícito + ejecución de pasos.
 	try {
-		let content = "";
-		for (let attempt = 0; attempt <= retryPolicy.maxRetries; attempt++) {
-			try {
-				content = textOnly
-					? (await llm.chat(fullMessages)).trim()
-					: (await llm.chatWithTools(fullMessages, toolsDef, adaptToolResult)).trim();
-				break;
-			} catch (err) {
-				const retryable = isRetryableError(err);
-				if (attempt < retryPolicy.maxRetries && retryable.retryable) {
-					const delay = getBackoffMs(retryPolicy, attempt);
-					logger.warn(`LLM falló, reintentando en ${delay}ms`);
-					await new Promise((resolve) => setTimeout(resolve, delay));
-				} else {
-					throw err;
+		const runPlannedStep = async (step: PlanStep): Promise<string> => {
+			pushEvent("step_status", { status: "running", goal: step.goal }, step.id);
+			let content = "";
+			for (let attempt = 0; attempt <= retryPolicy.maxRetries; attempt++) {
+				try {
+					content = textOnly
+						? (await llm.chat(fullMessages)).trim()
+						: (await llm.chatWithTools(fullMessages, toolsDef, adaptToolResult)).trim();
+					pushEvent("step_status", { status: "completed", goal: step.goal }, step.id);
+					return content;
+				} catch (err) {
+					const retryable = isRetryableError(err);
+					if (attempt < retryPolicy.maxRetries && retryable.retryable) {
+						const delay = getBackoffMs(retryPolicy, attempt);
+						logger.warn(`LLM falló, reintentando en ${delay}ms`);
+						await new Promise((resolve) => setTimeout(resolve, delay));
+					} else {
+						const message = err instanceof Error ? err.message : String(err);
+						pushEvent("step_status", { status: "failed", goal: step.goal, content: message }, step.id);
+						throw err;
+					}
 				}
 			}
-		}
+			return content;
+		};
+		const content = await executePlannedSteps(plan.steps, runPlannedStep);
 		const out = sanitizeModelResponse(content || "");
 		pushEvent("observation", { content: out });
 		const finalText = isMeaningfulResponse(out) ? out : FALLBACK_EMPTY_RESPONSE;

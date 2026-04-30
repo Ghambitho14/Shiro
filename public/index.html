@@ -43,8 +43,9 @@
 			--radius: 10px;
 			--radius-sm: 6px;
 			--radius-xs: 4px;
-			--shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
-			--shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.2);
+			--shadow: 0 20px 50px rgba(2, 8, 23, 0.45);
+			--shadow-sm: 0 8px 20px rgba(2, 8, 23, 0.28);
+			--glow: 0 0 0 3px rgba(99, 102, 241, 0.2);
 		}
 
 		[data-theme="light"] {
@@ -63,8 +64,9 @@
 			--text-secondary: #475569;
 			--text-muted: #64748b;
 			--text-dim: #94a3b8;
-			--shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
-			--shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.05);
+			--shadow: 0 20px 40px rgba(15, 23, 42, 0.1);
+			--shadow-sm: 0 8px 18px rgba(15, 23, 42, 0.08);
+			--glow: 0 0 0 3px rgba(99, 102, 241, 0.14);
 		}
 
 		*, *::before, *::after { box-sizing: border-box; }
@@ -73,7 +75,10 @@
 		body {
 			margin: 0;
 			font-family: var(--font);
-			background: var(--bg-app);
+			background:
+				radial-gradient(1200px 700px at -10% -20%, rgba(99, 102, 241, 0.16), transparent 60%),
+				radial-gradient(900px 600px at 110% 0%, rgba(59, 130, 246, 0.1), transparent 55%),
+				var(--bg-app);
 			color: var(--text-primary);
 			height: 100vh;
 			height: 100dvh;
@@ -85,8 +90,8 @@
 
 		/* ===== SIDEBAR ===== */
 		.sidebar {
-			width: 220px;
-			min-width: 220px;
+			width: 236px;
+			min-width: 236px;
 			background: var(--bg-sidebar);
 			border-right: 1px solid var(--border);
 			display: flex;
@@ -249,7 +254,8 @@
 		.header {
 			height: 48px;
 			min-height: 48px;
-			background: var(--bg-header);
+			background: color-mix(in srgb, var(--bg-header) 88%, transparent);
+			backdrop-filter: blur(8px);
 			border-bottom: 1px solid var(--border);
 			display: flex;
 			align-items: center;
@@ -402,6 +408,7 @@
 			border-radius: var(--radius);
 			padding: 1.25rem;
 			margin-bottom: 1rem;
+			box-shadow: var(--shadow-sm);
 		}
 
 		.card-header {
@@ -436,6 +443,13 @@
 			border: 1px solid var(--border);
 			border-radius: var(--radius);
 			padding: 1rem;
+			box-shadow: var(--shadow-sm);
+			transition: transform 0.12s ease, border-color 0.12s ease;
+		}
+
+		.stat-card:hover {
+			transform: translateY(-1px);
+			border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
 		}
 
 		.stat-icon {
@@ -519,6 +533,7 @@
 		.form-input:focus {
 			outline: none;
 			border-color: var(--border-focus);
+			box-shadow: var(--glow);
 		}
 
 		.form-input::placeholder { color: var(--text-dim); }
@@ -539,6 +554,90 @@
 			gap: 0.75rem;
 		}
 
+		.toolbar-row {
+			display: flex;
+			gap: 0.6rem;
+			align-items: center;
+			flex-wrap: wrap;
+			margin-bottom: 0.9rem;
+		}
+
+		.tool-chip {
+			display: inline-flex;
+			align-items: center;
+			gap: 0.35rem;
+			padding: 0.28rem 0.62rem;
+			border-radius: 999px;
+			border: 1px solid var(--border);
+			background: var(--bg-card);
+			color: var(--text-secondary);
+			font-size: 0.68rem;
+			font-weight: 600;
+			letter-spacing: 0.03em;
+			text-transform: uppercase;
+		}
+
+		.tool-chip.is-active {
+			border-color: var(--accent);
+			color: var(--accent);
+			background: var(--accent-soft);
+		}
+
+		.kpi-strip {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+			gap: 0.7rem;
+			margin-bottom: 1rem;
+		}
+
+		.kpi-item {
+			background: var(--bg-card);
+			border: 1px solid var(--border);
+			border-radius: var(--radius-sm);
+			padding: 0.75rem 0.85rem;
+			box-shadow: var(--shadow-sm);
+		}
+
+		.kpi-item .kpi-label {
+			font-size: 0.68rem;
+			color: var(--text-muted);
+			text-transform: uppercase;
+			letter-spacing: 0.05em;
+		}
+
+		.kpi-item .kpi-value {
+			font-size: 1.05rem;
+			font-weight: 700;
+			color: var(--text-primary);
+			margin-top: 0.18rem;
+		}
+
+		.memory-list {
+			display: grid;
+			grid-template-columns: 1fr;
+			gap: 0.6rem;
+		}
+
+		.memory-item {
+			border: 1px solid var(--border);
+			border-radius: var(--radius-sm);
+			background: var(--bg-card);
+			padding: 0.7rem 0.8rem;
+			box-shadow: var(--shadow-sm);
+		}
+
+		.memory-item h4 {
+			margin: 0 0 0.2rem;
+			font-size: 0.8rem;
+			color: var(--text-primary);
+		}
+
+		.memory-item p {
+			margin: 0;
+			font-size: 0.75rem;
+			color: var(--text-secondary);
+		}
+
 		/* ===== BUTTONS ===== */
 		.btn {
 			padding: 0.45rem 0.9rem;
@@ -549,6 +648,7 @@
 			transition: all 0.12s ease;
 			border: 1px solid transparent;
 			font-family: var(--font);
+			box-shadow: var(--shadow-sm);
 		}
 
 		.btn-primary {
@@ -558,6 +658,16 @@
 		}
 
 		.btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+		.btn-primary:focus-visible,
+		.btn-secondary:focus-visible,
+		.btn-danger:focus-visible,
+		.hc-btn:focus-visible,
+		.theme-btn:focus-visible,
+		.composer-send:focus-visible,
+		.composer-tool:focus-visible {
+			outline: none;
+			box-shadow: var(--glow);
+		}
 
 		.btn-secondary {
 			background: var(--bg-card);
@@ -844,6 +954,7 @@
 			line-height: 1.6;
 			white-space: pre-wrap;
 			word-break: break-word;
+			box-shadow: var(--shadow-sm);
 		}
 
 		.msg-row.user .msg-bubble {
@@ -1187,6 +1298,7 @@
 			<div class="chat-sessions-sidebar" id="chat-sidebar">
 				<div class="chat-sessions-header">
 					<div class="chat-sessions-title">Historial de chats</div>
+				<div style="font-size:0.68rem;color:var(--text-dim);margin-bottom:0.45rem;" id="session-count-label">0 conversaciones</div>
 					<input type="search" class="session-search" id="session-search" placeholder="Buscar…" autocomplete="off" aria-label="Buscar en el historial de chats">
 					<button type="button" class="btn btn-primary" id="new-chat-btn" style="width:100%; padding:0.5rem;" aria-label="Nueva conversación">➕ Nueva</button>
 				</div>
@@ -1288,6 +1400,14 @@
 		</div>
 
 		<div class="card">
+			<div class="toolbar-row">
+				<input class="form-input" id="tools-search" placeholder="Buscar herramienta por nombre, id o categoría..." style="max-width:360px;">
+				<select class="form-input" id="tools-category-filter" style="max-width:220px;">
+					<option value="all">Todas las categorías</option>
+				</select>
+				<button class="btn btn-secondary" id="tools-enable-all-btn">Activar todo</button>
+				<button class="btn btn-secondary" id="tools-disable-all-btn">Desactivar todo</button>
+			</div>
 			<div class="stat-grid" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 1rem;">
 				<div class="stat-card">
 					<div class="stat-icon">🔧</div>
@@ -1320,6 +1440,7 @@
 				<tbody id="tools-table-body"></tbody>
 			</table>
 		</div>
+		<div id="tools-category-chips" class="toolbar-row" style="margin-top:0.75rem;"></div>
 	</div>
 
 	<!-- ===== VIEW: MEMORY ===== -->
@@ -1336,16 +1457,32 @@
 					<div class="card-subtitle">Busca información en la memoria a largo plazo</div>
 				</div>
 			</div>
-			<div class="form-group">
+			<div class="toolbar-row">
 				<input class="form-input" id="mem-search-input" placeholder="Buscar en memoria...">
+				<button class="btn btn-primary" id="mem-search-btn">Buscar</button>
+				<button class="btn btn-secondary" id="mem-refresh-btn">Actualizar</button>
 			</div>
-			<div id="mem-results"></div>
+			<div id="mem-results" class="memory-list"></div>
 		</div>
 
 		<div class="card">
 			<div class="card-header">
 				<div>
 					<div class="card-title">Estadísticas de memoria</div>
+				</div>
+			</div>
+			<div class="kpi-strip">
+				<div class="kpi-item">
+					<div class="kpi-label">Última sesión activa</div>
+					<div class="kpi-value" id="mem-last-session">—</div>
+				</div>
+				<div class="kpi-item">
+					<div class="kpi-label">Mensajes recientes</div>
+					<div class="kpi-value" id="mem-recent-messages">—</div>
+				</div>
+				<div class="kpi-item">
+					<div class="kpi-label">Última actividad</div>
+					<div class="kpi-value" id="mem-last-activity">—</div>
 				</div>
 			</div>
 			<div class="stat-grid" style="grid-template-columns: repeat(3, 1fr);">
@@ -1619,6 +1756,8 @@ const state = {
 	ws: null,
 	enabledTools: new Set(),
 	sessionFilter: "",
+	toolsFilterText: "",
+	toolsCategory: "all",
 };
 
 // ===== TOOLS STATE =====
@@ -1645,6 +1784,16 @@ function toggleTool(id) {
 		state.enabledTools.delete(id);
 	} else {
 		state.enabledTools.add(id);
+	}
+	saveEnabledTools();
+	renderToolsTable();
+}
+
+function setAllToolsEnabled(enabled) {
+	if (enabled) {
+		state.enabledTools = new Set(TOOLS.map(t => t.id));
+	} else {
+		state.enabledTools = new Set();
 	}
 	saveEnabledTools();
 	renderToolsTable();
@@ -1700,6 +1849,7 @@ function navigateTo(view) {
 	// Load view data
 	if (view === "dashboard") loadDashboard();
 	if (view === "tools") renderToolsTable();
+	if (view === "memory") loadMemoryInsights();
 	if (view === "reminders") loadReminders();
 	if (view === "profile") loadProfile();
 	if (view === "gateway") connectGateway();
@@ -1927,6 +2077,10 @@ function renderSessionList() {
 
 	document.getElementById("dash-sessions").textContent = String(state.sessions.length);
 	document.getElementById("dash-messages").textContent = String(state.messages.length);
+	const countLabel = document.getElementById("session-count-label");
+	if (countLabel) {
+		countLabel.textContent = `${state.sessions.length} conversación${state.sessions.length === 1 ? "" : "es"}`;
+	}
 }
 
 function bindSessionRenameTitles(root) {
@@ -2255,8 +2409,16 @@ function renderToolsTable() {
 	if (elTotal) elTotal.textContent = String(total);
 	if (elActive) elActive.textContent = String(active);
 	if (elInactive) elInactive.textContent = String(inactive);
+	const q = (state.toolsFilterText || "").trim().toLowerCase();
+	const filtered = TOOLS.filter((t) => {
+		const inCategory = state.toolsCategory === "all" || t.cat === state.toolsCategory;
+		if (!inCategory) return false;
+		if (!q) return true;
+		const joined = `${t.name} ${t.id} ${t.desc} ${t.cat}`.toLowerCase();
+		return joined.includes(q);
+	});
 
-	tbody.innerHTML = TOOLS.map(t => {
+	tbody.innerHTML = filtered.map(t => {
 		const enabled = state.enabledTools.has(t.id);
 		return `
 		<tr>
@@ -2272,6 +2434,104 @@ function renderToolsTable() {
 		</tr>
 	`;
 	}).join("");
+	if (!filtered.length) {
+		tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-dim)">No hay herramientas para ese filtro</td></tr>';
+	}
+
+	const chips = document.getElementById("tools-category-chips");
+	if (chips) {
+		const counts = TOOLS.reduce((acc, t) => {
+			acc[t.cat] = (acc[t.cat] || 0) + 1;
+			return acc;
+		}, {});
+		chips.innerHTML = Object.keys(counts).map((cat) => {
+			const activeClass = state.toolsCategory === cat ? "is-active" : "";
+			return `<button class="tool-chip ${activeClass}" data-tool-cat="${cat}">${cat} · ${counts[cat]}</button>`;
+		}).join("");
+		chips.querySelectorAll("[data-tool-cat]").forEach((el) => {
+			el.addEventListener("click", () => {
+				state.toolsCategory = el.dataset.toolCat || "all";
+				const select = document.getElementById("tools-category-filter");
+				if (select) select.value = state.toolsCategory;
+				renderToolsTable();
+			});
+		});
+	}
+}
+
+async function loadMemoryInsights() {
+	const memCount = document.getElementById("mem-count");
+	const memEmb = document.getElementById("mem-embeddings");
+	const memVectors = document.getElementById("mem-vectors");
+	const memLastSession = document.getElementById("mem-last-session");
+	const memRecentMessages = document.getElementById("mem-recent-messages");
+	const memLastActivity = document.getElementById("mem-last-activity");
+	const memResults = document.getElementById("mem-results");
+
+	const sessions = [...state.sessions].sort((a, b) => b.updatedAt - a.updatedAt);
+	const totalMessages = sessions.reduce((acc, s) => acc + (Array.isArray(s.messages) ? s.messages.length : 0), 0);
+	const latest = sessions[0];
+
+	if (memCount) memCount.textContent = String(totalMessages);
+	if (memEmb) memEmb.textContent = latest ? "Activo" : "—";
+	if (memVectors) memVectors.textContent = String(sessions.length);
+	if (memLastSession) memLastSession.textContent = latest ? (latest.title || "Sesión") : "—";
+	if (memRecentMessages) memRecentMessages.textContent = String((state.messages || []).length);
+	if (memLastActivity) {
+		memLastActivity.textContent = latest?.updatedAt ? new Date(latest.updatedAt).toLocaleString() : "—";
+	}
+
+	if (memResults && !memResults.dataset.userSearched) {
+		const previews = sessions.slice(0, 5).map((s) => ({
+			title: s.title || "Sesión sin título",
+			preview: s.lastPreview || "Sin preview",
+			time: new Date(s.updatedAt).toLocaleString(),
+		}));
+		memResults.innerHTML = previews.length
+			? previews.map((p) => `
+				<div class="memory-item">
+					<h4>${p.title}</h4>
+					<p>${p.preview}</p>
+					<p style="margin-top:0.3rem;color:var(--text-dim);font-size:0.68rem;">${p.time}</p>
+				</div>
+			`).join("")
+			: '<div class="memory-item"><h4>Sin memoria todavía</h4><p>Crea conversaciones para empezar a construir contexto.</p></div>';
+	}
+}
+
+function runMemorySearch() {
+	const input = document.getElementById("mem-search-input");
+	const memResults = document.getElementById("mem-results");
+	if (!input || !memResults) return;
+	const q = (input.value || "").trim().toLowerCase();
+	memResults.dataset.userSearched = "1";
+	if (!q) {
+		memResults.innerHTML = '<div class="memory-item"><h4>Consulta vacía</h4><p>Escribe un término para buscar en sesiones y mensajes.</p></div>';
+		return;
+	}
+
+	const matches = [];
+	for (const s of state.sessions) {
+		const title = (s.title || "").toLowerCase();
+		const preview = (s.lastPreview || "").toLowerCase();
+		if (title.includes(q) || preview.includes(q)) {
+			matches.push({
+				title: s.title || "Sesión",
+				preview: s.lastPreview || "Sin preview",
+				time: new Date(s.updatedAt).toLocaleString(),
+			});
+		}
+		if (matches.length >= 8) break;
+	}
+	memResults.innerHTML = matches.length
+		? matches.map((m) => `
+			<div class="memory-item">
+				<h4>${m.title}</h4>
+				<p>${m.preview}</p>
+				<p style="margin-top:0.3rem;color:var(--text-dim);font-size:0.68rem;">Coincidencia · ${m.time}</p>
+			</div>
+		`).join("")
+		: '<div class="memory-item"><h4>Sin resultados</h4><p>No encontré coincidencias con esa búsqueda.</p></div>';
 }
 
 // ===== REMINDERS =====
@@ -2428,6 +2688,33 @@ async function init() {
 	document.getElementById("session-search")?.addEventListener("input", (e) => {
 		state.sessionFilter = e.target.value || "";
 		renderSessionList();
+	});
+
+	const toolsSearch = document.getElementById("tools-search");
+	toolsSearch?.addEventListener("input", (e) => {
+		state.toolsFilterText = e.target.value || "";
+		renderToolsTable();
+	});
+	const toolsCat = document.getElementById("tools-category-filter");
+	if (toolsCat) {
+		const categories = ["all", ...new Set(TOOLS.map((t) => t.cat))];
+		toolsCat.innerHTML = categories.map((c) => `<option value="${c}">${c === "all" ? "Todas las categorías" : c}</option>`).join("");
+		toolsCat.addEventListener("change", (e) => {
+			state.toolsCategory = e.target.value || "all";
+			renderToolsTable();
+		});
+	}
+	document.getElementById("tools-enable-all-btn")?.addEventListener("click", () => setAllToolsEnabled(true));
+	document.getElementById("tools-disable-all-btn")?.addEventListener("click", () => setAllToolsEnabled(false));
+
+	document.getElementById("mem-search-btn")?.addEventListener("click", runMemorySearch);
+	document.getElementById("mem-refresh-btn")?.addEventListener("click", () => {
+		const memResults = document.getElementById("mem-results");
+		if (memResults) delete memResults.dataset.userSearched;
+		loadMemoryInsights();
+	});
+	document.getElementById("mem-search-input")?.addEventListener("keydown", (e) => {
+		if (e.key === "Enter") runMemorySearch();
 	});
 
 	connectGateway();

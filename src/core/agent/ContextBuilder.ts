@@ -2,7 +2,8 @@ import type { Message } from "./Types.js";
 import type { LongTermSummary } from "./Types.js";
 import type { MemoryStore } from "../memory/MemoryStore.js";
 import { eventsToContextLines } from "../memory/serializers.js";
-import { getSoul } from "../soul/soul.js";
+import { getSoulWithRole } from "../soul/soul.js";
+import type { Role } from "../roles/roleManager.js";
 import { getToolsDefinitionScoped } from "../tools/ToolRegistry.js";
 import { isSafeMode } from "../health/HealthManager.js";
 import { loadRelevantSkills } from "../skills/SkillLoader.js";
@@ -27,6 +28,8 @@ export type ContextInput = {
 	textOnly?: boolean;
 	/** Perfil del usuario para personalizar respuestas (nombre, idioma, sobre ti). */
 	userProfile?: UserProfileInput | null;
+	/** Rol operativo actual del agente. */
+	role?: Role;
 };
 
 /** Prioridad: SOUL > perfil > workspace > skills > tools > memoria > mensaje del usuario. */
@@ -35,7 +38,7 @@ export function buildContext(input: ContextInput): { system: string; messages: M
 	const budgetChars = Math.floor(input.tokenBudget * approxCharsPerToken);
 
 	const textOnly = input.textOnly === true;
-	const soul = getSoul(input.agentName, textOnly);
+	const soul = getSoulWithRole(input.agentName, input.role ?? "default", textOnly);
 	const safeNote = isSafeMode() ? "\n[Safe-mode activo.]" : "";
 
 	let remaining = budgetChars - soul.length - safeNote.length - 200;
