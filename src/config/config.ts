@@ -10,12 +10,15 @@ export type AppConfig = {
 	model?: string;
 	vllmBaseUrl?: string;
 	vllmApiKey?: string;
-	llmProvider?: "vllm" | "ollama" | "openrouter";
+	llmProvider?: "vllm" | "ollama" | "openrouter" | "opencode";
 	ollamaModel?: string;
 	ollamaBaseUrl?: string;
 	openrouterApiKey?: string;
 	openrouterModel?: string;
 	openrouterBaseUrl?: string;
+	opencodeApiKey?: string;
+	opencodeModel?: string;
+	opencodeBaseUrl?: string;
 	abilities?: string;
 	/**
 	 * Si true (default), guarda el historial de chats en disco.
@@ -53,6 +56,9 @@ const DEFAULTS: AppConfig = {
 	openrouterApiKey: undefined,
 	openrouterModel: "openai/gpt-4o-mini",
 	openrouterBaseUrl: "https://openrouter.ai/api/v1",
+	opencodeApiKey: undefined,
+	opencodeModel: "kimi-k2.6",
+	opencodeBaseUrl: "https://api.opencode.ai/v1",
 	abilities: undefined,
 	persistChatHistory: true,
 	autonomousMode: true,
@@ -126,12 +132,17 @@ function loadConfig(): AppConfig {
 			model: isValidModel(data.model as string) ? (data.model as string).trim() : DEFAULTS.model,
 			vllmBaseUrl: isValidUrl(data.vllmBaseUrl as string) ? (data.vllmBaseUrl as string).replace(/\/+$/, "") : DEFAULTS.vllmBaseUrl,
 			vllmApiKey: typeof data.vllmApiKey === "string" ? data.vllmApiKey : DEFAULTS.vllmApiKey,
-			llmProvider: (provider === "ollama" || provider === "vllm" || provider === "openrouter") ? provider as "ollama" | "vllm" | "openrouter" : DEFAULTS.llmProvider,
+			llmProvider: (provider === "ollama" || provider === "vllm" || provider === "openrouter" || provider === "opencode")
+				? provider as "ollama" | "vllm" | "openrouter" | "opencode"
+				: DEFAULTS.llmProvider,
 			ollamaModel: typeof data.ollamaModel === "string" ? data.ollamaModel.trim() : DEFAULTS.ollamaModel,
 			ollamaBaseUrl: isValidUrl(data.ollamaBaseUrl as string) ? (data.ollamaBaseUrl as string).replace(/\/+$/, "") : DEFAULTS.ollamaBaseUrl,
 			openrouterApiKey: typeof data.openrouterApiKey === "string" ? data.openrouterApiKey : DEFAULTS.openrouterApiKey,
 			openrouterModel: typeof data.openrouterModel === "string" ? data.openrouterModel.trim() : DEFAULTS.openrouterModel,
 			openrouterBaseUrl: isValidUrl(data.openrouterBaseUrl as string) ? (data.openrouterBaseUrl as string).replace(/\/+$/, "") : DEFAULTS.openrouterBaseUrl,
+			opencodeApiKey: typeof data.opencodeApiKey === "string" ? data.opencodeApiKey : DEFAULTS.opencodeApiKey,
+			opencodeModel: typeof data.opencodeModel === "string" ? data.opencodeModel.trim() : DEFAULTS.opencodeModel,
+			opencodeBaseUrl: isValidUrl(data.opencodeBaseUrl as string) ? (data.opencodeBaseUrl as string).replace(/\/+$/, "") : DEFAULTS.opencodeBaseUrl,
 			abilities: typeof data.abilities === "string" ? data.abilities : DEFAULTS.abilities,
 			persistChatHistory: typeof data.persistChatHistory === "boolean" ? data.persistChatHistory : DEFAULTS.persistChatHistory,
 			autonomousMode: typeof data.autonomousMode === "boolean" ? data.autonomousMode : DEFAULTS.autonomousMode,
@@ -168,6 +179,9 @@ export function setConfig(partial: Partial<AppConfig>): AppConfig {
 		openrouterApiKey: partial.openrouterApiKey !== undefined ? partial.openrouterApiKey : current.openrouterApiKey,
 		openrouterModel: partial.openrouterModel !== undefined ? partial.openrouterModel.trim() : current.openrouterModel,
 		openrouterBaseUrl: partial.openrouterBaseUrl !== undefined ? sanitizeUrl(partial.openrouterBaseUrl, DEFAULTS.openrouterBaseUrl!) : current.openrouterBaseUrl,
+		opencodeApiKey: partial.opencodeApiKey !== undefined ? partial.opencodeApiKey : current.opencodeApiKey,
+		opencodeModel: partial.opencodeModel !== undefined ? partial.opencodeModel.trim() : current.opencodeModel,
+		opencodeBaseUrl: partial.opencodeBaseUrl !== undefined ? sanitizeUrl(partial.opencodeBaseUrl, DEFAULTS.opencodeBaseUrl!) : current.opencodeBaseUrl,
 		abilities: partial.abilities !== undefined ? partial.abilities : current.abilities,
 		persistChatHistory: partial.persistChatHistory !== undefined ? partial.persistChatHistory : current.persistChatHistory,
 		autonomousMode: partial.autonomousMode !== undefined ? partial.autonomousMode : current.autonomousMode,

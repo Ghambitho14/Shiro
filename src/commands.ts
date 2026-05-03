@@ -85,7 +85,8 @@ export function parseCommand(message: string, sessionId: string): CommandResult 
 			const content = `🔧 **Proveedor actual:** ${config.llmProvider}
 - vLLM: ${config.vllmBaseUrl}
 - Ollama: ${config.ollamaBaseUrl}
-- OpenRouter: ${config.openrouterApiKey ? "Configurado" : "Sin API Key"}`;
+- OpenRouter: ${config.openrouterApiKey ? "Configurado" : "Sin API Key"}
+- OpenCode: ${(config.opencodeApiKey || process.env.OPENCODE_API_KEY) ? "Configurado" : "Sin API Key"}`;
 			return { executed: true, content, shouldContinue: false };
 		}
 

@@ -90,6 +90,22 @@ export async function runTui(): Promise<void> {
 							console.log(`  ✗ No se pudo conectar: ${msg}\n`);
 						}
 					}
+				} else if (provider === "opencode") {
+					const apiKey = cfg.opencodeApiKey ?? process.env.OPENCODE_API_KEY ?? "";
+					const model = cfg.opencodeModel ?? "kimi-k2.6";
+					if (!apiKey) {
+						console.log("\n  ✗ No hay API Key de OpenCode configurada\n");
+					} else {
+						console.log(`\n  Verificando OpenCode (modelo: ${model})...`);
+						try {
+							const reply = await getLLM().chat([{ role: "user", content: "Responde solo la palabra: ok" }]);
+							const preview = reply.replace(/\s+/g, " ").slice(0, 120);
+							console.log(`  ✓ OpenCode respondió: ${preview}\n`);
+						} catch (err) {
+							const msg = err instanceof Error ? err.message : String(err);
+							console.log(`  ✗ Error: ${msg}\n`);
+						}
+					}
 				} else {
 					const llm = getLLM();
 					const config = llm.getConfig();
@@ -118,6 +134,7 @@ export async function runTui(): Promise<void> {
 						{ name: "vLLM", value: "vllm" },
 						{ name: "Ollama", value: "ollama" },
 						{ name: "OpenRouter", value: "openrouter" },
+						{ name: "OpenCode", value: "opencode" },
 					],
 					default: getConfig().llmProvider ?? "vllm",
 				});
@@ -153,6 +170,27 @@ export async function runTui(): Promise<void> {
 					});
 					setConfig({ llmProvider: "openrouter", openrouterApiKey: apiKey.trim() });
 					console.log("  ✓ OpenRouter configurado (modelo: gpt-4o-mini por defecto)\n");
+				}
+				else if (provider === "opencode") {
+					const baseUrl = await input({
+						message: "Base URL de OpenCode API",
+						default: getConfig().opencodeBaseUrl ?? "https://api.opencode.ai/v1",
+					});
+					const apiKey = await input({
+						message: "API Key (OpenCode)",
+						default: getConfig().opencodeApiKey ?? "",
+					});
+					const model = await input({
+						message: "Modelo (ej. kimi-k2.6)",
+						default: getConfig().opencodeModel ?? "kimi-k2.6",
+					});
+					setConfig({
+						llmProvider: "opencode",
+						opencodeBaseUrl: baseUrl.trim().replace(/\/+$/, ""),
+						opencodeApiKey: apiKey.trim(),
+						opencodeModel: model.trim(),
+					});
+					console.log("  ✓ OpenCode configurado\n");
 				}
 				break;
 			}

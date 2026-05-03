@@ -2,6 +2,7 @@ import type { LLMClient } from "./LLMClient.js";
 import { vllmClient } from "./vllmClient.js";
 import { ollamaClient } from "./ollamaClient.js";
 import { openrouterClient } from "./openrouterClient.js";
+import { opencodeClient } from "./opencodeClient.js";
 import { getConfig } from "../../config/config.js";
 
 export function getLLM(): LLMClient {
@@ -14,6 +15,10 @@ export function getLLM(): LLMClient {
 	
 	if (provider === "openrouter") {
 		return openrouterClient;
+	}
+
+	if (provider === "opencode") {
+		return opencodeClient;
 	}
 	
 	return vllmClient;
