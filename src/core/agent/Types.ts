@@ -12,7 +12,7 @@ export type Message =
 	| { role: "system"; content: string }
 	| { role: "user"; content: UserContent }
 	| { role: "assistant"; content: string | null; tool_calls?: ToolCallSpec[] }
-	| { role: "tool"; tool_call_id: string; content: string };
+	| { role: "tool"; tool_call_id: string; name?: string; content: string };
 
 export type ToolCallSpec = {
 	id: string;

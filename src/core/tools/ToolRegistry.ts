@@ -1,6 +1,7 @@
 import type { ToolResult } from "../agent/Types.js";
 import type { ToolDef } from "../llm/LLMClient.js";
 import { executeTool } from "./tools.js";
+import { requestApproval } from "./approval.js";
 
 export interface ToolDefinition {
 	label: string;
@@ -503,6 +504,25 @@ export const TOOLS: ToolDefinition[] = [
 	},
 ];
 
+/**
+ * Herramientas esenciales para el perfil "lite" (modelos locales pequeños):
+ * con menos opciones el modelo elige mejor y el prompt ocupa menos contexto.
+ */
+export const LITE_TOOLS = [
+	"read_file",
+	"write_file",
+	"list_dir",
+	"search_web",
+	"fetch_url",
+	"calculator",
+	"get_time",
+	"create_reminder",
+	"list_reminders",
+	"memory_search",
+	"memory_add",
+	"exec",
+];
+
 /** Conversión al formato ToolDef para el LLM */
 function toToolDef(tool: ToolDefinition): ToolDef {
 	return {
@@ -558,12 +578,10 @@ export function setToolsEnabled(names: string[], enabled: boolean): void {
 }
 
 export async function executeToolSafe(name: string, args: Record<string, unknown>): Promise<ToolResult> {
-	if (!enabledSet.has(name)) {
-		return { ok: false, error: "Herramienta deshabilitada (safe-mode): " + name };
-	}
-	return executeTool(name, args);
+	return executeToolSafeScoped(name, args);
 }
 
+/** Ejecuta una tool comprobando safe-mode, la lista permitida y la aprobación del usuario. */
 export async function executeToolSafeScoped(
 	name: string,
 	args: Record<string, unknown>,
@@ -572,8 +590,10 @@ export async function executeToolSafeScoped(
 	if (!enabledSet.has(name)) {
 		return { ok: false, error: "Herramienta deshabilitada (safe-mode): " + name };
 	}
-	if (Array.isArray(allowedTools) && allowedTools.length > 0 && !allowedTools.includes(name)) {
+	if (Array.isArray(allowedTools) && !allowedTools.includes(name)) {
 		return { ok: false, error: "Herramienta no permitida en esta sesion: " + name };
 	}
+	const approval = await requestApproval(name, args);
+	if (!approval.ok) return { ok: false, error: approval.error };
 	return executeTool(name, args);
 }

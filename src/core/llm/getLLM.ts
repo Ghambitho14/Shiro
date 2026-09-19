@@ -1,25 +1,10 @@
 import type { LLMClient } from "./LLMClient.js";
-import { vllmClient } from "./vllmClient.js";
-import { ollamaClient } from "./ollamaClient.js";
-import { openrouterClient } from "./openrouterClient.js";
-import { opencodeClient } from "./opencodeClient.js";
-import { getConfig } from "../../config/config.js";
+import { createLLMClient } from "./client.js";
 
+let client: LLMClient | null = null;
+
+/** Cliente del modelo configurado. Lee la configuración en cada petición, así que los cambios aplican al momento. */
 export function getLLM(): LLMClient {
-	const cfg = getConfig();
-	const provider = cfg.llmProvider ?? "vllm";
-	
-	if (provider === "ollama") {
-		return ollamaClient;
-	}
-	
-	if (provider === "openrouter") {
-		return openrouterClient;
-	}
-
-	if (provider === "opencode") {
-		return opencodeClient;
-	}
-	
-	return vllmClient;
+	client ??= createLLMClient();
+	return client;
 }

@@ -1863,8 +1863,30 @@ const sidebarOverlay = document.getElementById("sidebar-overlay");
 if (sidebarOverlay) sidebarOverlay.addEventListener("click", () => document.body.classList.remove("sidebar-open"));
 
 // ===== API HELPERS =====
+// Si el servidor exige contraseña (SHIRO_AUTH_TOKEN), se pide una vez y se recuerda en este navegador.
+function getAuthToken() {
+	try { return localStorage.getItem("shiroToken") || ""; } catch { return ""; }
+}
+async function authFetch(url, opts = {}) {
+	const send = () => {
+		const headers = { ...(opts.headers || {}) };
+		const t = getAuthToken();
+		if (t) headers.Authorization = "Bearer " + t;
+		return fetch(url, { ...opts, headers });
+	};
+	let r = await send();
+	if (r.status === 401) {
+		const t = prompt("Shiro pide contraseña (se muestra en la terminal donde iniciaste el servidor):");
+		if (t && t.trim()) {
+			try { localStorage.setItem("shiroToken", t.trim()); } catch {}
+			r = await send();
+		}
+	}
+	return r;
+}
+
 async function api(url, opts = {}) {
-	const r = await fetch(url, opts);
+	const r = await authFetch(url, opts);
 	const d = await r.json().catch(() => ({}));
 	if (!r.ok) throw new Error(d.error || "Error " + r.status);
 	return d;
@@ -2179,7 +2201,7 @@ function clearThinking() {
 let streamRenderRaf = null;
 
 async function postChatStream(body, onDelta) {
-	const r = await fetch("/api/chat/stream", {
+	const r = await authFetch("/api/chat/stream", {
 		method: "POST",
 		headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
 		body: JSON.stringify(body),
@@ -2235,6 +2257,16 @@ async function postChatStream(body, onDelta) {
 							onDelta(full);
 						});
 					}
+				}
+				if (evt.type === "approval" && evt.id) {
+					// Acción peligrosa (comando, escribir archivos...): el usuario decide.
+					const approved = confirm("Shiro quiere hacer esto:\n\n" + (evt.summary || "(acción)") + "\n\n¿Permitir?");
+					addLog((approved ? "Permitido: " : "Rechazado: ") + (evt.summary || "").slice(0, 80), approved ? "info" : "warn");
+					api("/api/approvals/" + encodeURIComponent(evt.id), {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({ approved }),
+					}).catch(() => {});
 				}
 				if (evt.type === "done") {
 					if (evt.content != null && evt.content !== "") full = evt.content;
@@ -2719,11 +2751,78 @@ async function init() {
 	});
 
 	connectGateway();
+	initLlmConfigCard();
 
 	setInterval(loadHealth, 15000);
 	setInterval(loadState, 15000);
 
 	addLog("Sistema iniciado");
+}
+
+// ===== CONFIG DEL MODELO =====
+async function initLlmConfigCard() {
+	const sel = document.getElementById("cfg-provider");
+	const model = document.getElementById("cfg-model");
+	const baseUrl = document.getElementById("cfg-baseurl");
+	const apiKey = document.getElementById("cfg-apikey");
+	const badge = document.getElementById("cfg-provider-badge");
+	const saveBtn = document.getElementById("cfg-save-btn");
+	const testBtn = document.getElementById("cfg-test-btn");
+	if (!sel || !model || !baseUrl || !apiKey) return;
+
+	let providers = [];
+	const applyPreset = (p, keepValues) => {
+		const preset = providers.find((x) => x.value === p);
+		if (!preset) return;
+		model.placeholder = preset.model;
+		baseUrl.placeholder = preset.baseUrl;
+		apiKey.placeholder = preset.needsApiKey ? "API key (obligatoria)" : "No necesaria";
+		if (!keepValues) { model.value = preset.model; baseUrl.value = preset.baseUrl; }
+	};
+	try {
+		const d = await api("/api/llm-config");
+		providers = d.providers || [];
+		sel.innerHTML = providers.map((p) => `<option value="${p.value}">${p.label}</option>`).join("");
+		sel.value = d.provider;
+		model.value = d.model;
+		baseUrl.value = d.baseUrl;
+		applyPreset(d.provider, true);
+		if (d.hasApiKey) apiKey.placeholder = "•••• guardada (vacío = mantener)";
+		if (badge) badge.textContent = d.provider;
+	} catch (e) {
+		addLog("No se pudo cargar la config del modelo: " + e.message, "error");
+		return;
+	}
+	sel.addEventListener("change", () => applyPreset(sel.value, false));
+	saveBtn?.addEventListener("click", async () => {
+		try {
+			await api("/api/llm-config", {
+				method: "PUT",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ provider: sel.value, model: model.value, baseUrl: baseUrl.value, apiKey: apiKey.value }),
+			});
+			apiKey.value = "";
+			if (badge) badge.textContent = sel.value;
+			addLog("Modelo guardado: " + model.value);
+			loadState();
+		} catch (e) {
+			alert("Error al guardar: " + e.message);
+		}
+	});
+	testBtn?.addEventListener("click", async () => {
+		testBtn.disabled = true;
+		const label = testBtn.textContent;
+		testBtn.textContent = "Probando...";
+		try {
+			const r = await api("/api/llm-test", { method: "POST" });
+			alert(r.ok ? `✓ El modelo responde (${(r.ms / 1000).toFixed(1)}s): ${r.reply}` : "✗ " + r.error);
+		} catch (e) {
+			alert("✗ " + e.message);
+		} finally {
+			testBtn.disabled = false;
+			testBtn.textContent = label;
+		}
+	});
 }
 
 // ===== WHATSAPP =====

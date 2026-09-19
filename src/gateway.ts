@@ -62,6 +62,17 @@ export class Gateway {
 		// Manejar upgrades de HTTP a WebSocket
 		server.on("upgrade", (request, socket, head) => {
 			const url = request.url ?? "";
+			const origin = request.headers.origin;
+			let sameOrigin = true;
+			try {
+				sameOrigin = !origin || new URL(origin).host === request.headers.host;
+			} catch {
+				sameOrigin = false;
+			}
+			if (!sameOrigin) {
+				socket.destroy();
+				return;
+			}
 			if (url.startsWith(mountPath)) {
 				this.wss?.handleUpgrade(request, socket, head, (ws) => {
 					this.wss?.emit("connection", ws, request);

@@ -1,27 +1,16 @@
-import type { Message, ContentPart } from "./Types.js";
+import type { Message, ContentPart, AgentEvent } from "./Types.js";
 import { getMessagePreview } from "./contentUtils.js";
-import type { AgentEvent } from "./Types.js";
-import type { LLMClient } from "../llm/LLMClient.js";
+import { LLMError, type LLMClient } from "../llm/LLMClient.js";
 import type { MemoryStore } from "../memory/MemoryStore.js";
 import { buildContext } from "./ContextBuilder.js";
-import {
-	executeToolSafeScoped,
-	getToolsDefinitionScoped,
-} from "../tools/ToolRegistry.js";
-
-import { checkAndIntervene } from "../health/HealthManager.js";
+import { executeToolSafeScoped, getToolsDefinitionScoped, LITE_TOOLS } from "../tools/ToolRegistry.js";
 import { logger } from "../logger.js";
-import {
-	sanitizeModelResponse,
-	isMeaningfulResponse,
-	FALLBACK_EMPTY_RESPONSE,
-} from "../sanitizeResponse.js";
+import { isMeaningfulResponse, FALLBACK_EMPTY_RESPONSE } from "../sanitizeResponse.js";
 import { createRetryPolicy, getBackoffMs, isRetryableError } from "../health/RetryPolicy.js";
 import { getDecisionLogger, type DecisionEvent } from "./DecisionLogger.js";
 import { getConfig } from "../../config/config.js";
 import { getAllowedTools, type Role } from "../roles/roleManager.js";
-import { createExecutionPlan, type PlanStep } from "./Planner.js";
-import { executePlannedSteps } from "./PlanExecutor.js";
+import { runWithApprover, type Approver } from "../tools/approval.js";
 
 export type UserProfileForAgent = {
 	userName?: string;
@@ -46,119 +35,84 @@ export type AgentOptions = {
 	explainMode?: "off" | "brief" | "on";
 	conversation?: Array<{ role: "user" | "assistant"; content: string | ContentPart[] }>;
 	userProfile?: UserProfileForAgent | null;
-	/** Si se define, se invoca con trozos del texto final (tras tools y sanitizado). */
+	/** Recibe el texto a medida que el modelo lo genera (streaming real). */
 	onStreamDelta?: (chunk: string) => void;
 	role?: Role;
+	/**
+	 * Quién aprueba las acciones peligrosas (exec, escribir archivos…).
+	 * Sin approver, con approvalMode "ask" esas acciones se bloquean.
+	 */
+	approver?: Approver;
 };
 
-function getUserFacingInterventionMessage(): string {
-	return "Algo salió mal al procesar. Puedes reformular o intentar de nuevo.";
+/** Veces que se permite repetir exactamente la misma llamada (nombre + args) en una respuesta. */
+const MAX_IDENTICAL_TOOL_CALLS = 2;
+
+/** Mensaje para el usuario cuando el modelo falla: dice qué pasó en vez de ocultarlo. */
+function describeFailure(err: unknown): string {
+	if (err instanceof LLMError) return `⚠️ ${err.message}`;
+	const msg = err instanceof Error ? err.message : String(err);
+	return `⚠️ Error al hablar con el modelo: ${msg.slice(0, 300)}`;
 }
 
-function getFallbackResponse(goal: string, error?: string): string {
-	const lower = goal.toLowerCase();
-	const isSpanish = /[áéíóúñ¿¡]/i.test(goal);
-	
-	if (error) {
-		logger.warn("LLM fallback activado", { error: error.slice(0, 100) });
+/**
+ * Qué herramientas ve el modelo: las del rol, recortadas a las esenciales si el
+ * perfil es "lite" (por defecto con modelos locales, que se confunden con muchas tools).
+ */
+function resolveTools(role: Role, requested: string[] | undefined, localModel: boolean): string[] | undefined {
+	let tools = getAllowedTools(role) ?? requested;
+	if (tools && requested) {
+		const req = new Set(requested);
+		tools = tools.filter((t) => req.has(t));
 	}
-	
-	if (isSpanish) {
-		if (/\b(hola|hey|hi|buenas)\b/i.test(lower)) return "¡Hola! ¿En qué puedo ayudarte?";
-		if (/\b(gracias|thanks)\b/i.test(lower)) return "¡De nada! ¿Hay algo más en lo que pueda ayudarte?";
-		if (/\b(bye|adios|chau|nos vemos)\b/i.test(lower)) return "¡Hasta luego! Que te vaya bien.";
-		if (/\b(como estas|cómo estás)\b/i.test(lower)) return "Estoy bien, gracias por preguntar. ¿Y tú?";
-		if (/\b(que puedes hacer|qué puedes hacer)\b/i.test(lower)) return "Puedo leer y escribir archivos, buscar en internet, hacer cálculos, y chatear contigo.";
-		if (/\b(quien eres|quién eres|que eres)\b/i.test(lower)) return "Soy Shiro, un asistente de IA.";
-		return "Disculpa, tuve un problema. ¿Podrías intentarlo de nuevo?";
+	const profile = getConfig().toolProfile;
+	const lite = profile === "lite" || (profile === "auto" && localModel && role === "default");
+	if (lite) {
+		tools = (tools ?? LITE_TOOLS).filter((t) => LITE_TOOLS.includes(t));
 	}
-	
-	if (/\b(hi|hello|hey)\b/i.test(lower)) return "Hi! How can I help you?";
-	if (/\b(thanks|thank you)\b/i.test(lower)) return "You're welcome!";
-	if (/\b(bye|goodbye)\b/i.test(lower)) return "Goodbye!";
-	if (/\b(how are you)\b/i.test(lower)) return "I'm doing well, thanks!";
-	if (/\b(what can you do)\b/i.test(lower)) return "I can read/write files, search the web, do calculations, and chat.";
-	if (/\b(who are you|what are you)\b/i.test(lower)) return "I'm Shiro, an AI assistant.";
-	return "Sorry, I had trouble. Could you try again?";
+	return tools;
 }
 
-/** Loop principal: simple como OpenClaw. El LLM decide. */
-export async function runAgent(
-	goal: string,
-	opts: AgentOptions,
-	workspaceContext?: string,
-): Promise<string> {
+export async function runAgent(goal: string, opts: AgentOptions, workspaceContext?: string): Promise<string> {
 	const {
 		llm,
 		memory,
 		agentName,
 		tokenBudget = 8000,
-		textOnly = false,
 		allowedTools,
 		explainMode = "off",
 		conversation,
 		userProfile,
 		onStreamDelta,
 		role: roleOverride,
+		approver,
 	} = opts;
 
-	const configuredRole = getConfig().role ?? "default";
-	const effectiveRole: Role = roleOverride ?? configuredRole;
-	const roleTools = getAllowedTools(effectiveRole);
-	const effectiveAllowedTools = (() => {
-		if (!roleTools) return allowedTools;
-		if (!allowedTools) return roleTools;
-		const roleSet = new Set(roleTools);
-		const intersected = allowedTools.filter((name) => roleSet.has(name));
-		return intersected;
-	})();
+	const role: Role = roleOverride ?? getConfig().role ?? "default";
+	const effectiveTools = resolveTools(role, allowedTools, llm.getConfig().local);
+	// Una lista vacía significa "ninguna tool": se responde solo con texto.
+	const textOnly = opts.textOnly === true || (effectiveTools !== undefined && effectiveTools.length === 0);
 
-	const wantExplain = (() => {
-		const t = (goal || "").toLowerCase();
-		return /\b(explica|explicame|explícame|que hiciste|qué hiciste|como lo hiciste|cómo lo hiciste|pasos|tools|herramientas)\b/i.test(t);
-	})();
-
-	const effectiveExplainMode: "off" | "brief" | "on" =
-		wantExplain && explainMode === "off" ? "brief" : explainMode;
+	const wantExplain = /\b(explica|explicame|explícame|que hiciste|qué hiciste|como lo hiciste|cómo lo hiciste|pasos|tools|herramientas)\b/i.test(goal || "");
+	const effectiveExplainMode = wantExplain && explainMode === "off" ? "brief" : explainMode;
 
 	const runId = `run_${Date.now()}`;
 	const decisionLogger = getDecisionLogger();
-
-	const pushEvent = (type: AgentEvent["type"], payload: Record<string, unknown>, stepId?: string) => {
-		memory.push({
-			type,
-			timestamp: new Date().toISOString(),
-			runId,
-			stepId,
-			payload,
-		});
-		
+	const pushEvent = (type: AgentEvent["type"], payload: Record<string, unknown>) => {
+		const timestamp = new Date().toISOString();
+		memory.push({ type, timestamp, runId, payload });
 		decisionLogger.log({
 			type: type as DecisionEvent["type"],
 			goal: payload.goal as string,
 			content: payload.content as string,
 			name: payload.name as string,
 			argsKeys: payload.argsKeys as string[],
-			timestamp: new Date().toISOString(),
+			timestamp,
 			runId,
-			stepId,
 		} as DecisionEvent);
 	};
 
 	pushEvent("decision", { goal });
-	const plan = createExecutionPlan(goal);
-	pushEvent("plan", { goal: plan.goal, steps: plan.steps.map((s) => s.goal) });
-	for (const step of plan.steps) {
-		pushEvent("step_status", { status: "planned", goal: step.goal }, step.id);
-	}
-
-	const recent = memory.getRecent(20);
-	const { intervened, action } = checkAndIntervene(recent);
-	if (intervened && action) {
-		logger.warn("HealthManager intervino", { action });
-		pushEvent("error", { content: action });
-		return getUserFacingInterventionMessage();
-	}
 
 	const { system, messages } = buildContext({
 		goal,
@@ -167,130 +121,95 @@ export async function runAgent(
 		tokenBudget,
 		workspaceContext,
 		textOnly,
-		allowedTools: effectiveAllowedTools,
 		userProfile: userProfile ?? undefined,
-		role: effectiveRole,
+		role,
 	});
 
-	const normalizedConversation = Array.isArray(conversation)
-		? conversation
-			.map((m) => ({ role: m.role, content: m.content ?? "" }))
-			.filter((m) => {
-				if (m.role !== "user" && m.role !== "assistant") return false;
-				const preview = getMessagePreview(m.content);
-				const hasImage = Array.isArray(m.content) && m.content.some((p: ContentPart) => p.type === "image_url");
-				return preview.length > 0 || hasImage;
-			})
-		: [];
+	const history: Message[] = (conversation ?? [])
+		.filter((m) => {
+			if (m.role !== "user" && m.role !== "assistant") return false;
+			const hasImage = Array.isArray(m.content) && m.content.some((p) => p.type === "image_url");
+			return getMessagePreview(m.content ?? "").length > 0 || hasImage;
+		})
+		.map((m): Message =>
+			m.role === "user"
+				? { role: "user", content: m.content ?? "" }
+				: { role: "assistant", content: typeof m.content === "string" ? m.content : getMessagePreview(m.content) },
+		);
 
-	const fullMessages: Message[] = normalizedConversation.length > 0
-		? [{ role: "system", content: system }, ...normalizedConversation]
-		: [{ role: "system", content: system }, ...messages];
+	const fullMessages: Message[] = [{ role: "system", content: system }, ...(history.length ? history : messages)];
+	const toolsDef = getToolsDefinitionScoped(effectiveTools);
 
-	const toolsDef = getToolsDefinitionScoped(effectiveAllowedTools);
-	const retryPolicy = createRetryPolicy({ maxRetries: 3, baseDelayMs: 500 });
+	const usedTools: { name: string; ok: boolean; argsKeys: string[] }[] = [];
+	const callCounts = new Map<string, number>();
 
-	type ToolCallTrace = { name: string; ok: boolean; argsKeys: string[] };
-	const usedTools: ToolCallTrace[] = [];
-
-	function safeArgsKeys(args: Record<string, unknown>): string[] {
-		try {
-			return Object.keys(args ?? {}).slice(0, 12);
-		} catch {
-			return [];
-		}
-	}
-
-	function buildToolExplanation(): string {
-		if (effectiveExplainMode === "off") return "";
-		if (!usedTools.length) return "";
-		const uniq: ToolCallTrace[] = [];
-		const seen = new Set<string>();
-		for (const t of usedTools) {
-			if (seen.has(t.name)) continue;
-			seen.add(t.name);
-			uniq.push(t);
-		}
-		if (effectiveExplainMode === "brief") {
-			return `\n\nNota: usé herramientas (${uniq.map((t) => t.name).join(", ")}).`;
-		}
-		if (effectiveExplainMode !== "on") return "";
-		const lines = uniq.map((t) => {
-			const keys = t.argsKeys.length ? ` args: ${t.argsKeys.join(", ")}` : "";
-			const status = t.ok ? "ok" : "falló";
-			return `- ${t.name} (${status})${keys}`;
-		});
-		return `\n\nHerramientas usadas:\n${lines.join("\n")}`;
-	}
-
-	const adaptToolResult = async (
-		name: string,
-		args: Record<string, unknown>,
-	): Promise<{ ok: boolean; content: string; error?: string }> => {
+	const executeTool = async (name: string, args: Record<string, unknown>) => {
+		const argsKeys = Object.keys(args ?? {}).slice(0, 12);
 		logger.info(`🔧 Tool: ${name}`);
-		pushEvent("tool_call", { name, argsKeys: safeArgsKeys(args) });
-		let lastError: string | undefined;
-		for (let attempt = 0; attempt <= retryPolicy.maxRetries; attempt++) {
-			const r = await executeToolSafeScoped(name, args, effectiveAllowedTools);
-			usedTools.push({ name, ok: r.ok, argsKeys: safeArgsKeys(args) });
-			if (r.ok) {
-				return { ok: true, content: r.content };
-			}
-			lastError = r.error;
-			logger.warn(`❌ Tool ${name} falló:`, lastError);
-			const retryable = isRetryableError({ retryable: true, message: r.error ?? "" });
-			if (attempt < retryPolicy.maxRetries && retryable.retryable) {
-				const delay = getBackoffMs(retryPolicy, attempt);
-				await new Promise((resolve) => setTimeout(resolve, delay));
-			} else {
-				break;
-			}
+		pushEvent("tool_call", { name, argsKeys });
+
+		// Anti-bucle: los modelos pequeños a veces repiten la misma llamada sin fin.
+		const signature = `${name}:${JSON.stringify(args)}`;
+		const count = (callCounts.get(signature) ?? 0) + 1;
+		callCounts.set(signature, count);
+		if (count > MAX_IDENTICAL_TOOL_CALLS) {
+			return {
+				ok: false,
+				content: "",
+				error: `Ya llamaste a ${name} con estos mismos argumentos ${count - 1} veces. Usa el resultado anterior o responde al usuario.`,
+			};
 		}
-		return { ok: false, content: "", error: lastError };
+
+		const r = await executeToolSafeScoped(name, args, effectiveTools);
+		usedTools.push({ name, ok: r.ok, argsKeys });
+		if (!r.ok) logger.warn(`❌ Tool ${name} falló: ${r.error}`);
+		return r.ok ? { ok: true, content: r.content } : { ok: false, content: "", error: r.error };
 	};
 
-	// Orquestación: plan explícito + ejecución de pasos.
-	try {
-		const runPlannedStep = async (step: PlanStep): Promise<string> => {
-			pushEvent("step_status", { status: "running", goal: step.goal }, step.id);
-			let content = "";
-			for (let attempt = 0; attempt <= retryPolicy.maxRetries; attempt++) {
-				try {
-					content = textOnly
-						? (await llm.chat(fullMessages)).trim()
-						: (await llm.chatWithTools(fullMessages, toolsDef, adaptToolResult)).trim();
-					pushEvent("step_status", { status: "completed", goal: step.goal }, step.id);
-					return content;
-				} catch (err) {
-					const retryable = isRetryableError(err);
-					if (attempt < retryPolicy.maxRetries && retryable.retryable) {
-						const delay = getBackoffMs(retryPolicy, attempt);
-						logger.warn(`LLM falló, reintentando en ${delay}ms`);
-						await new Promise((resolve) => setTimeout(resolve, delay));
-					} else {
-						const message = err instanceof Error ? err.message : String(err);
-						pushEvent("step_status", { status: "failed", goal: step.goal, content: message }, step.id);
-						throw err;
-					}
-				}
+	// Solo se reintenta la llamada al modelo, nunca las tools (podrían tener efectos).
+	let streamed = false;
+	const onDelta = onStreamDelta
+		? (chunk: string) => {
+				streamed = true;
+				onStreamDelta(chunk);
 			}
-			return content;
-		};
-		const content = await executePlannedSteps(plan.steps, runPlannedStep);
-		const out = sanitizeModelResponse(content || "");
-		pushEvent("observation", { content: out });
-		const finalText = isMeaningfulResponse(out) ? out : FALLBACK_EMPTY_RESPONSE;
-		const composed = finalText + buildToolExplanation();
-		if (onStreamDelta && composed.length > 0) {
-			const step = 28;
-			for (let i = 0; i < composed.length; i += step) {
-				onStreamDelta(composed.slice(i, i + step));
+		: undefined;
+	const retryPolicy = createRetryPolicy({ maxRetries: 2, baseDelayMs: 800 });
+	let content = "";
+	try {
+		for (let attempt = 0; ; attempt++) {
+			try {
+				content = await runWithApprover(approver, () =>
+					textOnly
+						? llm.chat(fullMessages, { onDelta })
+						: llm.chatWithTools(fullMessages, toolsDef, executeTool, { onDelta }),
+				);
+				break;
+			} catch (err) {
+				const retryable = err instanceof LLMError ? err.retryable : isRetryableError(err).retryable;
+				// Si ya se mostró texto en streaming, reintentar lo duplicaría.
+				if (!retryable || attempt >= retryPolicy.maxRetries || usedTools.length > 0 || streamed) throw err;
+				const delay = getBackoffMs(retryPolicy, attempt);
+				logger.warn(`El modelo falló, reintento en ${delay}ms: ${err instanceof Error ? err.message : String(err)}`);
+				await new Promise((r) => setTimeout(r, delay));
 			}
 		}
-		return composed;
 	} catch (err) {
-		const msg = err instanceof Error ? err.message : String(err);
-		pushEvent("error", { content: msg });
-		return getFallbackResponse(goal, msg);
+		const message = err instanceof Error ? err.message : String(err);
+		logger.error("Fallo del modelo", { error: message.slice(0, 300) });
+		pushEvent("error", { content: message });
+		return describeFailure(err);
 	}
+
+	pushEvent("observation", { content });
+	const finalText = isMeaningfulResponse(content) ? content : FALLBACK_EMPTY_RESPONSE;
+	return finalText + buildToolExplanation(usedTools, effectiveExplainMode);
+}
+
+function buildToolExplanation(used: { name: string; ok: boolean; argsKeys: string[] }[], mode: "off" | "brief" | "on"): string {
+	if (mode === "off" || !used.length) return "";
+	const unique = [...new Map(used.map((t) => [t.name, t])).values()];
+	if (mode === "brief") return `\n\nNota: usé herramientas (${unique.map((t) => t.name).join(", ")}).`;
+	const lines = unique.map((t) => `- ${t.name} (${t.ok ? "ok" : "falló"})${t.argsKeys.length ? ` args: ${t.argsKeys.join(", ")}` : ""}`);
+	return `\n\nHerramientas usadas:\n${lines.join("\n")}`;
 }

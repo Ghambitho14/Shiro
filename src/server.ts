@@ -1,11 +1,14 @@
 import { createServer } from "node:http";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import QRCode from "qrcode";
 import { getState } from "./store.js";
 import { getUserProfile, setUserProfile } from "./user-profile.js";
-import { getConfig } from "./config/config.js";
+import { getConfig, setConfig, LLM_PROVIDERS, type LLMProvider } from "./config/config.js";
+import { PROVIDER_PRESETS, resolveLLMSettings } from "./core/llm/providers.js";
+import type { Approver } from "./core/tools/approval.js";
 import { getHealthState, setHealthActive } from "./core/health/HealthManager.js";
 import { buildWorkspaceContext } from "./workspace.js";
 import { getLLM } from "./core/llm/getLLM.js";
@@ -35,8 +38,36 @@ const PORT = Number(process.env.PORT) || 1406;
 const MAX_BODY_BYTES = 6 * 1024 * 1024;
 /** Por defecto solo localhost; usar BIND_HOST=0.0.0.0 para exponer. */
 const BIND_HOST = process.env.BIND_HOST?.trim() || "127.0.0.1";
-/** Si se define, las rutas sensibles exigen Authorization: Bearer <token>. */
-const AUTH_TOKEN = process.env.SHIRO_AUTH_TOKEN?.trim();
+const IS_LOCAL_ONLY = BIND_HOST === "127.0.0.1" || BIND_HOST === "localhost" || BIND_HOST === "::1";
+/**
+ * Las rutas sensibles exigen Authorization: Bearer <token> si hay token.
+ * Si el servidor se abre a la red sin token, se genera uno aleatorio (nunca queda abierto).
+ */
+const AUTH_TOKEN = process.env.SHIRO_AUTH_TOKEN?.trim() || (IS_LOCAL_ONLY ? undefined : randomBytes(18).toString("base64url"));
+
+/** Aprobaciones pendientes de acciones peligrosas, resueltas desde la web. */
+const pendingApprovals = new Map<string, (approved: boolean) => void>();
+const APPROVAL_TIMEOUT_MS = 5 * 60 * 1000;
+
+/** Approver para una respuesta en streaming: pregunta al navegador por SSE y espera su respuesta. */
+function createSseApprover(res: import("node:http").ServerResponse): Approver {
+	return ({ summary }) =>
+		new Promise<boolean>((resolve) => {
+			if (res.writableEnded) return resolve(false);
+			const id = randomBytes(8).toString("hex");
+			const finish = (approved: boolean) => {
+				clearTimeout(timer);
+				res.off("close", onClose);
+				pendingApprovals.delete(id);
+				resolve(approved);
+			};
+			const onClose = () => finish(false);
+			const timer = setTimeout(() => finish(false), APPROVAL_TIMEOUT_MS);
+			res.on("close", onClose);
+			pendingApprovals.set(id, finish);
+			sendSseData(res, { type: "approval", id, summary });
+		});
+}
 
 const sessionMemoryStore = createSessionMemoryStore();
 let shuttingDown = false;
@@ -80,6 +111,8 @@ function sendSseData(res: import("node:http").ServerResponse, payload: Record<st
 
 function isSensitivePath(pathname: string): boolean {
 	return (
+		// /api/state incluye el QR de WhatsApp: quien lo escanee controla la cuenta.
+		pathname === "/api/state" ||
 		pathname === "/api/chat" ||
 		pathname === "/api/chat/stream" ||
 		pathname.startsWith("/api/whatsapp/") ||
@@ -87,15 +120,36 @@ function isSensitivePath(pathname: string): boolean {
 		pathname === "/api/chat-sessions" ||
 		pathname === "/api/reminders" ||
 		pathname.startsWith("/api/chat-sessions/") ||
-		pathname.startsWith("/api/reminders/")
+		pathname.startsWith("/api/reminders/") ||
+		pathname.startsWith("/api/approvals/") ||
+		pathname === "/api/llm-config" ||
+		pathname === "/api/llm-test"
 	);
+}
+
+/** true si la petición no viene de otra página web (sin Origin, o Origin igual al Host). */
+function isSameOrigin(req: import("node:http").IncomingMessage): boolean {
+	// En modo local, el Host debe ser localhost (protege contra "DNS rebinding").
+	if (IS_LOCAL_ONLY) {
+		const hostname = (req.headers.host ?? "").replace(/:\d+$/, "").replace(/^\[|\]$/g, "");
+		if (!["localhost", "127.0.0.1", "::1"].includes(hostname)) return false;
+	}
+	const origin = req.headers.origin;
+	if (!origin) return true; // curl, apps, navegación directa
+	try {
+		return new URL(origin).host === req.headers.host;
+	} catch {
+		return false;
+	}
 }
 
 function requireAuth(req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse): boolean {
 	if (!AUTH_TOKEN) return false;
 	const auth = req.headers.authorization;
 	const token = typeof auth === "string" && auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
-	if (token !== AUTH_TOKEN) {
+	const a = Buffer.from(token);
+	const b = Buffer.from(AUTH_TOKEN);
+	if (a.length !== b.length || !timingSafeEqual(a, b)) {
 		sendJson(res, 401, { error: "Unauthorized" });
 		return true;
 	}
@@ -146,9 +200,12 @@ const server = createServer(async (req, res) => {
 	const parsedUrl = new URL(url, "http://127.0.0.1");
 	const pathname = parsedUrl.pathname;
 
-	res.setHeader("Access-Control-Allow-Origin", "*");
-	res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-	res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+	// Sin CORS: la web se sirve desde este mismo origen. Rechazar peticiones de otras páginas
+	// evita que cualquier web abierta en el navegador use Shiro (y sus herramientas) a escondidas.
+	if (pathname.startsWith("/api/") && !isSameOrigin(req)) {
+		sendJson(res, 403, { error: "Origen no permitido" });
+		return;
+	}
 	if (method === "OPTIONS") {
 		res.writeHead(204);
 		res.end();
@@ -169,6 +226,84 @@ const server = createServer(async (req, res) => {
 			autonomousMode: config.autonomousMode ?? true,
 			whatsapp: { ...waStatus, qrDataUrl: waQr },
 		});
+		return;
+	}
+
+	if (method === "GET" && pathname === "/api/llm-config") {
+		const s = resolveLLMSettings();
+		sendJson(res, 200, {
+			provider: s.provider,
+			model: s.model,
+			baseUrl: s.baseUrl,
+			hasApiKey: Boolean(s.apiKey),
+			providers: LLM_PROVIDERS.map((p) => ({
+				value: p,
+				label: PROVIDER_PRESETS[p].label,
+				baseUrl: PROVIDER_PRESETS[p].baseUrl,
+				model: PROVIDER_PRESETS[p].model,
+				needsApiKey: PROVIDER_PRESETS[p].needsApiKey,
+			})),
+		});
+		return;
+	}
+
+	if (method === "PUT" && pathname === "/api/llm-config") {
+		let data: { provider?: string; model?: string; baseUrl?: string; apiKey?: string };
+		try {
+			data = JSON.parse(await readBody(req));
+		} catch {
+			sendJson(res, 400, { error: "Invalid JSON" });
+			return;
+		}
+		if (!data.provider || !(LLM_PROVIDERS as readonly string[]).includes(data.provider)) {
+			sendJson(res, 400, { error: "Proveedor inválido" });
+			return;
+		}
+		const provider = data.provider as LLMProvider;
+		const preset = PROVIDER_PRESETS[provider];
+		const baseUrl = data.baseUrl?.trim();
+		const model = data.model?.trim();
+		setConfig({
+			llmProvider: provider,
+			llmBaseUrl: baseUrl && baseUrl !== preset.baseUrl ? baseUrl : undefined,
+			llmModel: model && model !== preset.model ? model : undefined,
+			// Vacío = mantener la key actual (el navegador nunca la recibe), salvo al cambiar de proveedor.
+			...(data.apiKey?.trim()
+				? { llmApiKey: data.apiKey.trim() }
+				: provider !== getConfig().llmProvider
+					? { llmApiKey: undefined }
+					: {}),
+		});
+		sendJson(res, 200, { ok: true });
+		return;
+	}
+
+	if (method === "POST" && pathname === "/api/llm-test") {
+		try {
+			const t0 = Date.now();
+			const reply = await getLLM().chat([{ role: "user", content: "Responde solo: ok" }]);
+			sendJson(res, 200, { ok: true, reply: reply.slice(0, 200), ms: Date.now() - t0 });
+		} catch (err) {
+			sendJson(res, 200, { ok: false, error: err instanceof Error ? err.message : String(err) });
+		}
+		return;
+	}
+
+	if (method === "POST" && pathname.startsWith("/api/approvals/")) {
+		const id = pathname.slice("/api/approvals/".length);
+		const resolveApproval = pendingApprovals.get(id);
+		if (!resolveApproval) {
+			sendJson(res, 404, { error: "Aprobación no encontrada o expirada" });
+			return;
+		}
+		let approved = false;
+		try {
+			approved = (JSON.parse(await readBody(req)) as { approved?: unknown }).approved === true;
+		} catch {
+			/* cuerpo inválido = rechazar */
+		}
+		resolveApproval(approved);
+		sendJson(res, 200, { ok: true });
 		return;
 	}
 
@@ -395,7 +530,7 @@ const server = createServer(async (req, res) => {
 				// Esperar hasta que aparezca el QR o pase timeout
 				let attempts = 0;
 				const maxAttempts = 20; // 20 * 500ms = 10 segundos
-				let data;
+				let data = await buildWhatsAppResponse();
 				while (attempts < maxAttempts) {
 					await new Promise(r => setTimeout(r, 500));
 					data = await buildWhatsAppResponse();
@@ -543,6 +678,7 @@ const server = createServer(async (req, res) => {
 						conversation: incoming,
 						userProfile: getUserProfile(),
 						onStreamDelta: (chunk) => sendSseData(res, { type: "delta", text: chunk }),
+						approver: createSseApprover(res),
 					}, workspaceContext ?? undefined);
 					sendSseData(res, { type: "done", content });
 					res.end();
@@ -800,8 +936,14 @@ process.on("SIGTERM", () => {
 
 server.listen(PORT, BIND_HOST, () => {
 	console.log(`Shiro web: http://${BIND_HOST}:${PORT}`);
-	console.log(`vLLM: ${getLLM().getConfig().baseUrl} (model: ${getLLM().getConfig().model})`);
-	if (AUTH_TOKEN) console.log("Auth: token requerido en rutas sensibles (SHIRO_AUTH_TOKEN)");
+	const llm = getLLM().getConfig();
+	console.log(`Modelo: ${llm.model} en ${llm.baseUrl} (${llm.provider})`);
+	if (AUTH_TOKEN && !process.env.SHIRO_AUTH_TOKEN?.trim()) {
+		console.log(`⚠️  El servidor está abierto a la red. Contraseña generada para esta sesión: ${AUTH_TOKEN}`);
+		console.log("   (define SHIRO_AUTH_TOKEN para usar una fija)");
+	} else if (AUTH_TOKEN) {
+		console.log("Auth: token requerido en rutas sensibles (SHIRO_AUTH_TOKEN)");
+	}
 	
 	// Iniciar Gateway WebSocket (compartiendo servidor)
 	const gw = getGateway();

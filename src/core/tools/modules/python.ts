@@ -65,11 +65,11 @@ export async function executePython(args: Record<string, unknown>): Promise<{ ok
 			}, timeout + 1000);
 
 			const attachHandlers = (child: ReturnType<typeof spawn>) => {
-				child.stdout.on("data", (data) => {
+				child.stdout?.on("data", (data) => {
 					stdout += data.toString();
 				});
 
-				child.stderr.on("data", (data) => {
+				child.stderr?.on("data", (data) => {
 					stderr += data.toString();
 				});
 

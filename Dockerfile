@@ -1,6 +1,6 @@
 # Shiro — imagen para servidor web (y puente WhatsApp con QR desde la UI)
-# Node 20 + Chromium para whatsapp-web.js
-FROM node:20-bookworm-slim
+# Node 22 + Chromium para whatsapp-web.js
+FROM node:22-bookworm-slim
 
 # Chromium y librerías para Puppeteer en Docker
 RUN apt-get update && apt-get install -y --no-install-recommends \

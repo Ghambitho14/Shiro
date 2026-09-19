@@ -6,11 +6,12 @@
 |----------|-------------|
 | `PORT` | Puerto HTTP (por defecto `1406`). |
 | `BIND_HOST` | Interfaz de escucha; `127.0.0.1` en local, `0.0.0.0` en Docker o red. |
-| `SHIRO_AUTH_TOKEN` | Si está definido, rutas sensibles exigen `Authorization: Bearer <token>`. |
-| `OPENROUTER_API_KEY` | Clave para OpenRouter (si `llmProvider` es `openrouter`). |
-| `VLLM_BASE_URL` | URL base del backend vLLM/OpenAI-compatible. |
-| `VLLM_MODEL` | Nombre del modelo en vLLM. |
-| `VLLM_API_KEY` | Opcional, si el backend lo exige. |
+| `SHIRO_AUTH_TOKEN` | Contraseña de la web (`Authorization: Bearer <token>`). Si `BIND_HOST` no es local y falta, se genera una al arrancar y se muestra en el log. |
+| `SHIRO_LLM_PROVIDER` | `ollama`, `lmstudio`, `llamacpp`, `vllm`, `openrouter`, `opencode` o `custom`. |
+| `SHIRO_LLM_BASE_URL` | URL del servidor del modelo (en Docker, Ollama del host: `http://host.docker.internal:11434`). |
+| `SHIRO_LLM_MODEL` | Nombre del modelo. |
+| `SHIRO_LLM_API_KEY` | API key (o `OPENROUTER_API_KEY` / `OPENCODE_API_KEY` / `VLLM_API_KEY`). |
+| `WA_ALLOWED_CHAT` | Chat de WhatsApp con acceso completo; sin él, solo herramientas públicas. |
 | `PICLAW_SYSTEM_ROOT` | Raíz permitida para herramientas de sistema (opcional). |
 
 La configuración persistente del asistente vive en `data/config.json` (modelo, proveedor, `maxToolIterations`, `skillPaths`, etc.).

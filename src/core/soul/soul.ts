@@ -28,8 +28,11 @@ export function getSoulAction(agentName: string): string {
 	const userHome = process.env.USERPROFILE || process.env.HOME || "tu_pc";
 	const userName = userHome.split(/[/\\]/).pop() || "usuario";
 	
+	const now = new Date().toLocaleString("es", { dateStyle: "full", timeStyle: "short" });
+
 	let base = `Eres ${agentName}, un asistente con acceso a herramientas.
 El usuario actual es "${userName}" y su carpeta home es: ${userHome}
+Fecha y hora actual: ${now}
 
 ## Tool Call Style
 - Tareas rutinarias: llama el tool directo sin narrar

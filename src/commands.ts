@@ -1,5 +1,6 @@
 import { getConfig, setConfig } from "./config/config.js";
 import { getLLM } from "./core/llm/getLLM.js";
+import { PROVIDER_PRESETS, maskKey, resolveLLMSettings } from "./core/llm/providers.js";
 import { getHealthState } from "./core/health/HealthManager.js";
 import { metrics } from "./core/health/metrics.js";
 
@@ -81,12 +82,13 @@ export function parseCommand(message: string, sessionId: string): CommandResult 
 		}
 
 		case "provider": {
-			const config = getConfig();
-			const content = `🔧 **Proveedor actual:** ${config.llmProvider}
-- vLLM: ${config.vllmBaseUrl}
-- Ollama: ${config.ollamaBaseUrl}
-- OpenRouter: ${config.openrouterApiKey ? "Configurado" : "Sin API Key"}
-- OpenCode: ${(config.opencodeApiKey || process.env.OPENCODE_API_KEY) ? "Configurado" : "Sin API Key"}`;
+			const s = resolveLLMSettings();
+			const content = `🔧 **Proveedor actual:** ${PROVIDER_PRESETS[s.provider].label}
+- Modelo: ${s.model}
+- URL: ${s.baseUrl}
+- API key: ${s.apiKey ? maskKey(s.apiKey) : PROVIDER_PRESETS[s.provider].needsApiKey ? "falta" : "no necesaria"}
+
+Para cambiarlo: \`npm run config\` en la terminal.`;
 			return { executed: true, content, shouldContinue: false };
 		}
 

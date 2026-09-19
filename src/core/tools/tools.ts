@@ -76,13 +76,11 @@ function resolveSystemPath(pathArg: string): string | null {
 function validateArgs(name: string, args: Record<string, unknown>): { ok: true; data: Record<string, unknown> } | { ok: false; error: string } {
 	const schema = toolSchemas[name];
 	if (!schema) return { ok: false, error: "Herramienta desconocida: " + name };
-	try {
-		const data = schema.parse(args) as Record<string, unknown>;
-		return { ok: true, data };
-	} catch (err) {
-		const msg = err instanceof Error ? err.message : String(err);
-		return { ok: false, error: msg };
-	}
+	const parsed = schema.safeParse(args);
+	if (parsed.success) return { ok: true, data: parsed.data as Record<string, unknown> };
+	// Mensaje corto y claro para que el modelo pueda corregir la llamada.
+	const problems = parsed.error.issues.map((i) => `${i.path.join(".") || "(args)"}: ${i.message}`).join("; ");
+	return { ok: false, error: `Argumentos inválidos para ${name}: ${problems}. Corrige los argumentos y vuelve a intentarlo.` };
 }
 
 export async function executeTool(name: string, args: Record<string, unknown>): Promise<ToolResult> {

@@ -24,11 +24,13 @@ Comandos:
   npm run tui       Chat en terminal (recomendado)
   npm run dev       Servidor web
   npm run wa        WhatsApp Web
-  npm run config    Configuración
+  npm run config    Configuración (modelo, conexión)
+  npm run doctor    Comprobar que el modelo funciona
+  npm run mcp       Servidor MCP (para OpenCode, Claude Code...)
   npm run onboard   Primera configuración
   npm run test      Tests
 
-Mas info en: docs/COMANDOS.md
+Más info en: README.md
 `.trim();
 }
 
@@ -47,8 +49,24 @@ async function main(): Promise<void> {
 	}
 
 	if (arg === "tui") {
-		const { runShiroTUI } = await import("./tui-opencode.js");
-		await runShiroTUI();
+		const { runChat } = await import("./chat-cli.js");
+		await runChat();
+		return;
+	}
+
+	if (arg === "doctor") {
+		const { runDoctor } = await import("./doctor.js");
+		const healthy = await runDoctor({ fix: argv.includes("--fix") });
+		if (!healthy) process.exitCode = 1;
+		return;
+	}
+
+	if (arg === "mcp") {
+		// En MCP por stdio, stdout es del protocolo: cualquier console.log lo rompería.
+		console.log = console.error;
+		console.info = console.error;
+		const { runMcpServer } = await import("./mcp/server.js");
+		await runMcpServer();
 		return;
 	}
 

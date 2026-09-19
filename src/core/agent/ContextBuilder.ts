@@ -4,7 +4,6 @@ import type { MemoryStore } from "../memory/MemoryStore.js";
 import { eventsToContextLines } from "../memory/serializers.js";
 import { getSoulWithRole } from "../soul/soul.js";
 import type { Role } from "../roles/roleManager.js";
-import { getToolsDefinitionScoped } from "../tools/ToolRegistry.js";
 import { isSafeMode } from "../health/HealthManager.js";
 import { loadRelevantSkills } from "../skills/SkillLoader.js";
 
@@ -20,10 +19,7 @@ export type ContextInput = {
 	agentName: string;
 	shortMemory: MemoryStore;
 	tokenBudget: number;
-	toolsManifest?: string;
 	workspaceContext?: string;
-	/** Si se especifica, el system prompt lista solo estas tools. */
-	allowedTools?: string[];
 	/** Si true, no se incluyen herramientas en el contexto (solo respuesta en texto). */
 	textOnly?: boolean;
 	/** Perfil del usuario para personalizar respuestas (nombre, idioma, sobre ti). */
@@ -32,7 +28,11 @@ export type ContextInput = {
 	role?: Role;
 };
 
-/** Prioridad: SOUL > perfil > workspace > skills > tools > memoria > mensaje del usuario. */
+/**
+ * Prioridad: SOUL > perfil > workspace > skills > memoria > mensaje del usuario.
+ * Las herramientas no se listan aquí: van por la API del modelo (o por textTools en modo texto),
+ * así no se envían dos veces y se ahorra contexto en modelos locales.
+ */
 export function buildContext(input: ContextInput): { system: string; messages: Message[] } {
 	const approxCharsPerToken = 4;
 	const budgetChars = Math.floor(input.tokenBudget * approxCharsPerToken);
@@ -57,17 +57,6 @@ export function buildContext(input: ContextInput): { system: string; messages: M
 				return "\n\n" + text;
 			})()
 		: "";
-	const toolBlock = textOnly
-		? ""
-		: (() => {
-				const toolsDef = getToolsDefinitionScoped(input.allowedTools);
-				const toolsManifest =
-					input.toolsManifest ??
-					toolsDef.map((t) => t.function.name + ": " + (t.function.description ?? "")).join("; ");
-				return `## Herramientas disponibles\n${toolsManifest}`;
-			})();
-	if (toolBlock) remaining -= toolBlock.length;
-
 	const workspaceBlock = input.workspaceContext
 		? `## Contexto workspace\n${input.workspaceContext.slice(0, Math.min(remaining, 4000))}`
 		: "";
@@ -96,7 +85,6 @@ export function buildContext(input: ContextInput): { system: string; messages: M
 		userBlock +
 		(workspaceBlock ? "\n\n" + workspaceBlock : "") +
 		(skillsBlock ? "\n\n" + skillsBlock : "") +
-		(toolBlock ? "\n\n" + toolBlock : "") +
 		(shortBlock ? "\n\n## Eventos recientes\n" + shortBlock : "") +
 		(longBlock ? "\n\n" + longBlock : "");
 
