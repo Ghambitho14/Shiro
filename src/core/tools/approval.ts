@@ -1,10 +1,13 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { resolve } from "node:path";
 import { getConfig } from "../../config/config.js";
 import { classifyOpenTarget } from "../pc/pc.js";
 import { isMcpToolName, mcpManager } from "../mcp/McpManager.js";
 import { shiroBrowser } from "../browser/browser.js";
 import { hostOf } from "../browser/pageModel.js";
 import { currentProject } from "../projects/projects.js";
+import { getWorkspaceDir } from "../../workspace.js";
+import { isWithinRoot } from "./paths.js";
 
 /**
  * Aprobación de acciones peligrosas.
@@ -30,6 +33,26 @@ export function runWithApprover<T>(approver: Approver | undefined, fn: () => Pro
 
 const SHELL_META = /[;&|`$(){}\[\]<>\n\r]/;
 const READ_ONLY_GIT = new Set(["status", "log", "diff", "show", "branch", "remote", "rev-parse", "ls-files"]);
+/** `branch` y `remote` solo listan con estas opciones (con otras crean, borran o cambian). */
+const GIT_LIST_ARGS: Record<string, Set<string>> = {
+	branch: new Set(["-a", "-r", "-v", "-vv", "-l", "--all", "--remotes", "--list", "--verbose", "--show-current"]),
+	remote: new Set(["-v", "--verbose"]),
+};
+
+/**
+ * git sin pedir permiso: solo subcomandos que leen, en el workspace, sin encadenar comandos,
+ * sin escribir archivos (`--output`) ni leer fuera del repositorio (`--no-index`).
+ */
+function isReadOnlyGit(command: string, repoPath: string): boolean {
+	if (SHELL_META.test(command)) return false;
+	const [sub = "", ...rest] = command.split(/\s+/);
+	if (!READ_ONLY_GIT.has(sub)) return false;
+	if (rest.some((a) => /^--(output|no-index)\b/.test(a))) return false;
+	const listArgs = GIT_LIST_ARGS[sub];
+	if (listArgs && !rest.every((a) => listArgs.has(a))) return false;
+	const workspace = getWorkspaceDir();
+	return isWithinRoot(resolve(workspace, repoPath || "."), workspace, true);
+}
 
 function str(v: unknown): string {
 	return typeof v === "string" ? v : v === undefined || v === null ? "" : JSON.stringify(v);
@@ -70,8 +93,9 @@ export function describeRiskyAction(tool: string, args: Record<string, unknown>)
 			return `Leer el archivo ${str(args.path)}`;
 		case "git": {
 			const command = str(args.command).trim();
-			const sub = command.split(/\s+/)[0] ?? "";
-			return READ_ONLY_GIT.has(sub) && !SHELL_META.test(command) ? null : `Ejecutar git ${command}`;
+			const repoPath = str(args.repoPath).trim();
+			if (isReadOnlyGit(command, repoPath)) return null;
+			return `Ejecutar git ${command}${repoPath && repoPath !== "." ? ` (en ${repoPath})` : ""}`;
 		}
 		case "cron_create":
 			return args.action === "exec" ? `Programar el comando "${str(args.command)}" (${str(args.expression)})` : null;

@@ -1,6 +1,9 @@
-import { writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DATA_DIR } from "../../config/config.js";
+
+/** Días que se guardan los registros (llevan tus mensajes y las respuestas). */
+const KEEP_DAYS = 14;
 
 export type DecisionEvent = 
 	| { type: "decision"; goal: string; timestamp: string; runId: string }
@@ -12,46 +15,30 @@ export type DecisionEvent =
 	| { type: "response"; content: string; timestamp: string; runId: string; stepId?: string };
 
 export class DecisionLogger {
-	private logsDir: string;
-	
-	constructor() {
-		this.logsDir = join(DATA_DIR, "logs", "decisions");
-		this.ensureDir();
-	}
-	
-	private ensureDir(): void {
-		if (!existsSync(this.logsDir)) {
-			mkdirSync(this.logsDir, { recursive: true });
+	private logsDir = join(DATA_DIR, "logs", "decisions");
+	/** Último día en que se creó la carpeta y se borraron los registros viejos. */
+	private preparedDay = "";
+
+	/** La carpeta se crea al escribir (no al cargar el módulo) y una vez al día se borran los de hace más de KEEP_DAYS. */
+	private prepare(day: string): void {
+		if (this.preparedDay === day) return;
+		mkdirSync(this.logsDir, { recursive: true });
+		const oldest = new Date(Date.now() - KEEP_DAYS * 86_400_000).toISOString().slice(0, 10);
+		for (const name of readdirSync(this.logsDir)) {
+			const m = /^(\d{4}-\d{2}-\d{2})\.jsonl$/.exec(name);
+			if (m && m[1]! < oldest) rmSync(join(this.logsDir, name), { force: true });
 		}
+		this.preparedDay = day;
 	}
-	
-	private getLogFilePath(): string {
-		const date = new Date().toISOString().split("T")[0];
-		return join(this.logsDir, `${date}.jsonl`);
-	}
-	
+
 	log(event: DecisionEvent): void {
-		const line = JSON.stringify(event) + "\n";
-		const filePath = this.getLogFilePath();
-		
+		const day = new Date().toISOString().slice(0, 10);
 		try {
-			writeFileSync(filePath, line, { flag: "a", encoding: "utf-8" });
+			this.prepare(day);
+			writeFileSync(join(this.logsDir, `${day}.jsonl`), JSON.stringify(event) + "\n", { flag: "a", encoding: "utf-8" });
 		} catch (err) {
 			console.error("Failed to write decision log:", err);
 		}
-	}
-	
-	createPushEvent(runId: string) {
-		return (type: DecisionEvent["type"], payload: Record<string, unknown>, stepId?: string) => {
-			const event = {
-				type,
-				...payload,
-				timestamp: new Date().toISOString(),
-				runId,
-				stepId,
-			} as DecisionEvent;
-			this.log(event);
-		};
 	}
 }
 

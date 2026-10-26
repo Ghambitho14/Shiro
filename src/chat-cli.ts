@@ -55,7 +55,6 @@ export async function runChat(): Promise<void> {
 	setLogLevel("warn");
 	const name = getState().name;
 	const memory = new MemoryManager({ shortWindow: 50, summarizeEvery: 20 });
-	const workspaceContext = buildWorkspaceContext({ includeLongTermMemory: true }) || undefined;
 	const history: ChatMessage[] = [];
 	let room: RoomState | null = null;
 	// Quién responde ahora (el asistente o el agente de la sala), para el aviso de permiso.
@@ -192,7 +191,8 @@ export async function runChat(): Promise<void> {
 					stdout.write(chunk);
 				},
 			},
-			workspaceContext,
+			// Se relee en cada mensaje: lo que cambies en las notas (Obsidian) vale al momento.
+			buildWorkspaceContext({ includeLongTermMemory: true }) || undefined,
 		);
 		// Si no hubo streaming (o terminó en error), mostrar la respuesta completa.
 		if (!streamed || response.startsWith("⚠️")) stdout.write(streamed ? `\n${response}` : response);

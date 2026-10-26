@@ -2,7 +2,7 @@
 
 - **Fecha:** 26-10-2026
 - **Rama:** `claude/upbeat-faraday-rz1fcm`
-- **Estado de las pruebas:** `npm run check` pasa y `npm test` da **161/161**.
+- **Estado de las pruebas:** `npm run check` pasa y `npm test` da **168/168**.
 
 Una «sala» es un chat donde hablan varios agentes (por ejemplo Viernes y Lunes), cada uno
 con su nombre, color, voz y modelo. Uno es el **principal** (★): responde cuando no nombras a nadie.
@@ -77,7 +77,8 @@ Necesita **Windows + LM Studio**.
 **Preparar un Shiro de prueba (sin tocar el del usuario):**
 
 1. Crea una carpeta de datos aparte y apunta `SHIRO_DATA_DIR` a ella.
-2. Copia ahí `config.json`, `state.json` y `user-profile.json` del `data/` del usuario.
+2. Copia ahí `config.json` y `state.json` del `data/` del usuario, y su carpeta `Shiro/` de la bóveda
+   como `workspace/` (ahí están `Sobre mí.md` y `Agentes/`).
 3. En esa copia pon `storage: "local"`, para no escribir en la bóveda de Obsidian del usuario.
 4. Usa el **puerto 1417** (el servidor lee la variable `PORT`).
 5. Añade una entrada temporal en `.claude/launch.json` (ya hay una, «shiro-prueba», en el 1407).
@@ -148,18 +149,10 @@ Depende del informe de la sesión de pruebas: medir si el reconocedor de voz de 
 **Si WinRT no funciona (plan B):** vosk-browser (WASM) en un Edge sin ventana con `puppeteer-core`
 y un modelo pequeño en español con sha256 fijo. **Preguntar al usuario antes de descargar nada.**
 
-### 2.4 Detalle visto de paso: pruebas que escriben en el `data/` real
+### 2.4 ~~Pruebas que escribían en el `data/` real~~ (arreglado)
 
-- **14 archivos de prueba** no usan carpeta temporal (`SHIRO_DATA_DIR`).
-- De ellos, solo **2** crean la carpeta vacía `data/logs/decisions` en el `data/` real
-  (comprobado ejecutando cada archivo por separado):
-  - `src/core/agent/Agent.test.ts` (2 pruebas)
-  - `src/telegram.test.ts` (4 pruebas)
-- Por qué: `src/core/agent/DecisionLogger.ts` crea su registro global (y la carpeta) al importarse,
-  y esos archivos importan `Agent.ts` directa o indirectamente.
-- No falla nada, pero en el PC del usuario escriben en su `data/` real. Los otros 12 archivos sin
-  carpeta temporal podrían leer el `data/config.json` real (como pasó en `2dce51d`); no se ha revisado uno a uno.
-- Arreglo sugerido: carpeta temporal en esos tests, o crear la carpeta solo al escribir el primer registro.
+`npm test` carga `src/test-setup.ts`, que da a cada archivo de prueba una carpeta temporal si no eligió
+la suya, y `DecisionLogger.ts` ya no crea su carpeta al importarse. Ninguna prueba toca el `data/` real.
 
 ---
 

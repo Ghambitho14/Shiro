@@ -145,7 +145,8 @@ async function processIncomingMessage(message: Message): Promise<void> {
 	// memoria ni historial, solo a herramientas públicas.
 	const publicTools = [...webTools, "get_time", "calculator"];
 	const effectiveAllowedTools = !autonomous ? webTools : WA_ALLOWED_CHAT ? undefined : publicTools;
-	const workspaceContext = buildWorkspaceContext({ includeLongTermMemory: true });
+	// Tu memoria (MEMORY.md, SOUL…) y «Sobre ti» solo van al chat permitido: un desconocido podría pedírsela.
+	const workspaceContext = WA_ALLOWED_CHAT ? buildWorkspaceContext({ includeLongTermMemory: true }) : "";
 	setHealthActive();
 	const response = await runAgent(
 		goal,
@@ -158,7 +159,7 @@ async function processIncomingMessage(message: Message): Promise<void> {
 			allowedTools: effectiveAllowedTools,
 			explainMode: config.explainMode,
 			conversation: withUser,
-			userProfile: getUserProfile(),
+			userProfile: WA_ALLOWED_CHAT ? getUserProfile() : undefined,
 		},
 		workspaceContext || undefined,
 	);

@@ -18,16 +18,17 @@ export type PageSnapshot = {
 export const SNAPSHOT_MAX_ELEMENTS = 60;
 export const SNAPSHOT_MAX_TEXT = 3000;
 
-/** Puerto de la web de Shiro: su propia API no se abre en el navegador que maneja el modelo. */
-const SHIRO_PORT = String(Number(process.env.PORT) || 1406);
-const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+/** Nombres de este mismo equipo (127.x.x.x, ::1, 0.0.0.0, localhost; también escritos como 127.1 o ::ffff:7f00:1). */
+const LOCAL_HOST = /^(localhost\.?|[\w-]+\.localhost\.?|127(\.\d{1,3}){3}|0\.0\.0\.0|\[::1?\]|\[::ffff:(7f[0-9a-f]{2}:[0-9a-f]{1,4}|0:0)\])$/i;
 
-/** true si la URL es la propia web/API de Shiro (el modelo no debe leerla desde el navegador). */
+/** true si la URL es la propia web/API de Shiro (el modelo no debe leerla desde el navegador ni con fetch_url). */
 export function isShiroUrl(url: string): boolean {
 	try {
 		const u = new URL(url);
+		// El puerto se lee cada vez: el .exe elige uno libre al arrancar.
+		const shiroPort = String(Number(process.env.PORT) || 1406);
 		const port = u.port || (u.protocol === "https:" ? "443" : "80");
-		return LOCAL_HOSTS.has(u.hostname) && port === SHIRO_PORT;
+		return LOCAL_HOST.test(u.hostname) && port === shiroPort;
 	} catch {
 		return false;
 	}

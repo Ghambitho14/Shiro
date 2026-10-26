@@ -108,7 +108,13 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 	// Primero verificar si hay un ejecutor registrado para esta tool
 	if (hasToolExecutor(name)) {
 		const executor = getToolExecutor(name)!;
-		const result = await executor(validatedData ?? args);
+		let result: Awaited<ReturnType<typeof executor>>;
+		try {
+			result = await executor(validatedData ?? args);
+		} catch (err) {
+			// Un fallo inesperado se le cuenta al modelo como error de la tool, sin cortar la respuesta entera.
+			return { ok: false, error: err instanceof Error ? err.message : String(err) };
+		}
 		if (result.ok) {
 			return result.image ? { ok: true, content: result.content, image: result.image } : { ok: true, content: result.content };
 		}

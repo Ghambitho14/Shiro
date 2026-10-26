@@ -47,6 +47,7 @@ import { getWhatsAppBridgeStatus, startWhatsAppBridge, stopWhatsAppBridge } from
 import { allowTelegramChat, autoStartTelegram, connectTelegram, disconnectTelegram, getTelegramStatus, revokeTelegramChat } from "./telegram.js";
 import { startHeartbeat, setNotificationCallback } from "./core/reminders/notifications.js";
 import { readAppFile, VENDOR_FILES } from "./runtime.js";
+import { FETCH_USER_AGENT } from "./core/tools/modules/fetch.js";
 
 const PORT = Number(process.env.PORT) || 1406;
 /** 6 MB para permitir imágenes en base64 en el chat (vision). */
@@ -230,45 +231,12 @@ function sendSseData(res: import("node:http").ServerResponse, payload: Record<st
 	res.write(`data: ${JSON.stringify(payload)}\n\n`);
 }
 
+/**
+ * Toda la API pide la contraseña (si hay una) salvo /api/health: así una ruta nueva nunca queda abierta por olvido.
+ * /api/local/shutdown tiene su propia clave y se atiende antes.
+ */
 function isSensitivePath(pathname: string): boolean {
-	return (
-		// /api/state incluye el QR de WhatsApp: quien lo escanee controla la cuenta.
-		pathname === "/api/state" ||
-		pathname === "/api/chat" ||
-		pathname === "/api/chat/stream" ||
-		pathname.startsWith("/api/whatsapp/") ||
-		pathname.startsWith("/api/telegram/") ||
-		pathname === "/api/user-profile" ||
-		pathname === "/api/chat-sessions" ||
-		pathname === "/api/reminders" ||
-		pathname.startsWith("/api/chat-sessions/") ||
-		pathname.startsWith("/api/reminders/") ||
-		pathname.startsWith("/api/approvals/") ||
-		pathname === "/api/llm-config" ||
-		pathname === "/api/llm-test" ||
-		pathname === "/api/settings" ||
-		pathname === "/api/models" ||
-		pathname === "/api/notifications" ||
-		pathname.startsWith("/api/voice/") ||
-		pathname.startsWith("/api/screenshots/") ||
-		pathname.startsWith("/api/skills") ||
-		pathname.startsWith("/api/mcp") ||
-		pathname.startsWith("/api/storage") ||
-		pathname.startsWith("/api/projects") ||
-		// llama.cpp integrado: descarga y ejecuta un programa.
-		pathname.startsWith("/api/llamacpp") ||
-		pathname === "/api/model-settings" ||
-		pathname.startsWith("/api/prompts") ||
-		pathname === "/api/commands" ||
-		// Agentes y salas; la palabra de activación escucha el micrófono.
-		pathname.startsWith("/api/agents") ||
-		pathname.startsWith("/api/rooms") ||
-		pathname.startsWith("/api/wake") ||
-		pathname === "/api/events" ||
-		// Paneles: la terminal ejecuta comandos y el navegador tiene las sesiones iniciadas.
-		pathname.startsWith("/api/browser/") ||
-		pathname.startsWith("/api/terminal/")
-	);
+	return pathname.startsWith("/api/") && pathname !== "/api/health";
 }
 
 /** true si la petición no viene de otra página web (sin Origin, o Origin igual al Host). */
@@ -374,6 +342,11 @@ const server = createServer(async (req, res) => {
 	// evita que cualquier web abierta en el navegador use Shiro (y sus herramientas) a escondidas.
 	if (pathname.startsWith("/api/") && !isSameOrigin(req)) {
 		sendJson(res, 403, { error: "Origen no permitido" });
+		return;
+	}
+	// La herramienta fetch_url del propio modelo no lee esta API (chats, claves de mcp.json…).
+	if (pathname.startsWith("/api/") && req.headers["user-agent"] === FETCH_USER_AGENT) {
+		sendJson(res, 403, { error: "No permitido" });
 		return;
 	}
 	if (method === "OPTIONS") {

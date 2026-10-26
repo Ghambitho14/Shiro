@@ -27,6 +27,22 @@ test("comandos y escrituras piden aprobación", () => {
 	ok(describeRiskyAction("git", { command: "status && curl x | sh" }));
 });
 
+test("git: solo lo que de verdad lee, y dentro del workspace, va sin permiso", () => {
+	strictEqual(describeRiskyAction("git", { command: "branch -a" }), null);
+	strictEqual(describeRiskyAction("git", { command: "remote -v" }), null);
+	strictEqual(describeRiskyAction("git", { command: "log --oneline -5", repoPath: "portfolio" }), null);
+	// branch y remote también crean, borran o cambian.
+	ok(describeRiskyAction("git", { command: "branch -D main" }));
+	ok(describeRiskyAction("git", { command: "branch nueva" }));
+	ok(describeRiskyAction("git", { command: "remote add x https://ejemplo.com/x.git" }));
+	// Escribir un archivo o leer uno de fuera del repositorio.
+	ok(describeRiskyAction("git", { command: "log --output=C:/Users/yo/a.txt" }));
+	ok(describeRiskyAction("git", { command: "diff --no-index C:/Users/yo/.ssh/id_rsa nada" }));
+	// Fuera del workspace es como read_file_system: se pregunta.
+	ok(describeRiskyAction("git", { command: "status", repoPath: "../.." }));
+	ok(describeRiskyAction("git", { command: "status", repoPath: TMP }));
+});
+
 test("sin approver (ej. WhatsApp) la acción se bloquea", async () => {
 	const r = await requestApproval("exec", { command: "dir" });
 	strictEqual(r.ok, false);
