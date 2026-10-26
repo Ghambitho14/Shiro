@@ -29,6 +29,8 @@ Ambos deben pasar antes de dar un cambio por terminado.
   - `transports.ts` una "vuelta" con el modelo: dialecto OpenAI (`/chat/completions`) u Ollama nativo (`/api/chat`, para fijar `num_ctx`). Streaming incluido.
   - `client.ts` bucle de herramientas, streaming y cambio automático a modo texto.
   - `textTools.ts` formato `<tool_call>{json}</tool_call>` para modelos sin tools nativas.
+  - `getLLM.ts` `getLLM()` (el modelo de Ajustes) y `getLLMFor(perfil)` (el de un agente: `ModelRef` de `providers.ts`, cliente de `createLLMClientFor`; sin modelo propio es el de Ajustes).
+  - `modelGate.ts` un solo modelo local cargado a la vez (Ollama, LM Studio, GGUF): `acquireModel(gateTarget(...))` → vuelta → `release`; el mismo modelo pasa sin esperar, otro espera a que acaben las vueltas en curso y descarga el anterior (`/api/ps` + `keep_alive: 0` en Ollama, `/api/v1/models/unload` en LM Studio, cerrar `llama-server`). Los de la nube y servidores propios no esperan. `client.ts` lo hace en cada vuelta.
 - `src/core/llamacpp/` — llama.cpp integrado (proveedor `gguf`): `models.ts` (archivos GGUF de `data/models`, LM Studio, los blobs de Ollama leyendo sus manifiestos y `ggufFolders`; mmproj = visión), `install.ts` (descarga `llama-server` de las versiones de GitHub de ggml-org: CUDA según el driver de NVIDIA + `cudart`, si no Vulkan/CPU; comprueba sha256; extrae con el `tar.exe` de Windows; `data/llama.cpp/install.json`), `engine.ts` (un solo `llama-server` en 127.0.0.1 con puerto libre y clave aleatoria por `LLAMA_API_KEY`; contexto automático = sin `-c` (`--fit` elige el mayor que quepa) y el real se lee de `/props`; se reinicia si cambian modelo/contexto/rendimiento; `--sleep-idle-seconds` libera la GPU; `data/cache/llama-server.json` para que otro proceso de Shiro lo reutilice; registro en `data/llama.cpp/llama-server.log`, errores traducidos en `explainFailure`). `src/llamacppApi.ts` — `/api/llamacpp*` (estado, descarga, liberar, carpetas). Web: `public/js/llamacpp.js` (panel dentro de `modelForm.js`).
 - `src/core/agent/Agent.ts` — `runAgent()`: arma el contexto, elige tools (perfil lite para locales; sin approver no hay tools del PC), anti-bucle, errores legibles, eventos de progreso (`onToolEvent`), cancelación (`signal`), modo voz.
 - `src/core/agent/ContextBuilder.ts` — system prompt (las tools NO se listan aquí; van por la API). Añade las reglas de control del PC y del modo voz, la lista de habilidades y la habilidad pedida con `/nombre`.
@@ -40,6 +42,9 @@ Ambos deben pasar antes de dar un cambio por terminado.
 - `src/core/terminal/terminal.ts` — terminal compartida (tool `terminal`, panel "Terminal"): una PowerShell abierta entre comandos; cada comando va en base64 y termina con una marca aleatoria (código de salida y carpeta). Sin claves en el entorno.
 - `src/panelsApi.ts` — API de los paneles (`/api/browser/*`, `/api/terminal/*`, con SSE).
 - `src/core/projects/` — Proyectos (como los de ChatGPT/Claude): `projects.ts` (`data/projects/<id>/project.json` con nombre, instrucciones, carpetas vinculadas y chats; copias subidas en `files/`; siempre en este equipo, sea cual sea Ajustes → Datos; rutas del modelo con prefijo `Subidos/…` o `<carpeta>/…` por `resolveProjectPath`; proyecto activo con `runWithProject`), `documents.ts` (texto de txt/código, PDF con `unpdf` y Word .docx con `mammoth`). La tool `project` (`modules/project.ts`: list/read/search/write) solo se ofrece en chats de un proyecto; el system prompt lleva sus instrucciones y la lista de archivos (y el contenido si es pequeño). `src/projectsApi.ts` — `/api/projects*` (subida binaria por archivo, selector de carpetas de Windows solo desde este PC: `core/pc/pickFolder.ts`, compartido con llama.cpp).
+- `src/core/agents/` — agentes de las salas (Viernes, Lunes…): `registry.ts` (`data/agents.json` validado con zod: nombre, alias, modelo propio o el de Ajustes, forma de ser `persona` que se añade (`add`) o reemplaza (`replace`) las instrucciones base, herramientas `inherit`/`none`/lista, `mcp`, `mode` texto o voz, voz, saludo y color; rechaza nombres reservados o que se confunden entre sí), `text.ts` (`normalizeText`: sin tildes, mayúsculas ni puntuación).
+- `src/core/rooms/` — salas (un chat con varios agentes): `roomStore.ts` (`data/rooms/<id del chat>.json`, siempre en este equipo; `pruneRoom` quita los agentes borrados), `roomIntent.ts` (órdenes con palabras y sin modelo: «Aku, activa Viernes», «agrega a Lunes», «puedes irte», «ahora te encargas tú», y quién responde: el nombrado o el principal), `roomLogic.ts` (qué cambia y la respuesta fija de cada orden), `roomHistory.ts` (historial para el agente que responde: lo suyo como `assistant`, lo de los demás como «[Nombre]: …»; recorta sin quitar el último mensaje del usuario), `roomTurn.ts` (compartido por web y terminal: `planRoomTurn()` decide si hay respuesta fija o `responder`; `prepareAgentTurn()` da `llm`, `agentName`, `persona`, `room`, `conversation`, `allowedTools` y `mcp` para `runAgent`). Los mensajes guardados llevan `agent`/`agentName` (solo respuestas del asistente con id válido, `sanitizeMessages` de `ChatStore.ts`). La forma de ser y el bloque «## Sala» los añade `ContextBuilder.ts`.
+- `src/agentsApi.ts` — `/api/agents*` (Ajustes → Agentes: crear, editar, probar modelo, borrar) y `/api/rooms*` (barra de participantes, «Abrir sala» con `openRoomChat()`). El chat de `server.ts` aplica las órdenes de sala, un turno a la vez por sala, y borra la sala al borrar el chat.
 - `src/core/tools/ToolRegistry.ts` — definiciones de tools (`TOOLS`), `LITE_TOOLS`, `executeToolSafeScoped()`.
 - `src/core/tools/tools.ts` — implementación de las tools; `schemas.ts` valida argumentos con zod.
 - `src/core/tools/approval.ts` — aprobación de acciones peligrosas (`describeRiskyAction`, approvers por interfaz).
@@ -47,7 +52,7 @@ Ambos deben pasar antes de dar un cambio por terminado.
 - `src/telegram.ts` — puente de Telegram (sondeo largo `getUpdates` desde el servidor): solo responde a `telegramChats` (el resto queda como solicitud en Ajustes → Conexiones); endpoints `/api/telegram/*` en `server.ts`. El token va en la URL de la API: nunca a logs ni al navegador.
 - `src/commands.ts` — comandos del chat (`/ayuda`, `/modelo`, `/habilidades`, `/mcp`…), compartidos por web y terminal; `COMMANDS` alimenta el menú de `/`.
 - `src/extensionsApi.ts` — API de Ajustes → Habilidades y Ajustes → Conectores MCP (`/api/skills*`, `/api/mcp*`, `/api/commands`).
-- Interfaces: `src/chat-cli.ts` (terminal), `src/server.ts` + `public/` (web), `src/whatsapp.ts`.
+- Interfaces: `src/chat-cli.ts` (terminal; la sala vive solo en memoria, `/sala` muestra quién está y `/nuevo` la borra), `src/server.ts` + `public/` (web), `src/whatsapp.ts`.
 - Web (`public/`, sin build, módulos ES): `index.html`, `css/app.css`, `js/app.js` (chat, ajustes, modo voz),
   `js/api.js` (fetch + SSE), `js/markdown.js` (marked + DOMPurify + highlight.js servidos en `/vendor/`),
   `js/voice.js` (reconocimiento del navegador o Whisper, lectura en voz alta por frases),
@@ -56,8 +61,9 @@ Ambos deben pasar antes de dar un cambio por terminado.
   `js/modelForm.js` (formulario del modelo de Ajustes → Modelo y de la bienvenida: tarjetas de proveedores por `group` con `title`/`hint` de los presets, lista de modelos, API key solo en la nube, dirección en «avanzado»),
   `js/panels.js` (paneles Navegador y Terminal a la derecha; se abren solos cuando Shiro usa `browser`/`terminal`),
   `js/projects.js` (Proyectos: página `#/p/<id>` con archivos, instrucciones y chats; lista `#/proyectos`; sección de la barra lateral),
+  `js/agents.js` (Ajustes → Agentes: formulario de cada agente, «Probar modelo» y «Abrir sala»; el nombre y color de cada respuesta y la barra de participantes están en `app.js`),
   `js/orb.js` (esfera holográfica del modo voz, canvas).
-  El stream SSE envía `delta`, `tool` (inicio/fin de cada herramienta), `approval` y `done`.
+  El stream SSE envía `delta`, `tool` (inicio/fin de cada herramienta), `approval`, `room` (la sala cambió), `agent` (quién responde) y `done`.
 
 ## Reglas
 
@@ -80,4 +86,8 @@ Ambos deben pasar antes de dar un cambio por terminado.
 - En la web, el HTML del modelo siempre pasa por `renderMarkdown` (DOMPurify); el texto del usuario con `textContent`.
 - No reintentar tools automáticamente (pueden tener efectos); solo se reintenta la llamada al modelo.
 - En modo MCP, stdout es del protocolo: nada de `console.log` (usar stderr).
+- Rutas nuevas de la API: añadirlas a `isSensitivePath()` (`src/server.ts`).
+- Salas: el modelo de un agente se obtiene con `getLLMFor(perfil)`, nunca con `getLLM()` (ese es siempre el de Ajustes).
+  Cada vuelta con un modelo local pasa por `acquireModel` de `modelGate.ts` (ya lo hace `client.ts`): no crear clientes que se lo salten.
+  Las órdenes de sala se contestan sin modelo; la lógica va en `roomTurn.ts` para que web y terminal no la dupliquen.
 - Mensajes al usuario en español; errores claros, nunca respuestas de relleno que oculten un fallo.
