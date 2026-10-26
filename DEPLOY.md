@@ -7,10 +7,10 @@
 | `PORT` | Puerto HTTP (por defecto `1406`). |
 | `BIND_HOST` | Interfaz de escucha; `127.0.0.1` en local, `0.0.0.0` en Docker o red. |
 | `SHIRO_AUTH_TOKEN` | Contraseña de la web (`Authorization: Bearer <token>`). Si `BIND_HOST` no es local y falta, se genera una al arrancar y se muestra en el log. `off` = sin contraseña (úsalo solo si `BIND_HOST` es una red de confianza, p. ej. la IP de Tailscale). |
-| `SHIRO_LLM_PROVIDER` | `ollama`, `lmstudio`, `llamacpp`, `gguf` (llama.cpp integrado), `vllm`, `openrouter`, `opencode`, `opencode-go` o `custom`. |
+| `SHIRO_LLM_PROVIDER` | `ollama`, `ollama-cloud`, `lmstudio`, `llamacpp`, `gguf` (llama.cpp integrado), `vllm`, `openrouter`, `opencode`, `opencode-go` o `custom`. |
 | `SHIRO_LLM_BASE_URL` | URL del servidor del modelo (en Docker, Ollama del host: `http://host.docker.internal:11434`). |
 | `SHIRO_LLM_MODEL` | Nombre del modelo. |
-| `SHIRO_LLM_API_KEY` | API key (o `OPENROUTER_API_KEY` / `OPENCODE_API_KEY` / `VLLM_API_KEY`). |
+| `SHIRO_LLM_API_KEY` | API key (o `OLLAMA_API_KEY` / `OPENROUTER_API_KEY` / `OPENCODE_API_KEY` / `VLLM_API_KEY`). |
 | `WA_ALLOWED_CHAT` | Chat de WhatsApp con acceso completo; sin él, solo herramientas públicas. |
 | `SHIRO_SYSTEM_ROOT` | Raíz permitida para herramientas de sistema (opcional). |
 | `SHIRO_DATA_DIR` | Carpeta de datos en vez de `data/` del proyecto (opcional). |

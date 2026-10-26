@@ -1,0 +1,64 @@
+# Compila la app del móvil (carpeta mobile/) y deja el .apk para descargar.
+# Se ejecuta sola al subir cambios de mobile/ y a mano desde la pestaña Actions → «App Android (APK)» → Run workflow.
+name: App Android (APK)
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "mobile/**"
+      - ".github/workflows/android-apk.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Comprobar tipos y pruebas
+        run: |
+          npm run check
+          npm test
+
+      - name: Generar el proyecto Android
+        run: npx expo prebuild --platform android --no-install
+
+      - name: Compilar el APK
+        working-directory: mobile/android
+        # Solo arm64 (casi todos los móviles de los últimos años): el APK pesa y tarda la mitad.
+        run: ./gradlew assembleRelease --no-daemon -PreactNativeArchitectures=arm64-v8a
+
+      - name: Subir el APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: shiro-android-apk
+          path: mobile/android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
