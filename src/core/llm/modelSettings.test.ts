@@ -87,3 +87,18 @@ test("el modelo activo usa sus ajustes: temperatura, pensar, largo, contexto, he
 	assert.equal(getMaxToolIterations(), 10);
 	assert.ok(resolveTools(undefined, true, true)?.every((t) => LITE_TOOLS.includes(t) || t.startsWith("mcp__") || t.startsWith("pc_")));
 });
+
+test("Ollama Cloud: habla el formato de Ollama con ollama.com y la clave de OLLAMA_API_KEY", () => {
+	process.env.OLLAMA_API_KEY = "clave-ollama";
+	try {
+		setConfig({ llmProvider: "ollama-cloud", llmModel: "gpt-oss:120b", llmBaseUrl: "", llmApiKey: "" });
+		const s = resolveLLMSettings();
+		assert.equal(s.dialect, "ollama");
+		assert.equal(s.baseUrl, "https://ollama.com");
+		assert.equal(s.local, false);
+		assert.equal(s.headers.Authorization, "Bearer clave-ollama");
+	} finally {
+		delete process.env.OLLAMA_API_KEY;
+		setConfig({ llmProvider: "ollama", llmModel: "qwen3:8b" });
+	}
+});

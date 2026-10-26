@@ -360,7 +360,7 @@ async function ollamaTurn(settings: LLMSettings, req: TurnRequest): Promise<Turn
 	let content = "";
 	const toolCalls: ToolCallSpec[] = [];
 	const absorb = (chunk: OllamaChunk) => {
-		if (chunk.error) throw new LLMError(`Ollama: ${chunk.error}`, "server");
+		if (chunk.error) throw new LLMError(`${PROVIDER_PRESETS[settings.provider].title}: ${chunk.error}`, "server");
 		const piece = chunk.message?.content ?? "";
 		if (piece) {
 			content += piece;

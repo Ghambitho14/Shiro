@@ -218,7 +218,13 @@ export function writeNote(note: EditableNote, content?: string): string {
 	ensureWorkspace();
 	const value = content?.trim() ? content.replace(/\r\n/g, "\n").trimEnd() + "\n" : EDITABLE_NOTES[note].template;
 	writeFileSync(join(getWorkspaceDir(), EDITABLE_NOTES[note].file), value, "utf-8");
+	notesChanged();
 	return value;
+}
+
+/** Con Supabase, una nota cambiada aquí se sube enseguida (notesSync.ts). */
+function notesChanged(s: StorageSettings = currentStorage()): void {
+	if (s.kind === "supabase") void import("./storage/notesSync.js").then((m) => m.pushNotesSoon()).catch(() => {});
 }
 
 /** Crea el workspace y las notas por defecto si no existen, y trae lo que antes vivía en data/. */
@@ -396,6 +402,7 @@ export function writeInstructions(value?: string): void {
 	ensureWorkspace();
 	const clean = value?.replace(/\r\n/g, "\n").trim();
 	writeFileSync(join(getWorkspaceDir(), INSTRUCTIONS_NOTE), (clean || DEFAULT_SYSTEM_PROMPT) + "\n", "utf-8");
+	notesChanged();
 }
 
 /** «Sobre ti», leído de su nota cada vez (así vale lo que se cambie en Obsidian). */
@@ -408,6 +415,7 @@ export function readProfile(): ProfileFields {
 export function writeProfile(p: ProfileFields): void {
 	ensureWorkspace();
 	writeFileSync(join(getWorkspaceDir(), PROFILE_NOTE), profileToMarkdown(p), "utf-8");
+	notesChanged();
 }
 
 /** Contenido de MEMORY.md (memoria a largo plazo). */
@@ -426,6 +434,7 @@ export function appendLongTermMemory(text: string, s: StorageSettings = currentS
 	const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 	ensureDir(dirname(file));
 	writeFileSync(file, `${current.trimEnd()}\n- ${line} _(${date})_\n`, "utf-8");
+	notesChanged(s);
 	return true;
 }
 
@@ -454,7 +463,7 @@ export function buildMemoryGuide(s: StorageSettings = currentStorage()): string 
 		].join("\n");
 	}
 	if (s.kind === "supabase") {
-		return `## Tu memoria\nTus recuerdos (memory_add y memory_search) están en Supabase, compartidos con los otros equipos del usuario. MEMORY.md (lo importante y duradero, lo tienes más abajo) está en este equipo.\n${save}`;
+		return `## Tu memoria\nTu memoria está en Supabase, compartida con la app del móvil y los otros equipos del usuario: tus recuerdos (memory_add y memory_search), MEMORY.md (lo importante y duradero, lo tienes más abajo), «Sobre mí», SOUL.md, TOOLS.md, tus instrucciones y los chats. Lo que aprendas aquí lo sabrás también desde el móvil.\n${save}`;
 	}
 	return `## Tu memoria\nTu memoria está en este equipo, en la carpeta de datos de Shiro: MEMORY.md (lo importante y duradero, lo tienes más abajo) y los recuerdos que guardas con memory_add. No usas Obsidian: si el usuario lo menciona, dile que puede elegir guardar tu memoria en su bóveda en Ajustes → Datos.\n${save}`;
 }

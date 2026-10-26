@@ -7,7 +7,7 @@ import { resolveDataDir } from "../runtime.js";
 const DATA_DIR = resolveDataDir();
 const CONFIG_FILE = join(DATA_DIR, "config.json");
 
-export const LLM_PROVIDERS = ["ollama", "lmstudio", "llamacpp", "gguf", "vllm", "openrouter", "opencode", "opencode-go", "custom"] as const;
+export const LLM_PROVIDERS = ["ollama", "ollama-cloud", "lmstudio", "llamacpp", "gguf", "vllm", "openrouter", "opencode", "opencode-go", "custom"] as const;
 export type LLMProvider = (typeof LLM_PROVIDERS)[number];
 export const STORAGE_KINDS = ["local", "obsidian", "supabase"] as const;
 export type StorageKind = (typeof STORAGE_KINDS)[number];
