@@ -1,6 +1,17 @@
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { strictEqual } from "node:assert";
-import { executeTool, getWorkspaceDir } from "./tools.js";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+// Carpeta temporal y guardado local: la bóveda de Obsidian del usuario no cuenta aquí.
+const TMP = mkdtempSync(join(tmpdir(), "shiro-tools-"));
+process.env.SHIRO_DATA_DIR = join(TMP, "data");
+after(() => rmSync(TMP, { recursive: true, force: true }));
+
+const { setConfig } = await import("../../config/config.js");
+const { executeTool, getWorkspaceDir } = await import("./tools.js");
+setConfig({ storage: "local", approvalMode: "ask" });
 
 test("executeTool read_file rechaza path fuera del workspace (traversal)", async () => {
 	const r = await executeTool("read_file", { path: ".." });
@@ -42,5 +53,5 @@ test("executeTool write_file_system rechaza path fuera del ámbito", async () =>
 test("getWorkspaceDir devuelve ruta bajo data", () => {
 	const dir = getWorkspaceDir();
 	strictEqual(dir.includes("workspace"), true);
-	strictEqual(dir.includes("data"), true);
+	strictEqual(dir.startsWith(join(TMP, "data")), true);
 });
