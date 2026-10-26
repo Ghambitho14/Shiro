@@ -1,17 +1,3 @@
-import type { ToolDefinition } from "../ToolRegistry.js";
-
-export const getWeatherTool: ToolDefinition = {
-	label: "Obtener Clima",
-	name: "get_weather",
-	description: "Obtiene el clima actual de una ciudad.",
-	category: "utilidades",
-	parameters: {
-		type: "object",
-		properties: { city: { type: "string", description: "Nombre de la ciudad" } },
-		required: ["city"],
-	},
-};
-
 export async function executeGetWeather(args: Record<string, unknown>): Promise<{ ok: boolean; content: string }> {
 	const city = String(args.city ?? "").trim();
 	if (!city) return { ok: false, content: "El nombre de la ciudad es requerido" };

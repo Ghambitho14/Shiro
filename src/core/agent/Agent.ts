@@ -1,27 +1,28 @@
-import type { Message, ContentPart } from "./Types.js";
+import type { Message, ContentPart, AgentEvent } from "./Types.js";
 import { getMessagePreview } from "./contentUtils.js";
-import type { AgentEvent } from "./Types.js";
-import type { LLMClient } from "../llm/LLMClient.js";
+import { LLMError, type LLMClient } from "../llm/LLMClient.js";
 import type { MemoryStore } from "../memory/MemoryStore.js";
 import { buildContext } from "./ContextBuilder.js";
+import { readFileSync } from "node:fs";
 import {
+	describeToolUse,
 	executeToolSafeScoped,
+	getAllToolNames,
 	getToolsDefinitionScoped,
+	LITE_TOOLS,
+	PC_TOOLS,
 } from "../tools/ToolRegistry.js";
-
-import { checkAndIntervene } from "../health/HealthManager.js";
+import { activeModelTuning, modelSupportsVision, PROVIDER_PRESETS, type ModelRef } from "../llm/providers.js";
+import type { PersonaContext, RoomContext } from "./ContextBuilder.js";
 import { logger } from "../logger.js";
-import {
-	sanitizeModelResponse,
-	isMeaningfulResponse,
-	FALLBACK_EMPTY_RESPONSE,
-} from "../sanitizeResponse.js";
+import { isMeaningfulResponse, FALLBACK_EMPTY_RESPONSE } from "../sanitizeResponse.js";
 import { createRetryPolicy, getBackoffMs, isRetryableError } from "../health/RetryPolicy.js";
 import { getDecisionLogger, type DecisionEvent } from "./DecisionLogger.js";
 import { getConfig } from "../../config/config.js";
-import { getAllowedTools, type Role } from "../roles/roleManager.js";
-import { createExecutionPlan, type PlanStep } from "./Planner.js";
-import { executePlannedSteps } from "./PlanExecutor.js";
+import { runWithApprover, type Approver } from "../tools/approval.js";
+import { mcpManager } from "../mcp/McpManager.js";
+import { getEnabledSkills, getSkillInstructions } from "../skills/SkillLoader.js";
+import { getProject, inlineProjectText, projectIndex, runWithProject } from "../projects/projects.js";
 
 export type UserProfileForAgent = {
 	userName?: string;
@@ -29,6 +30,11 @@ export type UserProfileForAgent = {
 	about?: string;
 	extra?: string;
 };
+
+/** Progreso de las herramientas, para mostrarlo en la interfaz mientras trabajan. */
+export type ToolEvent =
+	| { phase: "start"; id: string; name: string; label: string }
+	| { phase: "end"; id: string; name: string; ok: boolean; error?: string; image?: string };
 
 export type AgentOptions = {
 	llm: LLMClient;
@@ -46,119 +52,148 @@ export type AgentOptions = {
 	explainMode?: "off" | "brief" | "on";
 	conversation?: Array<{ role: "user" | "assistant"; content: string | ContentPart[] }>;
 	userProfile?: UserProfileForAgent | null;
-	/** Si se define, se invoca con trozos del texto final (tras tools y sanitizado). */
+	/** Recibe el texto a medida que el modelo lo genera (streaming real). */
 	onStreamDelta?: (chunk: string) => void;
-	role?: Role;
+	/**
+	 * Quién aprueba las acciones peligrosas (exec, escribir archivos…).
+	 * Sin approver, con approvalMode "ask" esas acciones se bloquean.
+	 */
+	approver?: Approver;
+	/** Avisa del inicio y fin de cada herramienta. */
+	onToolEvent?: (e: ToolEvent) => void;
+	/** Cancela la respuesta (botón "Detener" de la web). */
+	signal?: AbortSignal;
+	/** El usuario habla por voz: respuestas breves y sin formato. */
+	voice?: boolean;
+	/** Id del chat, para que el proveedor agrupe las peticiones de la misma conversación. */
+	sessionId?: string;
+	/** Ofrecer las herramientas de los servidores MCP (por defecto sí, si hay approver). */
+	mcp?: boolean;
+	/** Habilidad que el usuario pidió con "/nombre": sus instrucciones van en el system prompt. */
+	skill?: string;
+	/** Proyecto del chat: sus instrucciones van en el system prompt y sus archivos se leen con la tool project. */
+	projectId?: string;
+	/** Forma de ser del agente de una sala (se añade a las instrucciones base o las reemplaza). */
+	persona?: PersonaContext;
+	/** Sala con varios agentes: quién está y cómo llegan los mensajes de los demás. */
+	room?: RoomContext;
 };
 
-function getUserFacingInterventionMessage(): string {
-	return "Algo salió mal al procesar. Puedes reformular o intentar de nuevo.";
+/** Veces que se permite repetir exactamente la misma llamada (nombre + args) en una respuesta. */
+const MAX_IDENTICAL_TOOL_CALLS = 2;
+
+/** Mensaje para el usuario cuando el modelo falla: dice qué pasó en vez de ocultarlo. */
+function describeFailure(err: unknown): string {
+	if (err instanceof LLMError) return `⚠️ ${err.message}`;
+	const msg = err instanceof Error ? err.message : String(err);
+	return `⚠️ Error al hablar con el modelo: ${msg.slice(0, 300)}`;
 }
 
-function getFallbackResponse(goal: string, error?: string): string {
-	const lower = goal.toLowerCase();
-	const isSpanish = /[áéíóúñ¿¡]/i.test(goal);
-	
-	if (error) {
-		logger.warn("LLM fallback activado", { error: error.slice(0, 100) });
+/**
+ * Qué herramientas ve el modelo: las pedidas (o todas), recortadas a las esenciales si el
+ * perfil es "lite" (por defecto con modelos locales, que se confunden con muchas tools).
+ */
+export function resolveTools(
+	requested: string[] | undefined,
+	localModel: boolean,
+	canAskUser: boolean,
+	includeMcp = true,
+	ref?: ModelRef,
+): string[] | undefined {
+	let tools = requested;
+	// Ajustes → Modelo: cada modelo puede tener su perfil (pocas o todas las herramientas).
+	const profile = activeModelTuning(ref).toolProfile;
+	const lite = profile === "lite" || (profile === "auto" && localModel);
+	if (lite) {
+		tools = (tools ?? LITE_TOOLS).filter((t) => LITE_TOOLS.includes(t));
 	}
-	
-	if (isSpanish) {
-		if (/\b(hola|hey|hi|buenas)\b/i.test(lower)) return "¡Hola! ¿En qué puedo ayudarte?";
-		if (/\b(gracias|thanks)\b/i.test(lower)) return "¡De nada! ¿Hay algo más en lo que pueda ayudarte?";
-		if (/\b(bye|adios|chau|nos vemos)\b/i.test(lower)) return "¡Hasta luego! Que te vaya bien.";
-		if (/\b(como estas|cómo estás)\b/i.test(lower)) return "Estoy bien, gracias por preguntar. ¿Y tú?";
-		if (/\b(que puedes hacer|qué puedes hacer)\b/i.test(lower)) return "Puedo leer y escribir archivos, buscar en internet, hacer cálculos, y chatear contigo.";
-		if (/\b(quien eres|quién eres|que eres)\b/i.test(lower)) return "Soy Shiro, un asistente de IA.";
-		return "Disculpa, tuve un problema. ¿Podrías intentarlo de nuevo?";
+	// El control del PC solo se ofrece donde se puede pedir permiso al usuario (web, terminal).
+	// En WhatsApp, Telegram o tareas programadas cualquiera que escriba podría abrir cosas o mirar la pantalla.
+	if (!getConfig().pcControl || !canAskUser) {
+		tools = (tools ?? getAllToolNames()).filter((t) => !PC_TOOLS.includes(t));
 	}
-	
-	if (/\b(hi|hello|hey)\b/i.test(lower)) return "Hi! How can I help you?";
-	if (/\b(thanks|thank you)\b/i.test(lower)) return "You're welcome!";
-	if (/\b(bye|goodbye)\b/i.test(lower)) return "Goodbye!";
-	if (/\b(how are you)\b/i.test(lower)) return "I'm doing well, thanks!";
-	if (/\b(what can you do)\b/i.test(lower)) return "I can read/write files, search the web, do calculations, and chat.";
-	if (/\b(who are you|what are you)\b/i.test(lower)) return "I'm Shiro, an AI assistant.";
-	return "Sorry, I had trouble. Could you try again?";
+	// Las de los servidores MCP las eligió el usuario (también con modelos locales), pero pueden
+	// tener efectos: igual que el control del PC, solo donde se le puede pedir permiso.
+	const mcp = includeMcp && canAskUser ? mcpManager.getToolNames() : [];
+	if (mcp.length) tools = [...(tools ?? getAllToolNames()), ...mcp];
+	return tools;
 }
 
-/** Loop principal: simple como OpenClaw. El LLM decide. */
-export async function runAgent(
-	goal: string,
-	opts: AgentOptions,
-	workspaceContext?: string,
-): Promise<string> {
+export async function runAgent(goal: string, opts: AgentOptions, workspaceContext?: string): Promise<string> {
 	const {
 		llm,
 		memory,
 		agentName,
 		tokenBudget = 8000,
-		textOnly = false,
 		allowedTools,
 		explainMode = "off",
 		conversation,
 		userProfile,
 		onStreamDelta,
-		role: roleOverride,
+		approver,
+		onToolEvent,
+		signal,
+		voice = false,
+		sessionId,
 	} = opts;
 
-	const configuredRole = getConfig().role ?? "default";
-	const effectiveRole: Role = roleOverride ?? configuredRole;
-	const roleTools = getAllowedTools(effectiveRole);
-	const effectiveAllowedTools = (() => {
-		if (!roleTools) return allowedTools;
-		if (!allowedTools) return roleTools;
-		const roleSet = new Set(roleTools);
-		const intersected = allowedTools.filter((name) => roleSet.has(name));
-		return intersected;
-	})();
+	// Los servidores MCP que aún están arrancando tienen unos segundos para ofrecer sus tools.
+	if (mcpManager.isStarted()) await mcpManager.whenReady(8000);
+	// El modelo de este cliente (el de un agente puede no ser el de Ajustes → Modelo).
+	const llmInfo = llm.getConfig();
+	const ref: ModelRef | undefined =
+		llmInfo.provider in PROVIDER_PRESETS ? { provider: llmInfo.provider as ModelRef["provider"], model: llmInfo.model } : undefined;
+	let effectiveTools = resolveTools(allowedTools, llmInfo.local, approver !== undefined, opts.mcp !== false, ref);
+	// use_skill solo tiene sentido si hay habilidades activas.
+	const skills = getEnabledSkills();
+	if (!skills.length && (effectiveTools ?? getAllToolNames()).includes("use_skill")) {
+		effectiveTools = (effectiveTools ?? getAllToolNames()).filter((t) => t !== "use_skill");
+	}
+	// La tool project solo existe dentro de un proyecto. Solo lee (escribir pide permiso),
+	// así que se ofrece aunque "Usar herramientas" esté apagado.
+	const project = opts.projectId ? getProject(opts.projectId) ?? undefined : undefined;
+	if (project && opts.textOnly !== true) {
+		if (effectiveTools && !effectiveTools.includes("project")) effectiveTools = [...effectiveTools, "project"];
+	} else if ((effectiveTools ?? getAllToolNames()).includes("project")) {
+		effectiveTools = (effectiveTools ?? getAllToolNames()).filter((t) => t !== "project");
+	}
+	// Una lista vacía significa "ninguna tool": se responde solo con texto.
+	const textOnly = opts.textOnly === true || (effectiveTools !== undefined && effectiveTools.length === 0);
+	const hasPcTools = !textOnly && (effectiveTools ?? getAllToolNames()).some((t) => PC_TOOLS.includes(t));
+	const vision = modelSupportsVision(llmInfo.model, undefined, ref?.provider);
 
-	const wantExplain = (() => {
-		const t = (goal || "").toLowerCase();
-		return /\b(explica|explicame|explícame|que hiciste|qué hiciste|como lo hiciste|cómo lo hiciste|pasos|tools|herramientas)\b/i.test(t);
-	})();
-
-	const effectiveExplainMode: "off" | "brief" | "on" =
-		wantExplain && explainMode === "off" ? "brief" : explainMode;
+	const wantExplain = /\b(explica|explicame|explícame|que hiciste|qué hiciste|como lo hiciste|cómo lo hiciste|pasos|tools|herramientas)\b/i.test(goal || "");
+	const effectiveExplainMode = wantExplain && explainMode === "off" ? "brief" : explainMode;
 
 	const runId = `run_${Date.now()}`;
 	const decisionLogger = getDecisionLogger();
-
-	const pushEvent = (type: AgentEvent["type"], payload: Record<string, unknown>, stepId?: string) => {
-		memory.push({
-			type,
-			timestamp: new Date().toISOString(),
-			runId,
-			stepId,
-			payload,
-		});
-		
+	const pushEvent = (type: AgentEvent["type"], payload: Record<string, unknown>) => {
+		const timestamp = new Date().toISOString();
+		memory.push({ type, timestamp, runId, payload });
 		decisionLogger.log({
 			type: type as DecisionEvent["type"],
 			goal: payload.goal as string,
 			content: payload.content as string,
 			name: payload.name as string,
 			argsKeys: payload.argsKeys as string[],
-			timestamp: new Date().toISOString(),
+			timestamp,
 			runId,
-			stepId,
 		} as DecisionEvent);
 	};
 
 	pushEvent("decision", { goal });
-	const plan = createExecutionPlan(goal);
-	pushEvent("plan", { goal: plan.goal, steps: plan.steps.map((s) => s.goal) });
-	for (const step of plan.steps) {
-		pushEvent("step_status", { status: "planned", goal: step.goal }, step.id);
-	}
 
-	const recent = memory.getRecent(20);
-	const { intervened, action } = checkAndIntervene(recent);
-	if (intervened && action) {
-		logger.warn("HealthManager intervino", { action });
-		pushEvent("error", { content: action });
-		return getUserFacingInterventionMessage();
-	}
+	const projectTool = !textOnly && (effectiveTools ?? getAllToolNames()).includes("project");
+	const projectContext = project
+		? {
+				name: project.name,
+				description: project.description,
+				instructions: project.instructions,
+				index: projectIndex(project),
+				inline: await inlineProjectText(project).catch(() => null),
+				hasTool: projectTool,
+			}
+		: undefined;
 
 	const { system, messages } = buildContext({
 		goal,
@@ -167,130 +202,133 @@ export async function runAgent(
 		tokenBudget,
 		workspaceContext,
 		textOnly,
-		allowedTools: effectiveAllowedTools,
 		userProfile: userProfile ?? undefined,
-		role: effectiveRole,
+		pcControl: hasPcTools,
+		vision,
+		voice,
+		skills: !textOnly && (effectiveTools ?? getAllToolNames()).includes("use_skill") ? skills : undefined,
+		forcedSkill: opts.skill ? getSkillInstructions(opts.skill) ?? undefined : undefined,
+		project: projectContext,
+		persona: opts.persona,
+		room: opts.room,
 	});
 
-	const normalizedConversation = Array.isArray(conversation)
-		? conversation
-			.map((m) => ({ role: m.role, content: m.content ?? "" }))
-			.filter((m) => {
-				if (m.role !== "user" && m.role !== "assistant") return false;
-				const preview = getMessagePreview(m.content);
-				const hasImage = Array.isArray(m.content) && m.content.some((p: ContentPart) => p.type === "image_url");
-				return preview.length > 0 || hasImage;
-			})
-		: [];
+	const history: Message[] = (conversation ?? [])
+		.filter((m) => {
+			if (m.role !== "user" && m.role !== "assistant") return false;
+			const hasImage = Array.isArray(m.content) && m.content.some((p) => p.type === "image_url");
+			return getMessagePreview(m.content ?? "").length > 0 || hasImage;
+		})
+		.map((m): Message =>
+			m.role === "user"
+				? { role: "user", content: m.content ?? "" }
+				: { role: "assistant", content: typeof m.content === "string" ? m.content : getMessagePreview(m.content) },
+		);
 
-	const fullMessages: Message[] = normalizedConversation.length > 0
-		? [{ role: "system", content: system }, ...normalizedConversation]
-		: [{ role: "system", content: system }, ...messages];
+	const fullMessages: Message[] = [{ role: "system", content: system }, ...(history.length ? history : messages)];
+	const toolsDef = getToolsDefinitionScoped(effectiveTools);
 
-	const toolsDef = getToolsDefinitionScoped(effectiveAllowedTools);
-	const retryPolicy = createRetryPolicy({ maxRetries: 3, baseDelayMs: 500 });
+	const usedTools: { name: string; ok: boolean; argsKeys: string[] }[] = [];
+	const callCounts = new Map<string, number>();
+	let toolSeq = 0;
 
-	type ToolCallTrace = { name: string; ok: boolean; argsKeys: string[] };
-	const usedTools: ToolCallTrace[] = [];
-
-	function safeArgsKeys(args: Record<string, unknown>): string[] {
-		try {
-			return Object.keys(args ?? {}).slice(0, 12);
-		} catch {
-			return [];
-		}
-	}
-
-	function buildToolExplanation(): string {
-		if (effectiveExplainMode === "off") return "";
-		if (!usedTools.length) return "";
-		const uniq: ToolCallTrace[] = [];
-		const seen = new Set<string>();
-		for (const t of usedTools) {
-			if (seen.has(t.name)) continue;
-			seen.add(t.name);
-			uniq.push(t);
-		}
-		if (effectiveExplainMode === "brief") {
-			return `\n\nNota: usé herramientas (${uniq.map((t) => t.name).join(", ")}).`;
-		}
-		if (effectiveExplainMode !== "on") return "";
-		const lines = uniq.map((t) => {
-			const keys = t.argsKeys.length ? ` args: ${t.argsKeys.join(", ")}` : "";
-			const status = t.ok ? "ok" : "falló";
-			return `- ${t.name} (${status})${keys}`;
-		});
-		return `\n\nHerramientas usadas:\n${lines.join("\n")}`;
-	}
-
-	const adaptToolResult = async (
-		name: string,
-		args: Record<string, unknown>,
-	): Promise<{ ok: boolean; content: string; error?: string }> => {
+	const executeTool = async (name: string, args: Record<string, unknown>) => {
+		if (signal?.aborted) return { ok: false, content: "", error: "Cancelado por el usuario." };
+		const argsKeys = Object.keys(args ?? {}).slice(0, 12);
 		logger.info(`🔧 Tool: ${name}`);
-		pushEvent("tool_call", { name, argsKeys: safeArgsKeys(args) });
-		let lastError: string | undefined;
-		for (let attempt = 0; attempt <= retryPolicy.maxRetries; attempt++) {
-			const r = await executeToolSafeScoped(name, args, effectiveAllowedTools);
-			usedTools.push({ name, ok: r.ok, argsKeys: safeArgsKeys(args) });
-			if (r.ok) {
-				return { ok: true, content: r.content };
-			}
-			lastError = r.error;
-			logger.warn(`❌ Tool ${name} falló:`, lastError);
-			const retryable = isRetryableError({ retryable: true, message: r.error ?? "" });
-			if (attempt < retryPolicy.maxRetries && retryable.retryable) {
-				const delay = getBackoffMs(retryPolicy, attempt);
-				await new Promise((resolve) => setTimeout(resolve, delay));
-			} else {
-				break;
-			}
+		pushEvent("tool_call", { name, argsKeys });
+
+		// Anti-bucle: los modelos pequeños a veces repiten la misma llamada sin fin.
+		const signature = `${name}:${JSON.stringify(args)}`;
+		const count = (callCounts.get(signature) ?? 0) + 1;
+		callCounts.set(signature, count);
+		if (count > MAX_IDENTICAL_TOOL_CALLS) {
+			return {
+				ok: false,
+				content: "",
+				error: `Ya llamaste a ${name} con estos mismos argumentos ${count - 1} veces. Usa el resultado anterior o responde al usuario.`,
+			};
 		}
-		return { ok: false, content: "", error: lastError };
+
+		const id = `t${++toolSeq}`;
+		onToolEvent?.({ phase: "start", id, name, label: describeToolUse(name, args) });
+		const r = await executeToolSafeScoped(name, args, effectiveTools);
+		usedTools.push({ name, ok: r.ok, argsKeys });
+		onToolEvent?.(
+			r.ok ? { phase: "end", id, name, ok: true, image: r.image } : { phase: "end", id, name, ok: false, error: r.error },
+		);
+		if (!r.ok) {
+			logger.warn(`❌ Tool ${name} falló: ${r.error}`);
+			return { ok: false, content: "", error: r.error };
+		}
+		if (!r.image) return { ok: true, content: r.content };
+		// Capturas de pantalla: el modelo solo las recibe si puede ver imágenes.
+		if (!vision) {
+			const alternative = name === "browser" ? "Para saber qué hay en la página usa browser con action=read." : "Para saber qué hay abierto usa pc_windows con action=list.";
+			return {
+				ok: true,
+				content: `${r.content}
+[Tu modelo no puede ver imágenes: no describas la captura (el usuario sí la ve). ${alternative}]`,
+			};
+		}
+		try {
+			const image = `data:image/jpeg;base64,${readFileSync(r.image).toString("base64")}`;
+			return { ok: true, content: `${r.content}
+[La imagen va adjunta a continuación.]`, image };
+		} catch {
+			return { ok: true, content: r.content };
+		}
 	};
 
-	// Orquestación: plan explícito + ejecución de pasos.
-	try {
-		const runPlannedStep = async (step: PlanStep): Promise<string> => {
-			pushEvent("step_status", { status: "running", goal: step.goal }, step.id);
-			let content = "";
-			for (let attempt = 0; attempt <= retryPolicy.maxRetries; attempt++) {
-				try {
-					content = textOnly
-						? (await llm.chat(fullMessages)).trim()
-						: (await llm.chatWithTools(fullMessages, toolsDef, adaptToolResult)).trim();
-					pushEvent("step_status", { status: "completed", goal: step.goal }, step.id);
-					return content;
-				} catch (err) {
-					const retryable = isRetryableError(err);
-					if (attempt < retryPolicy.maxRetries && retryable.retryable) {
-						const delay = getBackoffMs(retryPolicy, attempt);
-						logger.warn(`LLM falló, reintentando en ${delay}ms`);
-						await new Promise((resolve) => setTimeout(resolve, delay));
-					} else {
-						const message = err instanceof Error ? err.message : String(err);
-						pushEvent("step_status", { status: "failed", goal: step.goal, content: message }, step.id);
-						throw err;
-					}
-				}
+	// Solo se reintenta la llamada al modelo, nunca las tools (podrían tener efectos).
+	let streamed = false;
+	const onDelta = onStreamDelta
+		? (chunk: string) => {
+				streamed = true;
+				onStreamDelta(chunk);
 			}
-			return content;
-		};
-		const content = await executePlannedSteps(plan.steps, runPlannedStep);
-		const out = sanitizeModelResponse(content || "");
-		pushEvent("observation", { content: out });
-		const finalText = isMeaningfulResponse(out) ? out : FALLBACK_EMPTY_RESPONSE;
-		const composed = finalText + buildToolExplanation();
-		if (onStreamDelta && composed.length > 0) {
-			const step = 28;
-			for (let i = 0; i < composed.length; i += step) {
-				onStreamDelta(composed.slice(i, i + step));
+		: undefined;
+	const retryPolicy = createRetryPolicy({ maxRetries: 2, baseDelayMs: 800 });
+	let content = "";
+	try {
+		for (let attempt = 0; ; attempt++) {
+			try {
+				content = await runWithProject(project, () =>
+					runWithApprover(approver, () =>
+						textOnly
+							? llm.chat(fullMessages, { onDelta, signal, sessionId })
+							: llm.chatWithTools(fullMessages, toolsDef, executeTool, { onDelta, signal, sessionId }),
+					),
+				);
+				break;
+			} catch (err) {
+				if (signal?.aborted) throw err;
+				const retryable = err instanceof LLMError ? err.retryable : isRetryableError(err).retryable;
+				// Si ya se mostró texto en streaming, reintentar lo duplicaría.
+				if (!retryable || attempt >= retryPolicy.maxRetries || usedTools.length > 0 || streamed) throw err;
+				const delay = getBackoffMs(retryPolicy, attempt);
+				logger.warn(`El modelo falló, reintento en ${delay}ms: ${err instanceof Error ? err.message : String(err)}`);
+				await new Promise((r) => setTimeout(r, delay));
 			}
 		}
-		return composed;
 	} catch (err) {
-		const msg = err instanceof Error ? err.message : String(err);
-		pushEvent("error", { content: msg });
-		return getFallbackResponse(goal, msg);
+		// Detenido por el usuario: lo que se alcanzó a mostrar ya lo tiene la interfaz.
+		if (signal?.aborted) return "";
+		const message = err instanceof Error ? err.message : String(err);
+		logger.error("Fallo del modelo", { error: message.slice(0, 300) });
+		pushEvent("error", { content: message });
+		return describeFailure(err);
 	}
+
+	pushEvent("observation", { content });
+	const finalText = isMeaningfulResponse(content) ? content : FALLBACK_EMPTY_RESPONSE;
+	return finalText + buildToolExplanation(usedTools, effectiveExplainMode);
+}
+
+function buildToolExplanation(used: { name: string; ok: boolean; argsKeys: string[] }[], mode: "off" | "brief" | "on"): string {
+	if (mode === "off" || !used.length) return "";
+	const unique = [...new Map(used.map((t) => [t.name, t])).values()];
+	if (mode === "brief") return `\n\nNota: usé herramientas (${unique.map((t) => t.name).join(", ")}).`;
+	const lines = unique.map((t) => `- ${t.name} (${t.ok ? "ok" : "falló"})${t.argsKeys.length ? ` args: ${t.argsKeys.join(", ")}` : ""}`);
+	return `\n\nHerramientas usadas:\n${lines.join("\n")}`;
 }

@@ -11,8 +11,19 @@ export type UserContent = string | ContentPart[];
 export type Message =
 	| { role: "system"; content: string }
 	| { role: "user"; content: UserContent }
-	| { role: "assistant"; content: string | null; tool_calls?: ToolCallSpec[] }
-	| { role: "tool"; tool_call_id: string; content: string };
+	| ({ role: "assistant"; content: string | null; tool_calls?: ToolCallSpec[] } & AssistantCarry)
+	| { role: "tool"; tool_call_id: string; name?: string; content: string };
+
+/**
+ * Lo que algunos modelos exigen que se les devuelva tal cual mientras usan herramientas
+ * (su razonamiento). Solo vive dentro de una respuesta: no se guarda en el historial.
+ */
+export type AssistantCarry = {
+	/** /chat/completions de modelos que razonan (DeepSeek, Kimi, GLM…). */
+	reasoning_content?: string;
+	/** Bloques originales del formato Anthropic (razonamiento firmado + uso de herramientas). */
+	anthropic_blocks?: unknown[];
+};
 
 export type ToolCallSpec = {
 	id: string;
@@ -30,15 +41,8 @@ export type AgentEvent = {
 	payload: Record<string, unknown>;
 };
 
-export type Step = {
-	id: string;
-	goal: string;
-	status: "pending" | "running" | "done" | "failed";
-	result?: string;
-	error?: string;
-};
-
-export type ToolResult = { ok: true; content: string } | { ok: false; error: string };
+/** `image`: ruta en disco de una imagen producida por la tool (captura de pantalla…). */
+export type ToolResult = { ok: true; content: string; image?: string } | { ok: false; error: string };
 
 export type LongTermSummary = {
 	summary: string;

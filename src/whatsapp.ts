@@ -141,7 +141,10 @@ async function processIncomingMessage(message: Message): Promise<void> {
 	const config = getConfig();
 	const autonomous = config.autonomousMode === true;
 	const webTools = ["search_web", "fetch_url", "get_weather"];
-	const effectiveAllowedTools = autonomous ? undefined : webTools;
+	// Sin WA_ALLOWED_CHAT cualquiera puede escribir: no se le da acceso a tus archivos,
+	// memoria ni historial, solo a herramientas públicas.
+	const publicTools = [...webTools, "get_time", "calculator"];
+	const effectiveAllowedTools = !autonomous ? webTools : WA_ALLOWED_CHAT ? undefined : publicTools;
 	const workspaceContext = buildWorkspaceContext({ includeLongTermMemory: true });
 	setHealthActive();
 	const response = await runAgent(
@@ -333,6 +336,7 @@ export async function runWhatsAppBridge(): Promise<void> {
 	console.log("\n  Shiro WhatsApp bridge (modo personal)\n");
 	console.log(`  Cliente: ${WA_CLIENT_ID}`);
 	if (WA_ALLOWED_CHAT) console.log(`  Filtro chat permitido: ${WA_ALLOWED_CHAT}`);
+	else console.log("  ⚠️  Sin WA_ALLOWED_CHAT: responde a cualquiera, solo con herramientas públicas (web, hora, calculadora).");
 	console.log(`  Solo privados: ${WA_ONLY_PRIVATE ? "sí" : "no"}`);
 	console.log(`  Responder mensajes propios: ${WA_REPLY_TO_OWN_MESSAGES ? "sí" : "no"}\n`);
 

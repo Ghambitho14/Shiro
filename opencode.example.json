@@ -1,0 +1,25 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "ollama": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Ollama (local)",
+      "options": {
+        "baseURL": "http://localhost:11434/v1"
+      },
+      "models": {
+        "qwen3:8b": {
+          "name": "Qwen3 8B (local)"
+        }
+      }
+    }
+  },
+  "model": "ollama/qwen3:8b",
+  "mcp": {
+    "shiro": {
+      "type": "local",
+      "command": ["node", "C:/Users/TU_USUARIO/GitHub/Shiro/bin/shiro-mcp.mjs"],
+      "enabled": true
+    }
+  }
+}

@@ -1,27 +1,25 @@
 # Shiro — servidor web en Docker
-# Uso: docker compose up -d
-# Web: http://localhost:1406 (o el puerto que definas)
+# Uso: docker compose up -d --build
+# Web: http://<servidor>:1406 (pide la contraseña SHIRO_AUTH_TOKEN del archivo .env)
 
 services:
   shiro:
     build: .
+    image: shiro:latest
     container_name: shiro
     ports:
       - "1406:1406"
+    # Claves y contraseña (SHIRO_AUTH_TOKEN, OPENROUTER_API_KEY...): en .env, junto a este archivo.
+    env_file:
+      - path: .env
+        required: false
     environment:
       - PORT=1406
       - BIND_HOST=0.0.0.0
-      # Opcionales (descomenta y ajusta; ver DEPLOY.md):
-      # - SHIRO_AUTH_TOKEN=tu-token-secreto
-      # - OPENROUTER_API_KEY=tu-clave
-      # - VLLM_BASE_URL=http://host.docker.internal:8000/v1
-      # - VLLM_MODEL=tu-modelo
-      # - VLLM_API_KEY=
-      # - WA_CLIENT_ID=shiro-docker
+    extra_hosts:
+      # Para llegar a Ollama/LM Studio del propio servidor: http://host.docker.internal:11434
+      - "host.docker.internal:host-gateway"
     volumes:
-      # Persistir config, chats, sesión WhatsApp y workspace
-      - shiro-data:/app/data
+      # Base de datos y ajustes de Shiro (config.json, chat-index.sqlite, chats/, workspace/, sesión de WhatsApp)
+      - ./data:/app/data
     restart: unless-stopped
-
-volumes:
-  shiro-data:

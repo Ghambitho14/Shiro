@@ -1,30 +1,58 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, readdirSync } from "node:fs";
-import { resolve, dirname, join } from "node:path";
+import { resolve, dirname } from "node:path";
 import type { ToolResult } from "../agent/Types.js";
 import { toolSchemas } from "./schemas.js";
-import { DATA_DIR } from "../../config/config.js";
+import { getWorkspaceDir as getActiveWorkspaceDir } from "../../workspace.js";
 import { registerToolExecutor, getToolExecutor, hasToolExecutor } from "./toolExecutors.js";
 
 // Importar ejecutores de módulos separados
-import { executeFetchUrl, executeHttpRequest } from "./modules/fetch.js";
+import { executeFetchUrl } from "./modules/fetch.js";
 import { executeSearchWeb } from "./modules/search.js";
 import { executeGetWeather } from "./modules/weather.js";
 import { executeCalculator } from "./modules/calculator.js";
 import { executeGetTime } from "./modules/time.js";
-import { executePython } from "./modules/python.js";
+import {
+	executePcClipboard,
+	executePcKeyboard,
+	executePcMedia,
+	executePcMouse,
+	executePcOpen,
+	executePcPower,
+	executePcProcesses,
+	executePcScreenshot,
+	executePcSystem,
+	executePcWindows,
+} from "./modules/pc.js";
+import { executeUseSkill } from "./modules/skills.js";
+import { executeBrowser, executeTerminal } from "./modules/workbench.js";
+import { executeProject } from "./modules/project.js";
+import { isWithinRoot } from "./paths.js";
 import { isPotentiallyDangerousCommand } from "../sanitizeResponse.js";
 
 // Registrar ejecutores
+registerToolExecutor("pc_open", executePcOpen);
+registerToolExecutor("pc_screenshot", executePcScreenshot);
+registerToolExecutor("pc_keyboard", executePcKeyboard);
+registerToolExecutor("pc_mouse", executePcMouse);
+registerToolExecutor("pc_media", executePcMedia);
+registerToolExecutor("pc_windows", executePcWindows);
+registerToolExecutor("pc_processes", executePcProcesses);
+registerToolExecutor("pc_clipboard", executePcClipboard);
+registerToolExecutor("pc_system", executePcSystem);
+registerToolExecutor("pc_power", executePcPower);
+registerToolExecutor("browser", executeBrowser);
+registerToolExecutor("terminal", executeTerminal);
 registerToolExecutor("fetch_url", executeFetchUrl);
-registerToolExecutor("http_request", executeHttpRequest);
 registerToolExecutor("search_web", executeSearchWeb);
 registerToolExecutor("get_weather", executeGetWeather);
 registerToolExecutor("calculator", executeCalculator);
 registerToolExecutor("get_time", executeGetTime);
-registerToolExecutor("execute_python", executePython);
+registerToolExecutor("use_skill", executeUseSkill);
+registerToolExecutor("project", executeProject);
 
+/** Raíz de read_file/write_file/list_dir: data/workspace, o la carpeta "Shiro" de la bóveda con Obsidian. */
 export function getWorkspaceDir(): string {
-	return join(DATA_DIR, "workspace");
+	return getActiveWorkspaceDir();
 }
 
 function getSystemRoot(): string {
@@ -36,21 +64,6 @@ function getSystemRoot(): string {
 }
 
 const MAX_FILE_SIZE = 512 * 1024;
-
-function normalizeForCompare(pathValue: string): string {
-	const resolved = resolve(pathValue);
-	return process.platform === "win32" ? resolved.toLowerCase() : resolved;
-}
-
-function isWithinRoot(pathValue: string, rootValue: string, allowRoot = false): boolean {
-	const pathNormalized = normalizeForCompare(pathValue);
-	const rootNormalized = normalizeForCompare(rootValue);
-	if (allowRoot && pathNormalized === rootNormalized) return true;
-	if (pathNormalized === rootNormalized) return false;
-	const sep = process.platform === "win32" ? "\\" : "/";
-	const boundaryRoot = rootNormalized.endsWith(sep) ? rootNormalized : rootNormalized + sep;
-	return pathNormalized.startsWith(boundaryRoot);
-}
 
 function resolveWorkspacePath(relativePath: string): string | null {
 	const workspace = getWorkspaceDir();
@@ -76,13 +89,11 @@ function resolveSystemPath(pathArg: string): string | null {
 function validateArgs(name: string, args: Record<string, unknown>): { ok: true; data: Record<string, unknown> } | { ok: false; error: string } {
 	const schema = toolSchemas[name];
 	if (!schema) return { ok: false, error: "Herramienta desconocida: " + name };
-	try {
-		const data = schema.parse(args) as Record<string, unknown>;
-		return { ok: true, data };
-	} catch (err) {
-		const msg = err instanceof Error ? err.message : String(err);
-		return { ok: false, error: msg };
-	}
+	const parsed = schema.safeParse(args);
+	if (parsed.success) return { ok: true, data: parsed.data as Record<string, unknown> };
+	// Mensaje corto y claro para que el modelo pueda corregir la llamada.
+	const problems = parsed.error.issues.map((i) => `${i.path.join(".") || "(args)"}: ${i.message}`).join("; ");
+	return { ok: false, error: `Argumentos inválidos para ${name}: ${problems}. Corrige los argumentos y vuelve a intentarlo.` };
 }
 
 export async function executeTool(name: string, args: Record<string, unknown>): Promise<ToolResult> {
@@ -99,7 +110,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 		const executor = getToolExecutor(name)!;
 		const result = await executor(validatedData ?? args);
 		if (result.ok) {
-			return { ok: true, content: result.content };
+			return result.image ? { ok: true, content: result.content, image: result.image } : { ok: true, content: result.content };
 		}
 		return { ok: false, error: result.content };
 	}
@@ -307,7 +318,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 				const validRepeat = ["daily", "weekly", "monthly", "none"].includes(repeat) ? repeat : "none";
 				
 				try {
-					const reminder = createReminder({ title, datetime, description, repeat: validRepeat });
+					const reminder = await createReminder({ title, datetime, description, repeat: validRepeat });
 					const date = new Date(reminder.datetime);
 					const formatted = date.toLocaleString("es-ES");
 					const repeatText = validRepeat === "none" ? "" : ` (se repite ${validRepeat})`;
@@ -317,16 +328,15 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 				}
 			}
 			case "list_reminders": {
-				const { getReminders, getActiveReminders, getUpcomingReminders } = await import("../reminders/reminders.js");
+				const { getReminders, getActiveReminders } = await import("../reminders/reminders.js");
 				const includeCompleted = args_.include_completed === true;
 				
-				const reminders = includeCompleted ? getReminders() : getActiveReminders();
+				const reminders = includeCompleted ? await getReminders() : await getActiveReminders();
 				
 				if (reminders.length === 0) {
 					return { ok: true, content: "No tienes recordatorios." };
 				}
 				
-				const upcoming = getUpcomingReminders(5);
 				let output = "📋 Tus recordatorios:\n\n";
 				
 				for (const r of reminders.slice(0, 20)) {
@@ -345,11 +355,11 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 				
 				if (!id) return { ok: false, error: "El ID del recordatorio es requerido" };
 				
-				const existing = getReminderById(id);
+				const existing = await getReminderById(id);
 				if (!existing) return { ok: false, error: "Recordatorio no encontrado" };
 				
 				try {
-					const result = completeReminder(id);
+					const result = await completeReminder(id);
 					if (result) {
 						return { ok: true, content: `✅ Recordatorio completado: "${existing.title}"` + (result.repeat && result.repeat !== "none" ? " (próximo creado para mañana)" : "") };
 					}
@@ -400,107 +410,53 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 				}
 			}
 			case "memory_search": {
-				const { VectorMemoryStore } = await import("../memory/VectorMemoryStore.js");
-				const { getEmbeddingsProvider } = await import("../memory/EmbeddingsClient.js");
+				const { searchMemories } = await import("../memory/memories.js");
 				const query = String(args_.query ?? "").trim();
-				const limit = args_.limit ? Number(args_.limit) : 5;
-				
+				const limit = args_.limit ? Math.min(20, Math.max(1, Number(args_.limit))) : 5;
 				if (!query) return { ok: false, error: "La query de búsqueda es requerida" };
-				
-				const store = new VectorMemoryStore(getEmbeddingsProvider());
-				const results = await store.search(query, limit);
-				
-				if (results.length === 0) {
-					return { ok: true, content: "No se encontraron recuerdos relacionados." };
-				}
-				
-				let output = "🔍 Resultados de memoria:\n\n";
-				for (const r of results) {
-					output += `📝 ${r.content.slice(0, 200)}...\n`;
-					output += `   🕐 ${new Date(r.metadata.timestamp).toLocaleString()}\n\n`;
-				}
-				
-				return { ok: true, content: output };
+				const results = await searchMemories(query, limit);
+				if (results.length === 0) return { ok: true, content: "No encontré recuerdos relacionados." };
+				const lines = results.map((r) => {
+					const when = r.createdAt ? ` (${new Date(r.createdAt).toLocaleString("es-ES")})` : "";
+					const from = r.source ? `\n   📄 ${r.source}` : "";
+					return `📝 ${r.content.length > 400 ? r.content.slice(0, 400) + "…" : r.content}${when}${from}`;
+				});
+				return { ok: true, content: "🔍 Resultados de memoria:\n\n" + lines.join("\n\n") };
 			}
 			case "memory_add": {
-				const { VectorMemoryStore } = await import("../memory/VectorMemoryStore.js");
-				const { getEmbeddingsProvider } = await import("../memory/EmbeddingsClient.js");
+				const { addMemory } = await import("../memory/memories.js");
 				const content = String(args_.content ?? "").trim();
-				const type = args_.type ? String(args_.type) : "conversation";
-				const tags = args_.tags ? args_.tags as string[] : undefined;
-				
 				if (!content) return { ok: false, error: "El contenido es requerido" };
-				
-				const store = new VectorMemoryStore(getEmbeddingsProvider());
-				const id = await store.add({
-					content,
-					metadata: {
-						timestamp: new Date().toISOString(),
-						type: type as "conversation" | "tool_call" | "observation" | "decision",
-						tags,
-					},
-				});
-				
-				return { ok: true, content: `✅ Recuerdo guardado con ID: ${id}` };
+				const tags = Array.isArray(args_.tags) ? (args_.tags as unknown[]).map(String) : undefined;
+				const memory = await addMemory({ content, type: args_.type ? String(args_.type) : undefined, tags });
+				const { currentStorage, STORAGE_LABELS } = await import("../../storage/storage.js");
+				return { ok: true, content: `✅ Recuerdo guardado en ${STORAGE_LABELS[currentStorage().kind]} (ID: ${memory.id})` };
 			}
 			case "sessions_list": {
-				const { SessionTranscripts } = await import("../memory/SessionTranscripts.js");
-				const transcripts = new SessionTranscripts();
-				const sessions = transcripts.list();
-				
-				if (sessions.length === 0) {
-					return { ok: true, content: "No hay sesiones guardadas." };
-				}
-				
-				let output = "📋 Sesiones:\n\n";
+				const { listChatSessions } = await import("../../chat/ChatStore.js");
+				const sessions = await listChatSessions();
+				if (sessions.length === 0) return { ok: true, content: "No hay chats guardados." };
+				let output = "📋 Chats (los 10 más recientes):\n\n";
 				for (const s of sessions.slice(0, 10)) {
-					output += `🆔 ${s.id}\n`;
-					output += `   Nombre: ${s.name}\n`;
-					output += `   Mensajes: ${s.messages.length}\n`;
-					output += `   Actualizado: ${new Date(s.updatedAt).toLocaleString()}\n\n`;
+					output += `🆔 ${s.id}\n   Título: ${s.title}\n   Actualizado: ${new Date(s.updatedAt).toLocaleString("es-ES")}\n\n`;
 				}
-				
 				return { ok: true, content: output };
 			}
 			case "sessions_history": {
-				const { SessionTranscripts } = await import("../memory/SessionTranscripts.js");
+				const { getChatSession, listChatSessions } = await import("../../chat/ChatStore.js");
+				const { getMessagePreview } = await import("../agent/contentUtils.js");
 				const sessionIdRaw = args_.sessionId ?? args_.session_id;
-				const sessionId = sessionIdRaw ? String(sessionIdRaw).trim() : undefined;
-				const limit = args_.limit ? Number(args_.limit) : 20;
-				
-				const transcripts = new SessionTranscripts();
-				
-				if (sessionId) {
-					const history = transcripts.getHistory(sessionId, limit);
-					if (history.length === 0) {
-						return { ok: true, content: "No hay mensajes en esta sesión." };
-					}
-					
-					let output = `📖 Historial de sesión ${sessionId}:\n\n`;
-					for (const msg of history) {
-						const role = msg.role === "user" ? "👤" : msg.role === "assistant" ? "🤖" : "⚙️";
-						output += `${role} ${msg.role}: ${msg.content.slice(0, 100)}...\n`;
-					}
-					
-					return { ok: true, content: output };
+				const limit = args_.limit ? Math.max(1, Number(args_.limit)) : 20;
+				const sessionId = sessionIdRaw ? String(sessionIdRaw).trim() : (await listChatSessions())[0]?.id;
+				if (!sessionId) return { ok: true, content: "No hay chats guardados." };
+				const session = await getChatSession(sessionId);
+				if (!session) return { ok: false, error: `No existe el chat ${sessionId}` };
+				if (session.messages.length === 0) return { ok: true, content: "Ese chat no tiene mensajes." };
+				let output = `📖 ${session.title} (${session.id}):\n\n`;
+				for (const msg of session.messages.slice(-limit)) {
+					const text = getMessagePreview(msg.content);
+					output += `${msg.role === "user" ? "👤" : "🤖"} ${text.length > 300 ? text.slice(0, 300) + "…" : text}\n`;
 				}
-				
-				// Listar todas las sesiones
-				const sessions = transcripts.list();
-				if (sessions.length === 0) {
-					return { ok: true, content: "No hay sesiones." };
-				}
-				
-				// Mostrar última sesión
-				const lastSession = sessions[0];
-				const history = transcripts.getHistory(lastSession.id, limit);
-				
-				let output = `📖 Última sesión (${lastSession.id}):\n\n`;
-				for (const msg of history) {
-					const role = msg.role === "user" ? "👤" : msg.role === "assistant" ? "🤖" : "⚙️";
-					output += `${role} ${msg.role}: ${msg.content.slice(0, 80)}...\n`;
-				}
-				
 				return { ok: true, content: output };
 			}
 			case "cron_create": {
@@ -572,134 +528,6 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 				}
 				return { ok: false, error: "Tarea no encontrada" };
 			}
-			case "project_analyze": {
-				const pathArg = args_.path ? String(args_.path).trim() : ".";
-				const deep = args_.deep === true;
-				
-				const { readFileSync, readdirSync, statSync, existsSync } = await import("node:fs");
-				const { resolve, join } = await import("node:path");
-				
-				const workspace = getWorkspaceDir();
-				const projectPath = resolve(workspace, pathArg);
-				
-				if (!existsSync(projectPath)) {
-					return { ok: false, error: "El path no existe: " + projectPath };
-				}
-				
-				const stat = statSync(projectPath);
-				if (!stat.isDirectory()) {
-					return { ok: false, error: "No es un directorio" };
-				}
-				
-				const analyzeDir = (dir: string, depth = 0): string => {
-					if (depth > (deep ? 4 : 2)) return "";
-					
-					const entries = readdirSync(dir);
-					let output = "";
-					const indent = "  ".repeat(depth);
-					
-					for (const entry of entries.slice(0, 20)) {
-						const fullPath = join(dir, entry);
-						const entryStat = statSync(fullPath);
-						
-						if (entry.startsWith(".") || entry === "node_modules") continue;
-						
-						if (entryStat.isDirectory()) {
-							output += `${indent}📁 ${entry}/\n`;
-							output += analyzeDir(fullPath, depth + 1);
-						} else {
-							const ext = entry.split(".").pop();
-							const icons: Record<string, string> = {
-								ts: "🔷", tsx: "⚛️", js: "🟨", jsx: "⚛️",
-								json: "📋", md: "📝", yml: "⚙️", yaml: "⚙️",
-								sh: "🖥️", ps1: "💠",
-							};
-							output += `${indent}${icons[ext || ""] || "📄"} ${entry}\n`;
-						}
-					}
-					return output;
-				};
-				
-				// Detectar tecnologías
-				const techDetect: Record<string, string[]> = {
-					"Node.js": ["package.json", "pnpm-lock.yaml", "tsconfig.json"],
-					"Python": ["pyproject.toml", "requirements.txt", "setup.py"],
-					"Docker": ["Dockerfile", "docker-compose.yml"],
-					"TypeScript": [".ts", ".tsx"],
-				};
-				
-				let output = `📊 Análisis de: ${pathArg}\n\n`;
-				output += `📁 Estructura:\n${analyzeDir(projectPath)}\n`;
-				
-				// Detectar config
-				const configFiles = ["package.json", "tsconfig.json", "docker-compose.yml", ".env.example"];
-				output += `\n⚙️ Archivos de config:\n`;
-				for (const cf of configFiles) {
-					if (existsSync(resolve(projectPath, cf))) {
-						output += `  ✓ ${cf}\n`;
-					}
-				}
-				
-				output += `\n💡 Puedes usar "self_modify" para modificar archivos de Shiro`;
-				
-				return { ok: true, content: output };
-			}
-			case "self_modify": {
-				const file = args_.file ? String(args_.file).trim() : "";
-				const search = args_.search ? String(args_.search).trim() : "";
-				const replace = args_.replace ? String(args_.replace) : "";
-				
-				if (!file) return { ok: false, error: "El archivo es requerido" };
-				if (!search) return { ok: false, error: "El texto a buscar es requerido" };
-				
-				// Solo permitir archivos en src/
-				if (!file.startsWith("src/") && !file.startsWith("./src/")) {
-					return { ok: false, error: "Solo puedes modificar archivos en src/" };
-				}
-				
-				const { readFileSync, writeFileSync, existsSync } = await import("node:fs");
-				const { resolve } = await import("node:path");
-				
-				const workspace = getWorkspaceDir();
-				const filePath = resolve(workspace, file);
-				
-				// Verificar que está dentro del workspace
-				if (!filePath.startsWith(resolve(workspace))) {
-					return { ok: false, error: "Path fuera del workspace" };
-				}
-				
-				if (!existsSync(filePath)) {
-					return { ok: false, error: "Archivo no existe: " + file };
-				}
-				
-				const content = readFileSync(filePath, "utf-8");
-				
-				if (!content.includes(search)) {
-					return { ok: false, error: "Texto no encontrado en el archivo. Asegúrate de que el texto sea exacto." };
-				}
-				
-				if (replace) {
-					const newContent = content.replace(search, replace);
-					writeFileSync(filePath, newContent, "utf-8");
-					return { ok: true, content: `✅ Modificado: ${file}\n\nAntes:\n${search.slice(0, 100)}...\n\nDespués:\n${replace.slice(0, 100)}...` };
-				} else {
-					// Solo buscar
-					const lines = content.split("\n");
-					let found = false;
-					for (let i = 0; i < lines.length; i++) {
-						if (lines[i].includes(search)) {
-							found = true;
-							const start = Math.max(0, i - 2);
-							const end = Math.min(lines.length, i + 3);
-							return { 
-								ok: true, 
-								content: `✅ Encontrado en línea ${i + 1}:\n\n${lines.slice(start, end).join("\n")}` 
-							};
-						}
-					}
-					return { ok: false, error: "Texto no encontrado" };
-				}
-			}
 			case "git": {
 				const command = args_.command ? String(args_.command).trim() : "";
 				const repoPath = args_.repoPath ? String(args_.repoPath).trim() : ".";
@@ -728,35 +556,6 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 					});
 				});
 			}
-			case "self_analyze": {
-				const { selfAnalyze } = await import("../self/SelfReflection.js");
-				const result = await selfAnalyze();
-				return { ok: true, content: result };
-			}
-			case "self_reflect": {
-				const { listReflections, getPendingReflections } = await import("../self/SelfReflection.js");
-				const pendingOnly = args_.pending === true;
-				
-				const reflections = pendingOnly ? getPendingReflections() : listReflections();
-				
-				if (reflections.length === 0) {
-					return { ok: true, content: "No hay reflexiones registradas." };
-				}
-				
-				let output = pendingOnly ? "📝 Reflexiones pendientes:\n\n" : "📝 Historial de reflexiones:\n\n";
-				
-				for (const r of reflections) {
-					const status = r.implemented ? "✅" : "⏳";
-					output += `${status} [${r.timestamp.slice(0, 10)}] ${r.trigger}\n`;
-					output += `   📊 ${r.analysis.slice(0, 80)}...\n`;
-					if (r.suggestions.length > 0) {
-						output += `   💡 ${r.suggestions[0].slice(0, 60)}...\n`;
-					}
-					output += "\n";
-				}
-				
-				return { ok: true, content: output };
-			}
 			case "ask_user": {
 				const question = args_.question ? String(args_.question).trim() : "";
 				
@@ -766,89 +565,6 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 					ok: true, 
 					content: `🤔 PREGUNTA: ${question}\n\n(Responde a esta pregunta para que pueda ayudarte mejor)` 
 				};
-			}
-			case "channel_create": {
-				const { createChannel, startChannel } = await import("../channels/ChannelManager.js");
-				const name = String(args_.name ?? "").trim();
-				const type = String(args_.type ?? "").trim() as "telegram" | "discord" | "slack";
-				const token = String(args_.token ?? "").trim();
-				
-				if (!name) return { ok: false, error: "El nombre es requerido" };
-				if (!type) return { ok: false, error: "El tipo es requerido (telegram, discord, slack)" };
-				if (!token) return { ok: false, error: "El token es requerido" };
-				
-				if (!["telegram", "discord", "slack"].includes(type)) {
-					return { ok: false, error: `Tipo '${type}' no soportado. Usa: telegram, discord, slack` };
-				}
-				
-				try {
-					const channel = createChannel(name, type, { token });
-					
-					let msg = `✅ Canal creado: "${name}" (${type})\n`;
-					msg += `   ID: ${channel.id}\n`;
-					msg += `   Estado: ${channel.status}\n\n`;
-					msg += "Ahora voy a iniciar el canal...";
-					
-					// Intentar iniciar automáticamente
-					const result = await startChannel(channel.id);
-					if (result.ok) {
-						msg += `\n\n✅ Canal iniciado correctamente!`;
-						msg += `\n\nPara Telegram: Busca "@${(channel.config as { botUsername?: string }).botUsername || 'tu_bot'}" en Telegram y envíale /start`;
-					} else {
-						msg += `\n\n⚠️ El canal se creó pero no se pudo iniciar: ${result.error}`;
-					}
-					
-					return { ok: true, content: msg };
-				} catch (err) {
-					return { ok: false, error: "Error al crear canal: " + (err instanceof Error ? err.message : String(err)) };
-				}
-			}
-			case "channel_list": {
-				const { listChannels } = await import("../channels/ChannelManager.js");
-				const channels = listChannels();
-				
-				if (channels.length === 0) {
-					return { ok: true, content: "No hay canales configurados. Usa channel_create para crear uno." };
-				}
-				
-				let output = "📡 Canales configurados:\n\n";
-				for (const ch of channels) {
-					const statusIcon = ch.status === "active" ? "🟢" : ch.status === "error" ? "🔴" : "⚪";
-					output += `${statusIcon} ${ch.name} (${ch.type})\n`;
-					output += `   ID: ${ch.id}\n`;
-					output += `   Estado: ${ch.status}\n`;
-					if (ch.lastError) output += `   Error: ${ch.lastError}\n`;
-					output += "\n";
-				}
-				
-				return { ok: true, content: output };
-			}
-			case "channel_start": {
-				const { getChannel, startChannel } = await import("../channels/ChannelManager.js");
-				const id = String(args_.id ?? "").trim();
-				
-				if (!id) return { ok: false, error: "El ID del canal es requerido" };
-				
-				const channel = getChannel(id);
-				if (!channel) return { ok: false, error: "Canal no encontrado" };
-				
-				const result = await startChannel(id);
-				if (result.ok) {
-					return { ok: true, content: `✅ Canal "${channel.name}" iniciado correctamente!\n\nPara ${channel.type}: Busca tu bot y envíale /start` };
-				}
-				return { ok: false, error: `Error al iniciar: ${result.error}` };
-			}
-			case "channel_delete": {
-				const { deleteChannel } = await import("../channels/ChannelManager.js");
-				const id = String(args_.id ?? "").trim();
-				
-				if (!id) return { ok: false, error: "El ID del canal es requerido" };
-				
-				const deleted = deleteChannel(id);
-				if (deleted) {
-					return { ok: true, content: `✅ Canal eliminado: ${id}` };
-				}
-				return { ok: false, error: "Canal no encontrado" };
 			}
 			default:
 				return { ok: false, error: "Herramienta desconocida: " + name };

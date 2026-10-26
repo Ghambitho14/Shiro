@@ -3,10 +3,6 @@ dist/
 data/
 /.wwebjs_auth
 /.wwebjs_cache
-/openclaw-main/
-/CONCEPTOS.md
-/AGENTS.MD
 /CLAUDE.md
-README.md
-
-/node_modules
+.env
+opencode.json

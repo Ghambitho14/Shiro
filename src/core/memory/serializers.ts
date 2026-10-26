@@ -1,5 +1,4 @@
 import type { AgentEvent } from "../agent/Types.js";
-import type { Message } from "../agent/Types.js";
 
 /** Convierte eventos recientes en mensajes compactos para el contexto. */
 export function eventsToContextLines(events: AgentEvent[], maxChars: number): string {
@@ -16,32 +15,3 @@ export function eventsToContextLines(events: AgentEvent[], maxChars: number): st
 }
 
 /** Convierte eventos en mensajes para el LLM (solo tool_call + observation / error). */
-export function eventsToMessages(events: AgentEvent[]): Message[] {
-	const out: Message[] = [];
-	for (const e of events) {
-		if (e.type === "tool_call" && typeof e.payload.name === "string") {
-			out.push({
-				role: "assistant",
-				content: null,
-				tool_calls: [
-					{
-						id: String(e.payload.id ?? ""),
-						type: "function",
-						function: {
-							name: e.payload.name as string,
-							arguments: typeof e.payload.arguments === "string" ? e.payload.arguments : "{}",
-						},
-					},
-				],
-			});
-		} else if (e.type === "observation" || e.type === "error") {
-			const content = typeof e.payload.content === "string" ? e.payload.content : JSON.stringify(e.payload);
-			out.push({
-				role: "tool",
-				tool_call_id: String(e.payload.tool_call_id ?? ""),
-				content,
-			});
-		}
-	}
-	return out;
-}

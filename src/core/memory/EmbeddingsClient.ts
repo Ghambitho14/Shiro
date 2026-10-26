@@ -1,9 +1,5 @@
 import { getConfig } from "../../config/config.js";
-
-export interface EmbeddingResult {
-	embedding: number[];
-	model: string;
-}
+import { resolveLLMSettings } from "../llm/providers.js";
 
 export interface EmbeddingsProvider {
 	embed(text: string): Promise<number[]>;
@@ -17,8 +13,11 @@ export class OllamaEmbeddings implements EmbeddingsProvider {
 
 	constructor(opts: { baseUrl?: string; model?: string } = {}) {
 		const config = getConfig();
-		this.baseUrl = opts.baseUrl ?? config.ollamaBaseUrl ?? "http://localhost:11434";
-		this.model = opts.model ?? "nomic-embed-text";
+		const llm = resolveLLMSettings();
+		// Si el chat ya usa Ollama, se reutiliza su URL para los embeddings.
+		const ollamaUrl = llm.dialect === "ollama" ? llm.baseUrl : "http://localhost:11434";
+		this.baseUrl = opts.baseUrl ?? config.embeddingsBaseUrl ?? ollamaUrl;
+		this.model = opts.model ?? config.embeddingsModel;
 	}
 
 	async embed(text: string): Promise<number[]> {

@@ -1,9 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+import { DATA_DIR } from "./config/config.js";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = join(__dirname, "..", "data");
 const PROFILE_FILE = join(DATA_DIR, "user-profile.json");
 
 export type UserProfile = {
@@ -62,12 +60,3 @@ export function setUserProfile(partial: Partial<UserProfile>): UserProfile {
 }
 
 /** Texto para inyectar en el contexto del agente (vacío si no hay perfil útil). */
-export function getUserProfileContext(profile: UserProfile): string {
-	const parts: string[] = [];
-	if (profile.userName) parts.push(`Nombre: ${profile.userName}`);
-	if (profile.language) parts.push(`Idioma preferido: ${profile.language}`);
-	if (profile.about) parts.push(`Sobre la persona: ${profile.about}`);
-	if (profile.extra) parts.push(`Notas: ${profile.extra}`);
-	if (parts.length === 0) return "";
-	return "## Sobre el usuario\n" + parts.join("\n");
-}

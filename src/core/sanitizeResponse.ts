@@ -1,20 +1,3 @@
-const DANGEROUS_PATTERNS = [
-	"rm -rf",
-	"rm /",
-	"del /",
-	"format",
-	"exec(",
-	"eval(",
-	"__import__",
-	"compile(",
-	"subprocess.call",
-	"child_process",
-	"shell_exec",
-	"system(",
-	"popen",
-	"os.system",
-];
-
 const DANGEROUS_REGEXES = [
 	/;\s*rm\s+-rf/i,
 	/&\s*rm\s+-rf/i,
@@ -36,24 +19,6 @@ export function isPotentiallyDangerousCommand(command: string): boolean {
 	if (!cmd) return false;
 	if (DANGEROUS_COMMAND_CHARS.test(cmd)) return true;
 	return DANGEROUS_REGEXES.some((re) => re.test(cmd));
-}
-
-export function sanitizeInput(userInput: string): string {
-	const input = userInput.trim();
-	
-	for (const pattern of DANGEROUS_PATTERNS) {
-		if (input.toLowerCase().includes(pattern.toLowerCase())) {
-			throw new Error("Input bloqueado: patrón peligroso detectado");
-		}
-	}
-	
-	for (const regex of DANGEROUS_REGEXES) {
-		if (regex.test(input)) {
-			throw new Error("Input bloqueado: patrón peligroso detectado");
-		}
-	}
-	
-	return input;
 }
 
 /**
