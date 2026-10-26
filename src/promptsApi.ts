@@ -4,10 +4,9 @@
  * server.ts la llama antes de sus propias rutas; devuelve true si atendió la petición.
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { getConfig, setConfig } from "./config/config.js";
 import { WORKSPACE_MAX_CHARS } from "./core/agent/ContextBuilder.js";
 import { DEFAULT_SYSTEM_PROMPT } from "./core/soul/soul.js";
-import { EDITABLE_NOTES, readNote, writeNote, type EditableNote } from "./workspace.js";
+import { EDITABLE_NOTES, readInstructions, readNote, writeInstructions, writeNote, type EditableNote } from "./workspace.js";
 
 type Helpers = {
 	readJson: <T>(req: IncomingMessage) => Promise<T>;
@@ -20,7 +19,7 @@ const MAX_CHARS = 20000;
 const PROMPTS = [
 	{
 		id: "system",
-		title: "Instrucciones base",
+		title: "Instrucciones base (Instrucciones.md)",
 		description:
 			"El comienzo de todo lo que lee antes de responder: quién es, cómo usa las herramientas y sus reglas. Puedes usar {{nombre}}, {{usuario}}, {{carpeta}} y {{fecha}}: se cambian por su nombre, el tuyo, tu carpeta personal y la fecha de hoy.",
 	},
@@ -40,7 +39,7 @@ const isNote = (id: PromptId): id is EditableNote => id in EDITABLE_NOTES;
 function item(id: PromptId) {
 	const meta = PROMPTS.find((p) => p.id === id)!;
 	const defaultValue = isNote(id) ? EDITABLE_NOTES[id].template : DEFAULT_SYSTEM_PROMPT;
-	const value = isNote(id) ? readNote(id) : getConfig().systemPrompt?.trim() || DEFAULT_SYSTEM_PROMPT;
+	const value = isNote(id) ? readNote(id) : readInstructions() ?? DEFAULT_SYSTEM_PROMPT;
 	return { ...meta, value, defaultValue, custom: value.trim() !== defaultValue.trim() };
 }
 
@@ -49,9 +48,7 @@ function save(id: PromptId, value: string | undefined): void {
 		writeNote(id, value);
 		return;
 	}
-	// Igual que el de por defecto (o vacío): no se guarda, así le llegan las mejoras de futuras versiones.
-	const clean = value?.trim();
-	setConfig({ systemPrompt: clean && clean !== DEFAULT_SYSTEM_PROMPT.trim() ? clean : undefined });
+	writeInstructions(value);
 }
 
 export async function handlePromptsApi(req: IncomingMessage, res: ServerResponse, method: string, pathname: string, { readJson, sendJson }: Helpers): Promise<boolean> {

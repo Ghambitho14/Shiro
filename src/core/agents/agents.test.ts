@@ -1,6 +1,6 @@
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -49,13 +49,75 @@ test("los nombres no se pueden confundir", () => {
 	assert.throws(() => reg.createAgent({ name: "" }, ctx), /nombre/);
 });
 
-test("ids únicos y archivo roto con error en español", () => {
+test("cada agente es una nota en Agentes/; renombrar cambia el archivo", () => {
+	const files = () => readdirSync(reg.agentsDir()).sort();
+	assert.deepEqual(files(), ["Viernes.md"]);
+	const note = readFileSync(join(reg.agentsDir(), "Viernes.md"), "utf-8");
+	assert.match(note, /^---\nid: viernes\nnombre: "Viernes"\nalias: \["Vie"\]/);
+	assert.match(note, /herramientas: "todas"/);
+	assert.match(note, /---\nAyudas con las tareas del día\.\n$/);
+	const { agent } = reg.createAgent({ name: "Domingo" }, ctx);
+	reg.updateAgent(agent.id, { name: "Domingo Feliz" }, ctx);
+	assert.deepEqual(files(), ["Domingo Feliz.md", "Viernes.md"]);
+	reg.deleteAgent(agent.id);
+	assert.deepEqual(files(), ["Viernes.md"]);
+});
+
+test("la nota de un agente se lee igual que se escribe, y también escrita a mano", () => {
+	const full = {
+		id: "sabado",
+		name: "Sábado",
+		aliases: ["Sab", "Sabi"],
+		description: "Revisa código",
+		provider: "lmstudio" as const,
+		model: "qwen/qwen3.5-9b",
+		baseUrl: "http://localhost:1234/v1",
+		persona: "Eres serio.\n\nSiempre das ejemplos: {{nombre}}.",
+		personaMode: "replace" as const,
+		tools: ["search_web", "get_time"],
+		mcp: false,
+		mode: "voice" as const,
+		voice: { browserVoiceURI: "Microsoft Pablo - Spanish", serverVoice: "nova", rate: 1.2 },
+		greeting: "Hola: soy {{nombre}}",
+		color: "#ff8800",
+	};
+	assert.deepEqual(reg.parseAgentNote(reg.agentToMarkdown(full), "Sábado.md"), full);
+
+	const hand = reg.parseAgentNote(
+		"---\nnombre: Martes\nalias: Mar, Marti\nherramientas: ninguna\nmodo: voz\nmcp: no\ncolor: '#00aa00'\n---\nHablas como pirata.\n",
+		"Martes.md",
+	);
+	assert.equal(hand.id, "martes");
+	assert.deepEqual(hand.aliases, ["Mar", "Marti"]);
+	assert.equal(hand.tools, "none");
+	assert.equal(hand.mode, "voice");
+	assert.equal(hand.mcp, false);
+	assert.equal(hand.color, "#00aa00");
+	assert.equal(hand.persona, "Hablas como pirata.");
+	// Sin nombre: el del archivo.
+	assert.equal(reg.parseAgentNote("Solo texto", "Jueves.md").name, "Jueves");
+});
+
+test("ids únicos, notas rotas y el viejo agents.json", () => {
 	const { agent } = reg.createAgent({ name: "Viernes 2" }, ctx);
 	assert.equal(agent.id, "viernes-2");
-	mkdirSync(join(TMP, "data"), { recursive: true });
-	writeFileSync(reg.AGENTS_FILE, "{ roto", "utf-8");
+
+	writeFileSync(join(reg.agentsDir(), "Roto.md"), '---\nid: "MAL ID"\n---\n', "utf-8");
 	const { agents, error } = reg.loadAgents();
-	assert.deepEqual(agents, []);
-	assert.match(error!, /data\/agents.json tiene un error: El JSON no es válido/);
-	assert.throws(() => reg.createAgent({ name: "Nuevo" }, ctx), /Arréglalo o bórralo/);
+	assert.deepEqual(agents.map((a) => a.id).sort(), ["viernes", "viernes-2"], "las demás notas siguen valiendo");
+	assert.match(error!, /Agentes\/Roto\.md: id/);
+	assert.throws(() => reg.createAgent({ name: "Nuevo" }, ctx), /Arréglalo/);
+	rmSync(join(reg.agentsDir(), "Roto.md"));
+
+	// Los de data/agents.json pasan a notas y el archivo se borra.
+	mkdirSync(join(TMP, "data"), { recursive: true });
+	writeFileSync(reg.AGENTS_FILE, JSON.stringify({ agents: [{ id: "martes", name: "Martes" }, { id: "viernes", name: "Otro" }] }), "utf-8");
+	const adopted = reg.loadAgents().agents;
+	assert.ok(adopted.some((a) => a.id === "martes"));
+	assert.equal(adopted.find((a) => a.id === "viernes")?.name, "Viernes", "no pisa la nota que ya había");
+	assert.ok(!existsSync(reg.AGENTS_FILE));
+
+	writeFileSync(reg.AGENTS_FILE, "{ roto", "utf-8");
+	assert.match(reg.loadAgents().error!, /data\/agents.json tiene un error/);
+	rmSync(reg.AGENTS_FILE);
 });

@@ -127,7 +127,7 @@ export function prepareAgentTurn(
 	};
 }
 
-/** Los agentes, sin romper el chat si agents.json tiene un error (se ve en Ajustes → Agentes). */
+/** Los agentes, sin romper el chat si una nota de Agentes/ tiene un error (se ve en Ajustes → Agentes). */
 export function currentAgents(): AgentProfile[] {
 	return loadAgents().agents;
 }

@@ -90,7 +90,15 @@ export async function mountStorageForm(container, { settings = false, onSaved } 
 		</div>
 		<div class="storage-detail" data-for="obsidian">
 			<label class="field vault-pick" hidden><span>Tus bóvedas de Obsidian</span><select class="select"></select></label>
-			<label class="field"><span>Carpeta de la bóveda</span><input class="input mono" data-f="vault" placeholder="C:\\Users\\tu-nombre\\Documents\\Mi bóveda" /><small>Shiro crea dentro una carpeta <b>Shiro</b> con tus chats, recuerdos, recordatorios y su memoria (SOUL.md, MEMORY.md…).</small></label>
+			<label class="field"><span>Carpeta de la bóveda</span><input class="input mono" data-f="vault" placeholder="C:\\Users\\tu-nombre\\Documents\\Mi bóveda" /><small>Shiro crea dentro una carpeta <b>Shiro</b> con tus chats, recuerdos, recordatorios, tus agentes y todo lo que lee en cada respuesta (SOUL.md, MEMORY.md, Sobre mí.md…). Las claves y los ajustes del modelo se quedan en este equipo.</small></label>
+			${
+				settings
+					? `<div class="rebuild-row" hidden>
+				<p class="set-desc">¿Borraste o moviste algo de la carpeta Shiro? <b>Rehacer la estructura</b> vuelve a crear lo que falte con la copia de seguridad que Shiro guarda en este equipo (<code class="mono"></code>). No cambia ni borra nada de lo que ya hay.</p>
+				<div class="actions-row"><button type="button" class="btn sm" data-a="rebuild">Rehacer la estructura</button></div>
+			</div>`
+					: ""
+			}
 		</div>
 		<div class="storage-detail" data-for="supabase">
 			<label class="field"><span>Dirección del proyecto</span><input class="input mono" data-f="url" placeholder="https://xxxx.supabase.co" /></label>
@@ -116,6 +124,7 @@ export async function mountStorageForm(container, { settings = false, onSaved } 
 	const result = $(".storage-result", container);
 	const migrateRow = $(".migrate-row", container);
 	const sqlBox = $(".sql-box", container);
+	const rebuildRow = $(".rebuild-row", container);
 
 	$('[data-for="local"] code', container).textContent = info.localFolder;
 	vault.value = info.obsidianVault;
@@ -142,6 +151,11 @@ export async function mountStorageForm(container, { settings = false, onSaved } 
 		const kind = selected();
 		for (const d of container.querySelectorAll(".storage-detail")) d.hidden = d.dataset.for !== kind;
 		migrateRow.hidden = kind === info.kind && !(kind === "obsidian" && vault.value.trim() !== info.obsidianVault);
+		// Solo para la bóveda guardada: la que se está escribiendo todavía no se usa.
+		if (rebuildRow) {
+			rebuildRow.hidden = !(info.kind === "obsidian" && kind === "obsidian" && vault.value.trim() === info.obsidianVault);
+			$("code", rebuildRow).textContent = info.backupFolder || "";
+		}
 		notice(result, null);
 	};
 	(radios.find((r) => r.value === info.kind) || radios[0]).checked = true;
@@ -194,6 +208,27 @@ export async function mountStorageForm(container, { settings = false, onSaved } 
 			showError(err.message, /SQL Editor/.test(err.message));
 			return false;
 		}
+	}
+
+	const rebuildBtn = $('[data-a="rebuild"]', container);
+	if (rebuildBtn) {
+		rebuildBtn.onclick = async () => {
+			rebuildBtn.disabled = true;
+			notice(result, "load", "Revisando la carpeta Shiro…");
+			try {
+				const r = await api("/api/storage/rebuild", { method: "POST" });
+				const parts = [
+					r.restored ? `${r.restored} ${r.restored === 1 ? "nota recuperada" : "notas recuperadas"} de la copia` : "",
+					r.chats ? `${r.chats} ${r.chats === 1 ? "chat" : "chats"} vuelto${r.chats === 1 ? "" : "s"} a escribir` : "",
+					r.reminders ? "Recordatorios.md creado de nuevo" : "",
+				].filter(Boolean);
+				notice(result, "ok", parts.length ? `Listo: ${parts.join(", ")}.` : "Listo: la estructura ya estaba completa; no faltaba nada.");
+			} catch (err) {
+				notice(result, "bad", err.message);
+			} finally {
+				rebuildBtn.disabled = false;
+			}
+		};
 	}
 
 	const saveBtn = $('[data-a="save"]', container);

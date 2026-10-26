@@ -1,7 +1,8 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, join, dirname } from "node:path";
-import { DATA_DIR } from "./config/config.js";
-import { OBSIDIAN_FOLDER, obsidianRoot } from "./storage/obsidian.js";
+import { DATA_DIR, getConfig, setConfig } from "./config/config.js";
+import { DEFAULT_SYSTEM_PROMPT } from "./core/soul/defaultPrompt.js";
+import { OBSIDIAN_FOLDER, frontValue, normalizeHeading, obsidianRoot, parseFrontmatter, yamlValue } from "./storage/obsidian.js";
 import { currentStorage, type StorageSettings } from "./storage/storage.js";
 
 /** Workspace en este equipo. Las habilidades propias (skills/) viven siempre aquí. */
@@ -110,8 +111,88 @@ function writeIfMissing(filePath: string, content: string): void {
 
 const MEMORY_TEMPLATE = "# MEMORY.md — Memoria a largo plazo\n\nHechos, decisiones y contexto que quieres recordar.\n";
 
+/** HEARTBEAT.md que se creaba antes y nadie usaba: si sigue igual, se borra. */
+const OLD_HEARTBEAT_TEMPLATE = `# HEARTBEAT.md — Tareas periódicas
+
+Lista corta de cosas que revisar cuando haya un heartbeat (ej. recordatorios, comprobaciones).
+
+- [ ] Revisar si hay algo urgente
+- [ ] Actualizar memory/ con lo relevante del día
+
+Si no hay nada que hacer, responde HEARTBEAT_OK.
+`;
+
+// ───────────────────────────── Sobre mí.md ─────────────────────────────
+
+/** «Sobre ti» de Ajustes → Personalización, como nota (antes data/user-profile.json). */
+export const PROFILE_NOTE = "Sobre mí.md";
+/** Instrucciones base (antes config.systemPrompt). */
+export const INSTRUCTIONS_NOTE = "Instrucciones.md";
+
+export type ProfileFields = { userName?: string; language?: string; about?: string; extra?: string };
+
+const ABOUT_HEADING = "Qué debería saber de mí";
+const EXTRA_HEADING = "Cómo quiero que respondas";
+
+export function profileToMarkdown(p: ProfileFields): string {
+	return [
+		"---",
+		`nombre: ${yamlValue(p.userName ?? "")}`,
+		`idioma: ${yamlValue(p.language ?? "")}`,
+		"---",
+		"# Sobre mí",
+		"",
+		`## ${ABOUT_HEADING}`,
+		p.about?.trim() ?? "",
+		"",
+		`## ${EXTRA_HEADING}`,
+		p.extra?.trim() ?? "",
+		"",
+	].join("\n");
+}
+
+/** Lee la nota aunque la hayan editado a mano: sin los títulos de siempre, todo el texto cuenta como «qué saber». */
+export function parseProfileNote(text: string): ProfileFields {
+	const { meta, body } = parseFrontmatter(text.replace(/\r\n/g, "\n"));
+	const sections = new Map<string, string[]>();
+	let current = "";
+	for (const line of body.split("\n")) {
+		const h2 = /^##\s+(.*)$/.exec(line);
+		if (h2) {
+			current = normalizeHeading(h2[1]);
+			sections.set(current, []);
+		} else if (!/^#\s/.test(line)) {
+			if (!sections.has(current)) sections.set(current, []);
+			sections.get(current)!.push(line);
+		}
+	}
+	const get = (key: string) => sections.get(key)?.join("\n").trim() || undefined;
+	const about = get(normalizeHeading(ABOUT_HEADING));
+	const extra = get(normalizeHeading(EXTRA_HEADING));
+	const loose = [...sections.entries()]
+		.filter(([k]) => k !== normalizeHeading(ABOUT_HEADING) && k !== normalizeHeading(EXTRA_HEADING))
+		.map(([, lines]) => lines.join("\n").trim())
+		.filter(Boolean)
+		.join("\n\n");
+	const text_ = (v: unknown) => (typeof v === "string" ? v.trim() || undefined : undefined);
+	return {
+		userName: text_(frontValue(meta.nombre)),
+		language: text_(frontValue(meta.idioma)),
+		about: [about, loose].filter(Boolean).join("\n\n") || undefined,
+		extra,
+	};
+}
+
+const PROFILE_TEMPLATE = profileToMarkdown({});
+
 /** Texto con el que se crea cada nota (para saber si el usuario la cambió). */
-export const NOTE_TEMPLATES: Record<string, string> = { "SOUL.md": SOUL_TEMPLATE, "TOOLS.md": TOOLS_TEMPLATE, "MEMORY.md": MEMORY_TEMPLATE };
+export const NOTE_TEMPLATES: Record<string, string> = {
+	"SOUL.md": SOUL_TEMPLATE,
+	"TOOLS.md": TOOLS_TEMPLATE,
+	"MEMORY.md": MEMORY_TEMPLATE,
+	[INSTRUCTIONS_NOTE]: DEFAULT_SYSTEM_PROMPT + "\n",
+	[PROFILE_NOTE]: PROFILE_TEMPLATE,
+};
 
 /** Notas del workspace que van en el system prompt y se editan en Ajustes → Personalización. */
 export const EDITABLE_NOTES = {
@@ -140,16 +221,146 @@ export function writeNote(note: EditableNote, content?: string): string {
 	return value;
 }
 
-/** Crea el workspace y archivos por defecto si no existen. */
+/** Crea el workspace y las notas por defecto si no existen, y trae lo que antes vivía en data/. */
 export function ensureWorkspace(): void {
 	const dir = getWorkspaceDir();
 	ensureDir(dir);
 	const soul = join(dir, "SOUL.md");
 	if (readFileSafe(soul) === OLD_SOUL_TEMPLATE.trim()) writeFileSync(soul, SOUL_TEMPLATE, "utf-8");
-	writeIfMissing(soul, SOUL_TEMPLATE);
-	writeIfMissing(join(dir, "MEMORY.md"), MEMORY_TEMPLATE);
-	writeIfMissing(join(dir, "TOOLS.md"), TOOLS_TEMPLATE);
+	adoptLegacySettings(dir);
+	for (const [file, template] of Object.entries(NOTE_TEMPLATES)) writeIfMissing(join(dir, file), template);
 	ensureDir(join(LOCAL_WORKSPACE_DIR, "skills"));
+	removeUnused(dir);
+	if (dir !== LOCAL_WORKSPACE_DIR) backupVaultThrottled(dir);
+}
+
+const sameText = (a: string | null, b: string) => (a ?? "").replace(/\r\n/g, "\n").trim() === b.trim();
+
+/** Instrucciones base de config.json y «Sobre ti» de user-profile.json pasan a sus notas (una sola vez). */
+function adoptLegacySettings(dir: string): void {
+	const instructions = join(dir, INSTRUCTIONS_NOTE);
+	const legacyPrompt = getConfig().systemPrompt?.trim();
+	if (legacyPrompt) {
+		if (!existsSync(instructions) || sameText(readFileSafe(instructions), DEFAULT_SYSTEM_PROMPT)) writeFileSync(instructions, legacyPrompt + "\n", "utf-8");
+		setConfig({ systemPrompt: undefined });
+	}
+	const legacyProfile = join(DATA_DIR, "user-profile.json");
+	if (!existsSync(legacyProfile)) return;
+	try {
+		const data = JSON.parse(readFileSync(legacyProfile, "utf-8")) as Record<string, unknown>;
+		const str = (v: unknown) => (typeof v === "string" ? v : undefined);
+		const profile = join(dir, PROFILE_NOTE);
+		if (!existsSync(profile) || sameText(readFileSafe(profile), PROFILE_TEMPLATE)) {
+			writeFileSync(profile, profileToMarkdown({ userName: str(data.userName), language: str(data.language), about: str(data.about), extra: str(data.extra) }), "utf-8");
+		}
+		rmSync(legacyProfile, { force: true });
+	} catch (err) {
+		console.error(`[Shiro] No pude pasar data/user-profile.json a ${PROFILE_NOTE}: ${err instanceof Error ? err.message : String(err)}`);
+	}
+}
+
+/**
+ * Quita lo que ya no se usa: HEARTBEAT.md (si nadie lo cambió) y la carpeta memory/. Las notas que
+ * hubiera en memory/ no se pierden: con Obsidian pasan a Recuerdos/ (si no, se deja la carpeta).
+ */
+function removeUnused(dir: string): void {
+	try {
+		const heartbeat = join(dir, "HEARTBEAT.md");
+		if (existsSync(heartbeat) && sameText(readFileSafe(heartbeat), OLD_HEARTBEAT_TEMPLATE)) rmSync(heartbeat, { force: true });
+		const daily = join(dir, "memory");
+		if (!existsSync(daily) || !statSync(daily).isDirectory()) return;
+		if (dir !== LOCAL_WORKSPACE_DIR) {
+			const memories = join(dir, "Recuerdos");
+			for (const f of readdirSync(daily)) {
+				if (!f.endsWith(".md")) continue;
+				ensureDir(memories);
+				let target = join(memories, f);
+				for (let i = 2; existsSync(target); i++) target = join(memories, f.replace(/\.md$/, ` ${i}.md`));
+				renameSync(join(daily, f), target);
+			}
+		}
+		if (!readdirSync(daily).length) rmdirSync(daily);
+	} catch {
+		// Limpiar no puede romper el chat: se intenta otra vez la próxima.
+	}
+}
+
+// ───────────────────────────── copia de seguridad ─────────────────────────────
+
+/** Lo que Aku lee de la bóveda; se copia a data/ para poder rehacer la estructura. */
+const BACKUP_ITEMS = [...Object.keys(NOTE_TEMPLATES), "Agentes", "Recuerdos"];
+
+/** Copia de seguridad en este equipo de la carpeta Shiro de una bóveda. */
+export function backupDirFor(dir: string): string {
+	return join(DATA_DIR, "copia-obsidian", basename(dirname(dir)));
+}
+
+/** Archivos .md de las notas de BACKUP_ITEMS (las carpetas, un nivel), como rutas relativas. */
+function backupFiles(root: string): string[] {
+	const out: string[] = [];
+	for (const item of BACKUP_ITEMS) {
+		const full = join(root, item);
+		try {
+			if (!existsSync(full)) continue;
+			if (statSync(full).isDirectory()) {
+				for (const f of readdirSync(full)) if (f.endsWith(".md")) out.push(join(item, f));
+			} else out.push(item);
+		} catch {
+			// carpeta ilegible: se salta
+		}
+	}
+	return out;
+}
+
+/** Copia a data/ las notas nuevas o cambiadas (no borra las que ya no estén: así se pueden recuperar). */
+export function backupVault(dir = getWorkspaceDir()): number {
+	const backup = backupDirFor(dir);
+	let copied = 0;
+	for (const rel of backupFiles(dir)) {
+		const from = join(dir, rel);
+		const to = join(backup, rel);
+		try {
+			const a = statSync(from);
+			const b = existsSync(to) ? statSync(to) : null;
+			if (b && b.size === a.size && b.mtimeMs >= a.mtimeMs) continue;
+			ensureDir(dirname(to));
+			cpSync(from, to, { force: true, preserveTimestamps: true });
+			copied++;
+		} catch {
+			// nota bloqueada (Obsidian guardando…): se copia la próxima vez
+		}
+	}
+	return copied;
+}
+
+let lastBackup = 0;
+function backupVaultThrottled(dir: string): void {
+	if (Date.now() - lastBackup < 60_000) return;
+	lastBackup = Date.now();
+	backupVault(dir);
+}
+
+/**
+ * «Rehacer la estructura»: vuelve a crear en la carpeta Shiro lo que falte, desde la copia de data/
+ * o con el texto por defecto, y quita lo que no se usa. Nunca cambia ni borra una nota que exista.
+ */
+export function rebuildWorkspace(): { restored: number } {
+	const dir = getWorkspaceDir();
+	ensureDir(dir);
+	backupVault(dir);
+	const backup = backupDirFor(dir);
+	let restored = 0;
+	if (dir !== LOCAL_WORKSPACE_DIR && existsSync(backup)) {
+		for (const rel of backupFiles(backup)) {
+			const target = join(dir, rel);
+			if (existsSync(target)) continue;
+			ensureDir(dirname(target));
+			cpSync(join(backup, rel), target, { force: false, preserveTimestamps: true });
+			restored++;
+		}
+	}
+	ensureWorkspace();
+	return { restored };
 }
 
 function readFileSafe(filePath: string): string | null {
@@ -165,6 +376,32 @@ function readFileSafe(filePath: string): string | null {
 export function readSoul(): string | null {
 	ensureWorkspace();
 	return readFileSafe(join(getWorkspaceDir(), "SOUL.md"));
+}
+
+/** Instrucciones base que escribió el usuario, o null si la nota sigue con las de por defecto. */
+export function readInstructions(): string | null {
+	ensureWorkspace();
+	const text = readFileSafe(join(getWorkspaceDir(), INSTRUCTIONS_NOTE));
+	return text && !sameText(text, DEFAULT_SYSTEM_PROMPT) ? text.replace(/\r\n/g, "\n") : null;
+}
+
+/** Guarda las instrucciones base; sin texto, vuelven las de por defecto. */
+export function writeInstructions(value?: string): void {
+	ensureWorkspace();
+	const clean = value?.replace(/\r\n/g, "\n").trim();
+	writeFileSync(join(getWorkspaceDir(), INSTRUCTIONS_NOTE), (clean || DEFAULT_SYSTEM_PROMPT) + "\n", "utf-8");
+}
+
+/** «Sobre ti», leído de su nota cada vez (así vale lo que se cambie en Obsidian). */
+export function readProfile(): ProfileFields {
+	ensureWorkspace();
+	const text = readFileSafe(join(getWorkspaceDir(), PROFILE_NOTE));
+	return text ? parseProfileNote(text) : {};
+}
+
+export function writeProfile(p: ProfileFields): void {
+	ensureWorkspace();
+	writeFileSync(join(getWorkspaceDir(), PROFILE_NOTE), profileToMarkdown(p), "utf-8");
 }
 
 /** Contenido de MEMORY.md (memoria a largo plazo). */
@@ -203,6 +440,8 @@ export function buildMemoryGuide(s: StorageSettings = currentStorage()): string 
 			`Tu memoria está en Obsidian, en la carpeta «${OBSIDIAN_FOLDER}» de la bóveda «${vault}» del usuario. Esas notas SON tu memoria, no algo aparte: si te pregunta por Obsidian, por su bóveda o por lo que recuerdas, se refiere a ellas y sí tienes acceso.`,
 			"- MEMORY.md: lo importante y duradero (lo tienes más abajo).",
 			"- Recuerdos/: una nota por cada dato que guardas con memory_add.",
+			"- Sobre mí.md (lo que el usuario te contó de sí), Instrucciones.md, SOUL.md y TOOLS.md: lo que lees antes de cada respuesta; ya lo tienes aquí.",
+			"- Agentes/: una nota por agente de las salas (Viernes, Lunes…).",
 			"- Chats/: una copia de cada conversación. Recordatorios.md: los recordatorios.",
 			`memory_search busca en toda la carpeta «${OBSIDIAN_FOLDER}». Para abrir, listar o escribir una nota usa read_file, list_dir o write_file con la ruta dentro de esa carpeta (p. ej. "MEMORY.md" o "Recuerdos"). El resto de la bóveda no lo ves.`,
 			save,

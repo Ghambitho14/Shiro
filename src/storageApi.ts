@@ -5,8 +5,10 @@
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { DATA_DIR, STORAGE_KINDS, setConfig, type StorageKind } from "./config/config.js";
+import { backupDirFor, getWorkspaceDir } from "./workspace.js";
 import { migrateStorage } from "./storage/migrate.js";
 import { listObsidianVaults, obsidianRoot } from "./storage/obsidian.js";
+import { rebuildStructure } from "./storage/rebuild.js";
 import { currentStorage, STORAGE_LABELS, testStorage, type StorageSettings } from "./storage/storage.js";
 import { normalizeSupabaseUrl, SUPABASE_SQL } from "./storage/supabase.js";
 
@@ -47,6 +49,7 @@ function storagePayload() {
 		localFolder: DATA_DIR,
 		obsidianVault: s.obsidianVault ?? "",
 		obsidianFolder: s.obsidianVault ? obsidianRoot(s.obsidianVault) : "",
+		backupFolder: s.kind === "obsidian" ? backupDirFor(getWorkspaceDir()) : "",
 		vaults: listObsidianVaults(),
 		supabaseUrl: s.supabaseUrl ?? "",
 		hasSupabaseKey: Boolean(s.supabaseKey),
@@ -55,7 +58,16 @@ function storagePayload() {
 }
 
 export async function handleStorageApi(req: IncomingMessage, res: ServerResponse, method: string, pathname: string, h: Helpers): Promise<boolean> {
-	if (pathname !== "/api/storage" && pathname !== "/api/storage/test") return false;
+	if (pathname !== "/api/storage" && pathname !== "/api/storage/test" && pathname !== "/api/storage/rebuild") return false;
+
+	if (method === "POST" && pathname === "/api/storage/rebuild") {
+		try {
+			h.sendJson(res, 200, { ok: true, ...(await rebuildStructure()) });
+		} catch (err) {
+			h.sendJson(res, 500, { error: `No pude rehacer la estructura: ${err instanceof Error ? err.message : String(err)}` });
+		}
+		return true;
+	}
 
 	if (method === "GET" && pathname === "/api/storage") {
 		h.sendJson(res, 200, storagePayload());

@@ -17,7 +17,8 @@ const chats = await import("../chat/ChatStore.js");
 const memories = await import("../core/memory/memories.js");
 const reminders = await import("../core/reminders/reminders.js");
 const obsidian = await import("./obsidian.js");
-const { getWorkspaceDir, ensureWorkspace, buildMemoryGuide, LOCAL_WORKSPACE_DIR } = await import("../workspace.js");
+const { getWorkspaceDir, ensureWorkspace, buildMemoryGuide, backupDirFor, backupVault, LOCAL_WORKSPACE_DIR } = await import("../workspace.js");
+const { rebuildStructure } = await import("./rebuild.js");
 const { migrateStorage } = await import("./migrate.js");
 const supabase = await import("./supabase.js");
 const { testStorage } = await import("./storage.js");
@@ -40,6 +41,11 @@ test("nombres de archivo y encabezados de notas", () => {
 	const { meta, body } = obsidian.parseFrontmatter("---\r\nid: x\r\ntipo: decision\r\n---\r\nHola");
 	assert.deepEqual(meta, { id: "x", tipo: "decision" });
 	assert.equal(body, "Hola");
+	const md = obsidian.chatToMarkdown(
+		{ id: "c1", title: "Sala", createdAt: 0, updatedAt: 0, messages: [{ role: "assistant", content: "Hola", agentName: "Viernes" }] },
+		{ user: "Tú", assistant: "Aku" },
+	);
+	assert.match(md, /\*\*\[\[Agentes\/Viernes\|Viernes\]\]\*\*/, "en una sala, el nombre enlaza a la nota del agente");
 });
 
 test("encuentra las bóvedas que conoce la app de Obsidian", () => {
@@ -333,5 +339,51 @@ test("Supabase: llevar los datos y usar chats, recuerdos y recordatorios", async
 		assert.equal(await reminders.deleteReminder(r.id), true);
 		assert.ok(!fake.tables.shiro_reminders.some((x) => x.id === r.id));
 	});
+	setConfig({ storage: "local" });
+});
+
+test("se quita lo que no se usa: HEARTBEAT.md y memory/ (sus notas pasan a Recuerdos)", () => {
+	setConfig({ storage: "obsidian", obsidianVault: VAULT });
+	const root = join(VAULT, "Shiro");
+	writeFileSync(
+		join(root, "HEARTBEAT.md"),
+		"# HEARTBEAT.md — Tareas periódicas\n\nLista corta de cosas que revisar cuando haya un heartbeat (ej. recordatorios, comprobaciones).\n\n- [ ] Revisar si hay algo urgente\n- [ ] Actualizar memory/ con lo relevante del día\n\nSi no hay nada que hacer, responde HEARTBEAT_OK.\n",
+	);
+	mkdirSync(join(root, "memory"), { recursive: true });
+	writeFileSync(join(root, "memory", "2026-10-01.md"), "Le gusta el café de Mérida\n");
+	ensureWorkspace();
+	assert.ok(!existsSync(join(root, "HEARTBEAT.md")));
+	assert.ok(!existsSync(join(root, "memory")));
+	assert.ok(existsSync(join(root, "Recuerdos", "2026-10-01.md")), "la nota no se pierde");
+	for (const f of ["SOUL.md", "MEMORY.md", "TOOLS.md", "Instrucciones.md", "Sobre mí.md"]) assert.ok(existsSync(join(root, f)), f);
+});
+
+test("rehacer la estructura: recupera de la copia de data/ lo que falte y no toca lo demás", async () => {
+	setConfig({ storage: "obsidian", obsidianVault: VAULT });
+	const root = join(VAULT, "Shiro");
+	await chats.createChatSession([{ role: "user", content: "Hola desde Obsidian" }]);
+	writeFileSync(join(root, "SOUL.md"), "# Soy Aku, editado a mano\n");
+	backupVault();
+	const backup = backupDirFor(root);
+	assert.ok(backup.startsWith(join(TMP, "data", "copia-obsidian")));
+	assert.equal(readFileSync(join(backup, "SOUL.md"), "utf-8"), "# Soy Aku, editado a mano\n");
+	assert.ok(existsSync(join(backup, "Recuerdos", "2026-10-01.md")));
+
+	// Se borran cosas de la bóveda; otras se cambian después de la copia.
+	rmSync(join(root, "SOUL.md"));
+	rmSync(join(root, "Recuerdos", "2026-10-01.md"));
+	rmSync(join(root, "Recordatorios.md"));
+	rmSync(join(root, "Chats"), { recursive: true });
+	writeFileSync(join(root, "MEMORY.md"), "# MEMORY.md\n\n- Cambiado después de la copia\n");
+
+	const r = await rebuildStructure();
+	assert.equal(readFileSync(join(root, "SOUL.md"), "utf-8"), "# Soy Aku, editado a mano\n", "SOUL.md vuelve de la copia");
+	assert.ok(existsSync(join(root, "Recuerdos", "2026-10-01.md")));
+	assert.match(readFileSync(join(root, "MEMORY.md"), "utf-8"), /Cambiado después de la copia/, "lo que existe no se toca");
+	assert.ok(r.restored >= 2 && r.chats >= 1 && r.reminders);
+	assert.ok(readdirSync(join(root, "Chats")).some((f) => f.includes("Hola desde Obsidian")));
+
+	const again = await rebuildStructure();
+	assert.deepEqual(again, { restored: 0, chats: 0, reminders: false }, "si no falta nada, no hace nada");
 	setConfig({ storage: "local" });
 });
