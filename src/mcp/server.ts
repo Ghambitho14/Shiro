@@ -12,6 +12,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { APP_VERSION } from "../runtime.js";
 import { executeToolSafeScoped, getToolsDefinitionScoped } from "../core/tools/ToolRegistry.js";
+import { startNotesSync } from "../storage/notesSync.js";
 
 /**
  * Tools que se comparten. No se exponen archivos ni comandos: el agente de código
@@ -31,6 +32,7 @@ export const MCP_TOOLS = [
 ];
 
 export async function runMcpServer(): Promise<void> {
+	startNotesSync();
 	const server = new Server({ name: "shiro", version: APP_VERSION }, { capabilities: { tools: {} } });
 
 	server.setRequestHandler(ListToolsRequestSchema, async () => ({

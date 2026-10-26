@@ -1,5 +1,5 @@
 /**
- * Supabase como almacén: chats, recuerdos y recordatorios en tablas shiro_* (API REST de PostgREST).
+ * Supabase como almacén: chats, recuerdos, recordatorios y notas de memoria en tablas shiro_* (API REST de PostgREST).
  * Se usa la clave secreta (service_role / sb_secret_…). Las tablas tienen RLS activado y ninguna
  * política, así que con la clave pública nadie puede leerlas. La clave nunca va al navegador.
  */
@@ -40,14 +40,21 @@ create table if not exists shiro_reminders (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists shiro_notes (
+  path text primary key,
+  content text not null,
+  updated_at bigint not null
+);
+
 -- Solo la clave secreta (service_role) puede leerlas: sin políticas, la clave pública no ve nada.
 alter table shiro_chats enable row level security;
 alter table shiro_chat_links enable row level security;
 alter table shiro_memories enable row level security;
 alter table shiro_reminders enable row level security;
+alter table shiro_notes enable row level security;
 `;
 
-export const SUPABASE_TABLES = ["shiro_chats", "shiro_chat_links", "shiro_memories", "shiro_reminders"] as const;
+export const SUPABASE_TABLES = ["shiro_chats", "shiro_chat_links", "shiro_memories", "shiro_reminders", "shiro_notes"] as const;
 
 export class SupabaseError extends Error {
 	constructor(

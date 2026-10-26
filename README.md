@@ -4,8 +4,8 @@ Asistente personal de IA con herramientas (búsqueda web, archivos, recordatorio
 que **controla tu PC** (abrir apps y webs, música y volumen, ventanas, teclado, ratón,
 capturas de pantalla, apagar/bloquear) y con el que puedes **hablar por voz**.
 Funciona con **modelos locales** (archivos GGUF con llama.cpp integrado, Ollama, LM Studio, vLLM) o en la nube
-(OpenRouter, OpenCode Zen, suscripción OpenCode Go). Se usa desde su propia ventana (estilo ChatGPT), la terminal
-WhatsApp o Telegram, y también **dentro de OpenCode** como servidor MCP.
+(Ollama Cloud, OpenRouter, OpenCode Zen, suscripción OpenCode Go). Se usa desde su propia ventana (estilo ChatGPT), la terminal
+WhatsApp o Telegram, la **app del móvil** (aunque el PC esté apagado) y también **dentro de OpenCode** como servidor MCP.
 
 ## Empezar (con Ollama, gratis y local)
 
@@ -229,6 +229,17 @@ el error del login». Usa tu plan de Claude (Pro incluye Claude Code), no la API
 Pide permiso antes de cada encargo, enseña su progreso en el panel Terminal (el botón de parar lo
 detiene), puede cambiar archivos de esa carpeta y solo ejecuta los comandos que hayas permitido en
 Claude Code. `npm run doctor` dice si lo encuentra. Más en `docs/claude-code.md`.
+
+## En el móvil (app Android)
+
+Una app propia (Expo) que piensa con **Ollama Cloud** y guarda todo en tu **Supabase**: ve los mismos chats,
+recuerdos y notas de memoria que Shiro del PC, aunque el PC esté apagado.
+
+1. En el PC: Ajustes → Datos → Supabase (ejecuta su SQL en Supabase).
+2. Crea una API key en https://ollama.com/settings/keys.
+3. En GitHub: Actions → «App Android (APK)» → Run workflow, y baja el .apk al terminar.
+
+Paso a paso en `docs/app-movil.md`. Ollama Cloud también sirve como modelo del PC: Ajustes → Modelo → «Ollama Cloud».
 
 ## Usar Shiro con OpenCode
 

@@ -23,6 +23,7 @@ const { migrateStorage } = await import("./migrate.js");
 const supabase = await import("./supabase.js");
 const { testStorage } = await import("./storage.js");
 const { parseStorage } = await import("../storageApi.js");
+const { syncNotesWith, mergeMemoryNotes, SHIRO_INFO_ROW } = await import("./notesSync.js");
 
 // Sin servidor de embeddings: la búsqueda tiene que funcionar solo con palabras clave.
 setConfig({ embeddingsBaseUrl: "http://127.0.0.1:9" });
@@ -216,8 +217,14 @@ type Row = Record<string, unknown>;
 
 /** Imita lo que usa Shiro de PostgREST: select, filtros eq/in, order, limit, upsert y return=representation. */
 function fakeSupabase(opts: { missing?: string[] } = {}) {
-	const tables: Record<string, Row[]> = { shiro_chats: [], shiro_chat_links: [], shiro_memories: [], shiro_reminders: [] };
-	const keys: Record<string, string[]> = { shiro_chats: ["id"], shiro_chat_links: ["channel", "external_id"], shiro_memories: ["id"], shiro_reminders: ["id"] };
+	const tables: Record<string, Row[]> = { shiro_chats: [], shiro_chat_links: [], shiro_memories: [], shiro_reminders: [], shiro_notes: [] };
+	const keys: Record<string, string[]> = {
+		shiro_chats: ["id"],
+		shiro_chat_links: ["channel", "external_id"],
+		shiro_memories: ["id"],
+		shiro_reminders: ["id"],
+		shiro_notes: ["path"],
+	};
 	const calls: string[] = [];
 	const fetchImpl = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
 		const url = new URL(String(input));
@@ -389,4 +396,44 @@ test("rehacer la estructura: recupera de la copia de data/ lo que falte y no toc
 	const again = await rebuildStructure();
 	assert.deepEqual(again, { restored: 0, chats: 0, reminders: false }, "si no falta nada, no hace nada");
 	setConfig({ storage: "local" });
+});
+
+test("Supabase: las notas de memoria se comparten con el móvil y otros equipos", async () => {
+	const fake = fakeSupabase();
+	const cfg = { url: SB.supabaseUrl, key: SB.supabaseKey };
+	ensureWorkspace();
+	const note = (name: string) => readFileSync(join(LOCAL_WORKSPACE_DIR, name), "utf-8");
+	const remote = (path: string) => fake.tables.shiro_notes.find((r) => r.path === path) as { content: string; updated_at: number } | undefined;
+	await withFetch(fake.fetchImpl as typeof fetch, async () => {
+		// La primera vez se suben todas, más el nombre del asistente para la app.
+		const first = await syncNotesWith(cfg);
+		assert.deepEqual(first.pulled, []);
+		assert.ok(["SOUL.md", "MEMORY.md", "Sobre mí.md", "Instrucciones.md", "TOOLS.md"].every((p) => first.pushed.includes(p)));
+		assert.equal(remote("MEMORY.md")?.content, note("MEMORY.md").replace(/\r\n/g, "\n").trimEnd() + "\n");
+		assert.match(remote(SHIRO_INFO_ROW)?.content ?? "", /assistantName/);
+
+		// Sin cambios no se mueve nada.
+		assert.deepEqual(await syncNotesWith(cfg), { pulled: [], pushed: [] });
+
+		// El móvil apunta algo en MEMORY.md: llega aquí.
+		const fromPhone = remote("MEMORY.md")!;
+		fromPhone.content = fromPhone.content + "- Le gusta el café del móvil\n";
+		fromPhone.updated_at = Date.now() + 1000;
+		assert.deepEqual((await syncNotesWith(cfg)).pulled, ["MEMORY.md"]);
+		assert.match(note("MEMORY.md"), /café del móvil/);
+
+		// Aquí se cambia SOUL.md: sube.
+		writeFileSync(join(LOCAL_WORKSPACE_DIR, "SOUL.md"), "# SOUL.md\n\nEres amable.\n");
+		assert.deepEqual((await syncNotesWith(cfg)).pushed, ["SOUL.md"]);
+		assert.match(remote("SOUL.md")?.content ?? "", /Eres amable/);
+
+		// MEMORY.md cambia en los dos sitios a la vez: se juntan las líneas.
+		writeFileSync(join(LOCAL_WORKSPACE_DIR, "MEMORY.md"), note("MEMORY.md") + "- Dato del PC\n");
+		remote("MEMORY.md")!.content += "- Dato del teléfono\n";
+		remote("MEMORY.md")!.updated_at = Date.now() + 5000;
+		await syncNotesWith(cfg);
+		assert.match(note("MEMORY.md"), /Dato del PC[\s\S]*Dato del teléfono/);
+		assert.match(remote("MEMORY.md")?.content ?? "", /Dato del PC[\s\S]*Dato del teléfono/);
+	});
+	assert.equal(mergeMemoryNotes("# M\n- a\n", "# M\n- a\n- b\n"), "# M\n- a\n- b\n");
 });

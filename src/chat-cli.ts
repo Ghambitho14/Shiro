@@ -17,6 +17,7 @@ import { matchSkillCommand, parseCommand, plainText } from "./commands.js";
 import type { ChatMessage } from "./chat/ChatStore.js";
 import { pruneRoom, type RoomState } from "./core/rooms/roomStore.js";
 import { currentAgents, planRoomTurn, prepareAgentTurn, publicRoom, type AgentTurn } from "./core/rooms/roomTurn.js";
+import { startNotesSync } from "./storage/notesSync.js";
 
 const C = {
 	reset: "\x1b[0m",
@@ -52,6 +53,7 @@ function roomText(room: RoomState | null): string {
 export async function runChat(): Promise<void> {
 	// Los logs de info ensucian el chat; solo avisos y errores.
 	setLogLevel("warn");
+	startNotesSync();
 	const name = getState().name;
 	const history: ChatMessage[] = [];
 	let room: RoomState | null = null;

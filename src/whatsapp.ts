@@ -11,6 +11,7 @@ import { setHealthActive } from "./core/health/HealthManager.js";
 import { getChatSession, getOrCreateLinkedChatSession, saveChatSession, type ChatMessage } from "./chat/ChatStore.js";
 import type { ContentPart } from "./core/agent/Types.js";
 import { getMessagePreview } from "./core/agent/contentUtils.js";
+import { startNotesSync } from "./storage/notesSync.js";
 
 const WA_CHANNEL = "whatsapp-web";
 const WA_CLIENT_ID = process.env.WA_CLIENT_ID?.trim() || "shiro-personal";
@@ -331,6 +332,7 @@ export async function stopWhatsAppBridge(): Promise<void> {
 }
 
 export async function runWhatsAppBridge(): Promise<void> {
+	startNotesSync();
 	console.log("\n  Shiro WhatsApp bridge (modo personal)\n");
 	console.log(`  Cliente: ${WA_CLIENT_ID}`);
 	if (WA_ALLOWED_CHAT) console.log(`  Filtro chat permitido: ${WA_ALLOWED_CHAT}`);

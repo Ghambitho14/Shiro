@@ -288,9 +288,11 @@ function shutdown(signal: NodeJS.Signals | "update"): void {
 
 
 startReminderNotifications();
+startNotesSync();
 
 // Inicializar scheduler de tareas programadas
 import { initCronScheduler, stopCronScheduler } from "./core/scheduler/CronService.js";
+import { startNotesSync } from "./storage/notesSync.js";
 initCronScheduler();
 
 process.on("SIGINT", () => {

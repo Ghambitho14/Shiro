@@ -63,7 +63,7 @@ const KINDS = [
 	{
 		value: "supabase",
 		title: "En Supabase",
-		text: "Una base de datos en la nube: varios equipos con Shiro comparten los mismos chats y recuerdos.",
+		text: "Una base de datos en la nube: tus equipos y la app del móvil comparten los mismos chats, recuerdos y notas de memoria.",
 	},
 ];
 

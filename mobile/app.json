@@ -1,0 +1,25 @@
+{
+  "expo": {
+    "name": "Shiro",
+    "slug": "shiro",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.ghambitho14.shiro"
+    },
+    "android": {
+      "package": "com.ghambitho14.shiro",
+      "adaptiveIcon": {
+        "backgroundColor": "#8071F2",
+        "foregroundImage": "./assets/android-icon-foreground.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    }
+  }
+}
