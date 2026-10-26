@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { DATA_DIR } from "./config/config.js";
 
@@ -41,10 +41,4 @@ export function setState(partial: Partial<State>): State {
 	mkdirSync(DATA_DIR, { recursive: true });
 	writeFileSync(STATE_FILE, JSON.stringify(next, null, 2), "utf-8");
 	return next;
-}
-
-/** Resetea el estado (nombre) a valores por defecto y borra el archivo. */
-export function resetState(): void {
-	cached = { name: DEFAULT_NAME };
-	if (existsSync(STATE_FILE)) unlinkSync(STATE_FILE);
 }

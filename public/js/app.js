@@ -883,9 +883,8 @@ async function runAssistant({ voice = false, hooks = {} } = {}) {
 					if (sessionId === state.activeId) setRoom(evt.room);
 					if (evt.openVoice && !voice) setTimeout(() => voice_.open(), 0);
 				},
-				onDone: ({ content, whatsapp, agent }) => {
+				onDone: ({ content, agent }) => {
 					if (typeof content === "string" && content) m.content = content;
-					if (whatsapp) showWhatsAppFromChat(whatsapp);
 					// Las órdenes de sala responden a nombre de un agente (o del asistente: null).
 					if (agent !== undefined) {
 						setMessageAgent(m, agent);
@@ -1948,11 +1947,6 @@ function paintWhatsApp({ status, qrDataUrl }) {
 	if (["starting", "qr"].includes(status.state) && settingsDlg.open && activeTab === "connections") {
 		waTimer = setTimeout(refreshWhatsApp, 3000);
 	}
-}
-
-function showWhatsAppFromChat(wa) {
-	if (!wa?.qrDataUrl && wa?.state !== "ready") return;
-	openSettings("connections");
 }
 
 $("#wa-start").onclick = async () => {

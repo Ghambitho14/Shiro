@@ -1,7 +1,9 @@
 # Cambios en Shiro: interfaz nueva, voz y control del PC
 
+> **Historial.** Así se escribió en septiembre; algunas cosas cambiaron después.
+> El estado actual está en `README.md` y `AGENTS.md`.
+
 **Fecha:** 30 de septiembre de 2026
-**Rama:** `mejoras-agente` (los cambios **no** están guardados en git todavía)
 
 ## Resumen
 
@@ -215,7 +217,7 @@ Estas preferencias se guardan **en el navegador**, no en `config.json`: idioma d
 | `public/js/icons.js` | Iconos SVG |
 | `public/icons/icon-64.png`, `icon-192.png`, `icon-512.png` | Iconos de la app (hechos a partir de `Shiro.PNG`) |
 | `public/manifest.webmanifest`, `public/sw.js` | Para instalar Shiro como aplicación |
-| `CAMBIOS.md` | Este documento |
+| `docs/historial-septiembre.md` (antes `CAMBIOS.md`) | Este documento |
 
 ### Archivos modificados
 

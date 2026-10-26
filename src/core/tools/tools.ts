@@ -56,7 +56,8 @@ export function getWorkspaceDir(): string {
 }
 
 function getSystemRoot(): string {
-	const envRoot = process.env.PICLAW_SYSTEM_ROOT?.trim();
+	// PICLAW_SYSTEM_ROOT es el nombre viejo: se sigue aceptando.
+	const envRoot = (process.env.SHIRO_SYSTEM_ROOT || process.env.PICLAW_SYSTEM_ROOT)?.trim();
 	if (envRoot) return resolve(envRoot);
 	const home = process.env.USERPROFILE || process.env.HOME;
 	if (home) return resolve(home);
@@ -565,16 +566,6 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 						});
 					});
 				});
-			}
-			case "ask_user": {
-				const question = args_.question ? String(args_.question).trim() : "";
-				
-				if (!question) return { ok: false, error: "La pregunta es requerida" };
-				
-				return { 
-					ok: true, 
-					content: `🤔 PREGUNTA: ${question}\n\n(Responde a esta pregunta para que pueda ayudarte mejor)` 
-				};
 			}
 			default:
 				return { ok: false, error: "Herramienta desconocida: " + name };

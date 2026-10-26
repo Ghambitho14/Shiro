@@ -12,7 +12,7 @@
 | `SHIRO_LLM_MODEL` | Nombre del modelo. |
 | `SHIRO_LLM_API_KEY` | API key (o `OPENROUTER_API_KEY` / `OPENCODE_API_KEY` / `VLLM_API_KEY`). |
 | `WA_ALLOWED_CHAT` | Chat de WhatsApp con acceso completo; sin él, solo herramientas públicas. |
-| `PICLAW_SYSTEM_ROOT` | Raíz permitida para herramientas de sistema (opcional). |
+| `SHIRO_SYSTEM_ROOT` | Raíz permitida para herramientas de sistema (opcional). |
 | `SHIRO_DATA_DIR` | Carpeta de datos en vez de `data/` del proyecto (opcional). |
 
 La configuración persistente del asistente vive en `data/config.json` (modelo, proveedor, `maxToolIterations`, `skillPaths`, etc.).

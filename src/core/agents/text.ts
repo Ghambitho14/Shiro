@@ -17,11 +17,6 @@ export function normalizeName(s: string): string {
 	return normalizeText(s);
 }
 
-export function tokenize(s: string, keepAt = false): string[] {
-	const n = normalizeText(s, keepAt);
-	return n ? n.split(" ") : [];
-}
-
 /** "Señor Lunes" → "senor-lunes". */
 export function slugify(s: string): string {
 	return normalizeName(s).replace(/ /g, "-").slice(0, 40).replace(/-+$/, "");

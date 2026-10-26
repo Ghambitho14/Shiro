@@ -284,25 +284,6 @@ function sanitizeAllowedTools(input: unknown): string[] | undefined {
 	return unique.length > 0 ? unique : getAllToolNames();
 }
 
-function isWhatsAppConfigureIntent(text: string): boolean {
-	const t = text.toLowerCase();
-	return (t.includes("whatsapp") && (t.includes("config") || t.includes("conectar") || t.includes("iniciar") || t.includes("hablar") || t.includes("activar")))
-		|| t.includes("quiero configurar whatsapp")
-		|| t.includes("activar whatsapp")
-		|| t.includes("hablar por whatsapp")
-		|| t.includes("conectar whatsapp");
-}
-
-function isWhatsAppStopIntent(text: string): boolean {
-	const t = text.toLowerCase();
-	return t.includes("detener whatsapp") || t.includes("apagar whatsapp") || t.includes("desconectar whatsapp");
-}
-
-function isWhatsAppStatusIntent(text: string): boolean {
-	const t = text.toLowerCase();
-	return t.includes("estado whatsapp") || t.includes("status whatsapp") || t.includes("como va whatsapp");
-}
-
 async function buildWhatsAppResponse(): Promise<{ status: ReturnType<typeof getWhatsAppBridgeStatus>; qrDataUrl: string | null }> {
 	const status = getWhatsAppBridgeStatus();
 	const qrDataUrl = status.qr ? await QRCode.toDataURL(status.qr, { margin: 1, width: 280 }) : null;
@@ -908,102 +889,6 @@ const server = createServer(async (req, res) => {
 			return;
 		}
 		const streamSse = pathname === "/api/chat/stream";
-		if (isWhatsAppConfigureIntent(userContent)) {
-			try {
-				console.log("[WhatsApp] Iniciando configuración...");
-				await startWhatsAppBridge({ printQrToConsole: true });
-				console.log("[WhatsApp] Cliente iniciado, esperando QR...");
-				
-				// Esperar hasta que aparezca el QR o pase timeout
-				let attempts = 0;
-				const maxAttempts = 20; // 20 * 500ms = 10 segundos
-				let data = await buildWhatsAppResponse();
-				while (attempts < maxAttempts) {
-					await new Promise(r => setTimeout(r, 500));
-					data = await buildWhatsAppResponse();
-					if (data.qrDataUrl || data.status.state === "ready" || data.status.lastError) {
-						break;
-					}
-					attempts++;
-				}
-				
-				console.log("[WhatsApp] Estado final:", data.status.state, "| QR:", data.qrDataUrl ? "sí" : "no", "| Error:", data.status.lastError);
-				const base = data.status.state === "ready"
-					? "WhatsApp ya está conectado."
-					: "Inicié la configuración de WhatsApp.";
-				let extraInfo = "";
-			if (data.status.lastError) {
-				extraInfo = `\n\n⚠️ Error anterior: ${data.status.lastError}`;
-			} else if (!data.qrDataUrl && data.status.state !== "ready") {
-				extraInfo = "\n\n📝 El código QR debería aparecer en la consola del servidor (terminal donde ejecutaste Shiro). Si no lo ves, espera unos segundos y pregunta de nuevo \"estado whatsapp\".";
-			}
-			const content = data.status.state === "ready"
-				? "WhatsApp ya está conectado y funcionando."
-				: data.qrDataUrl
-					? `${base} Escanea el código QR que te muestro abajo desde WhatsApp > Dispositivos vinculados.`
-					: `${base} Preparando QR...${extraInfo}`;
-				const waPayload = { ...data.status, qrDataUrl: data.qrDataUrl };
-				if (streamSse) {
-					res.writeHead(200, {
-						"Content-Type": "text/event-stream; charset=utf-8",
-						"Cache-Control": "no-cache, no-transform",
-						Connection: "keep-alive",
-					});
-					sendSseData(res, { type: "done", content, whatsapp: waPayload });
-					res.end();
-				} else {
-					sendJson(res, 200, { content, whatsapp: waPayload });
-				}
-			} catch (err) {
-				const message = err instanceof Error ? err.message : String(err);
-				sendJson(res, 502, { error: `No pude iniciar WhatsApp: ${message}` });
-			}
-			return;
-		}
-		if (isWhatsAppStopIntent(userContent)) {
-			try {
-				await stopWhatsAppBridge();
-				const data = await buildWhatsAppResponse();
-				const stopContent = "He detenido el puente de WhatsApp. Si quieres volver a conectarlo, dime: configurar whatsapp.";
-				const waPayload = { ...data.status, qrDataUrl: data.qrDataUrl };
-				if (streamSse) {
-					res.writeHead(200, {
-						"Content-Type": "text/event-stream; charset=utf-8",
-						"Cache-Control": "no-cache, no-transform",
-						Connection: "keep-alive",
-					});
-					sendSseData(res, { type: "done", content: stopContent, whatsapp: waPayload });
-					res.end();
-				} else {
-					sendJson(res, 200, { content: stopContent, whatsapp: waPayload });
-				}
-			} catch (err) {
-				const message = err instanceof Error ? err.message : String(err);
-				sendJson(res, 502, { error: `No pude detener WhatsApp: ${message}` });
-			}
-			return;
-		}
-		if (isWhatsAppStatusIntent(userContent)) {
-			const data = await buildWhatsAppResponse();
-			const content = data.status.state === "ready"
-				? "WhatsApp está conectado."
-				: data.qrDataUrl
-					? "WhatsApp está esperando QR. Te lo muestro abajo."
-					: `WhatsApp está en estado: ${data.status.state}.`;
-			const waPayload = { ...data.status, qrDataUrl: data.qrDataUrl };
-			if (streamSse) {
-				res.writeHead(200, {
-					"Content-Type": "text/event-stream; charset=utf-8",
-					"Cache-Control": "no-cache, no-transform",
-					Connection: "keep-alive",
-				});
-				sendSseData(res, { type: "done", content, whatsapp: waPayload });
-				res.end();
-			} else {
-				sendJson(res, 200, { content, whatsapp: waPayload });
-			}
-			return;
-		}
 		let lockedRoom: string | undefined;
 		try {
 			setHealthActive();
