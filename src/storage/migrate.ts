@@ -2,13 +2,13 @@
  * "Llevar mis datos": copia chats, recuerdos, recordatorios y notas de memoria de un almacén a otro
  * al cambiar en Ajustes → Datos. No borra nada del sitio de origen.
  */
-import { cpSync, existsSync, readdirSync } from "node:fs";
+import { cpSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { chatBackendFor, mirrorChatToObsidian } from "../chat/backends.js";
 import { sanitizeMessages } from "../chat/ChatStore.js";
 import { memoryBackendFor } from "../core/memory/memories.js";
 import { reminderBackendFor, type Reminder } from "../core/reminders/reminders.js";
-import { workspaceDirFor } from "../workspace.js";
+import { NOTE_TEMPLATES, workspaceDirFor } from "../workspace.js";
 import { vaultOf, type StorageSettings } from "./storage.js";
 
 export type MigrationResult = { chats: number; memories: number; reminders: number; files: number };
@@ -63,18 +63,50 @@ export async function migrateStorage(from: StorageSettings, to: StorageSettings)
 		result.reminders = incoming.length;
 	}
 
-	// Notas de memoria (SOUL.md, MEMORY.md, memory/…) y archivos del workspace. No se copian las
-	// habilidades ni las copias legibles que solo existen en Obsidian (chats, recuerdos y recordatorios).
+	// Notas de memoria (SOUL.md, MEMORY.md…) y archivos del workspace. No se copian las habilidades
+	// ni las copias legibles que solo existen en Obsidian (chats, recuerdos y recordatorios).
 	const skip = new Set(["skills", "Chats", "Recuerdos", "Recordatorios.md"]);
 	const fromDir = workspaceDirFor(from);
 	const toDir = workspaceDirFor(to);
 	if (resolve(fromDir) !== resolve(toDir) && existsSync(fromDir)) {
 		for (const entry of readdirSync(fromDir)) {
 			if (skip.has(entry) || entry.startsWith(".")) continue;
+			if (Object.hasOwn(NOTE_TEMPLATES, entry)) {
+				if (mergeNote(entry, join(fromDir, entry), join(toDir, entry))) result.files++;
+				continue;
+			}
 			cpSync(join(fromDir, entry), join(toDir, entry), { recursive: true, force: true });
 			result.files++;
 		}
 	}
 
 	return result;
+}
+
+const readText = (file: string) => (existsSync(file) ? readFileSync(file, "utf-8").replace(/\r\n/g, "\n").trim() : "");
+
+/**
+ * SOUL.md, TOOLS.md y MEMORY.md: si en el destino siguen como se crearon (o faltan), se copian.
+ * Si el usuario ya las cambió allí, no se pisan: a MEMORY.md se le añade lo que traía el origen
+ * y SOUL.md/TOOLS.md se quedan como están. Devuelve true si cambió algo.
+ */
+function mergeNote(name: string, fromFile: string, toFile: string): boolean {
+	const template = NOTE_TEMPLATES[name]!.trim();
+	const incoming = readText(fromFile);
+	const current = readText(toFile);
+	if (!incoming || incoming === current) return false;
+	if (!current || current === template) {
+		cpSync(fromFile, toFile, { force: true });
+		return true;
+	}
+	if (name !== "MEMORY.md") return false;
+	const header = template.split("\n\n")[0]!;
+	const body = (incoming.startsWith(header) ? incoming.slice(header.length) : incoming).trim();
+	const extra = body
+		.split("\n")
+		.filter((line) => line.trim() && !current.includes(line.trim()) && !template.includes(line.trim()))
+		.join("\n");
+	if (!extra) return false;
+	writeFileSync(toFile, `${current}\n\n## Traído al cambiar dónde se guardan los datos\n${extra}\n`, "utf-8");
+	return true;
 }

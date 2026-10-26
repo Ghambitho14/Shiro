@@ -1,13 +1,13 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { basename, join, dirname } from "node:path";
 import { DATA_DIR } from "./config/config.js";
-import { obsidianRoot } from "./storage/obsidian.js";
+import { OBSIDIAN_FOLDER, obsidianRoot } from "./storage/obsidian.js";
 import { currentStorage, type StorageSettings } from "./storage/storage.js";
 
 /** Workspace en este equipo. Las habilidades propias (skills/) viven siempre aquí. */
 export const LOCAL_WORKSPACE_DIR = join(DATA_DIR, "workspace");
 
-/** Carpeta de las notas de memoria (SOUL.md, MEMORY.md, memory/) y de write_file para unos ajustes. */
+/** Carpeta de las notas de memoria (SOUL.md, MEMORY.md…) y de write_file para unos ajustes. */
 export function workspaceDirFor(s: StorageSettings): string {
 	return s.kind === "obsidian" && s.obsidianVault ? obsidianRoot(s.obsidianVault) : LOCAL_WORKSPACE_DIR;
 }
@@ -38,6 +38,28 @@ _No eres un chatbot. Estás siendo alguien._
 
 - **Sé útil de verdad**, no solo parecerlo. Evita relleno; actúa.
 - **Ten opiniones.** Puedes preferir, discrepar, encontrar algo aburrido o divertido.
+- **Usa contexto.** Tu memoria (MEMORY.md y tus recuerdos) es tu continuidad. Consúltala y actualízala.
+- **Respeta la intimidad.** Lo privado se queda privado.
+
+## Límites
+
+- No envíes respuestas a medias. Si dudas, pregunta antes de actuar fuera del chat.
+- Eres el asistente; no suplantes la voz del usuario.
+
+## Continuidad
+
+Cada sesión empieza fresca. Lo que debe durar va en tu memoria: guárdalo con memory_add y búscalo con memory_search.
+`;
+
+/** SOUL.md que se creaba antes: si nadie lo cambió, se pasa al nuevo (hablaba de memory/, que ya no se usa). */
+const OLD_SOUL_TEMPLATE = `# SOUL.md — Quién eres
+
+_No eres un chatbot. Estás siendo alguien._
+
+## Verdades
+
+- **Sé útil de verdad**, no solo parecerlo. Evita relleno; actúa.
+- **Ten opiniones.** Puedes preferir, discrepar, encontrar algo aburrido o divertido.
 - **Usa contexto.** Estos archivos (SOUL, MEMORY, memory/) son tu continuidad. Léelos y actualízalos.
 - **Respeta la intimidad.** Lo privado se queda privado.
 
@@ -49,16 +71,6 @@ _No eres un chatbot. Estás siendo alguien._
 ## Continuidad
 
 Cada sesión empieza fresca. SOUL.md, MEMORY.md y memory/YYYY-MM-DD.md son tu memoria. Actualízalos cuando aprendas algo que deba persistir.
-`;
-
-const HEARTBEAT_TEMPLATE = `# HEARTBEAT.md — Tareas periódicas
-
-Lista corta de cosas que revisar cuando haya un heartbeat (ej. recordatorios, comprobaciones).
-
-- [ ] Revisar si hay algo urgente
-- [ ] Actualizar memory/ con lo relevante del día
-
-Si no hay nada que hacer, responde HEARTBEAT_OK.
 `;
 
 const TOOLS_TEMPLATE = `# TOOLS.md — Guía de herramientas
@@ -98,6 +110,9 @@ function writeIfMissing(filePath: string, content: string): void {
 
 const MEMORY_TEMPLATE = "# MEMORY.md — Memoria a largo plazo\n\nHechos, decisiones y contexto que quieres recordar.\n";
 
+/** Texto con el que se crea cada nota (para saber si el usuario la cambió). */
+export const NOTE_TEMPLATES: Record<string, string> = { "SOUL.md": SOUL_TEMPLATE, "TOOLS.md": TOOLS_TEMPLATE, "MEMORY.md": MEMORY_TEMPLATE };
+
 /** Notas del workspace que van en el system prompt y se editan en Ajustes → Personalización. */
 export const EDITABLE_NOTES = {
 	soul: { file: "SOUL.md", template: SOUL_TEMPLATE },
@@ -128,9 +143,10 @@ export function writeNote(note: EditableNote, content?: string): string {
 /** Crea el workspace y archivos por defecto si no existen. */
 export function ensureWorkspace(): void {
 	const dir = getWorkspaceDir();
-	ensureDir(join(dir, "memory"));
-	writeIfMissing(join(dir, "SOUL.md"), SOUL_TEMPLATE);
-	writeIfMissing(join(dir, "HEARTBEAT.md"), HEARTBEAT_TEMPLATE);
+	ensureDir(dir);
+	const soul = join(dir, "SOUL.md");
+	if (readFileSafe(soul) === OLD_SOUL_TEMPLATE.trim()) writeFileSync(soul, SOUL_TEMPLATE, "utf-8");
+	writeIfMissing(soul, SOUL_TEMPLATE);
 	writeIfMissing(join(dir, "MEMORY.md"), MEMORY_TEMPLATE);
 	writeIfMissing(join(dir, "TOOLS.md"), TOOLS_TEMPLATE);
 	ensureDir(join(LOCAL_WORKSPACE_DIR, "skills"));
@@ -156,49 +172,64 @@ export function readMemoryLongTerm(): string | null {
 	return readFileSafe(join(getWorkspaceDir(), "MEMORY.md"));
 }
 
-/** Fecha en YYYY-MM-DD (local). */
-function todayISO(): string {
+/** Apunta un dato en MEMORY.md (una línea con la fecha). No lo repite si ya estaba. */
+export function appendLongTermMemory(text: string, s: StorageSettings = currentStorage()): boolean {
+	const line = text.replace(/\s+/g, " ").trim();
+	if (!line) return false;
+	const file = join(workspaceDirFor(s), "MEMORY.md");
+	const current = existsSync(file) ? readFileSync(file, "utf-8") : MEMORY_TEMPLATE;
+	if (current.toLowerCase().includes(line.toLowerCase())) return false;
 	const d = new Date();
-	return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+	const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+	ensureDir(dirname(file));
+	writeFileSync(file, `${current.trimEnd()}\n- ${line} _(${date})_\n`, "utf-8");
+	return true;
 }
 
-/** Contenido de memory/YYYY-MM-DD.md para hoy y ayer (máx. ~4k chars por archivo). */
-export function readMemoryRecent(maxCharsPerFile = 4000): string {
-	ensureWorkspace();
-	const today = todayISO();
-	const yesterday = (() => {
-		const d = new Date();
-		d.setDate(d.getDate() - 1);
-		return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
-	})();
-	let out = "";
-	for (const date of [today, yesterday]) {
-		const content = readFileSafe(join(getWorkspaceDir(), "memory", `${date}.md`));
-		if (content) {
-			const slice = content.length > maxCharsPerFile ? content.slice(0, maxCharsPerFile) + "\n…" : content;
-			out += `## memory/${date}.md\n${slice}\n\n`;
+/**
+ * Le explica al modelo dónde está su memoria según Ajustes → Datos. Sin esto, con Obsidian
+ * creía que la bóveda era algo aparte y decía que no tenía acceso.
+ */
+export function buildMemoryGuide(s: StorageSettings = currentStorage()): string {
+	const save =
+		"Cuando aprendas algo del usuario que valga la pena recordar, guárdalo con memory_add (important=true si debes tenerlo siempre presente: su nombre, gustos, proyectos…). Para recordar algo, búscalo con memory_search antes de decir que no lo sabes.";
+	if (s.kind === "obsidian" && s.obsidianVault) {
+		const vault = basename(s.obsidianVault);
+		if (getWorkspaceDir() !== obsidianRoot(s.obsidianVault)) {
+			return `## Tu memoria\nTu memoria se guarda en la carpeta «${OBSIDIAN_FOLDER}» de la bóveda de Obsidian «${vault}», pero ahora no la encuentro (¿disco desconectado?): mientras tanto usas las notas de este equipo. Si el usuario pregunta por Obsidian, explícaselo.\n${save}`;
 		}
+		return [
+			"## Tu memoria",
+			`Tu memoria está en Obsidian, en la carpeta «${OBSIDIAN_FOLDER}» de la bóveda «${vault}» del usuario. Esas notas SON tu memoria, no algo aparte: si te pregunta por Obsidian, por su bóveda o por lo que recuerdas, se refiere a ellas y sí tienes acceso.`,
+			"- MEMORY.md: lo importante y duradero (lo tienes más abajo).",
+			"- Recuerdos/: una nota por cada dato que guardas con memory_add.",
+			"- Chats/: una copia de cada conversación. Recordatorios.md: los recordatorios.",
+			`memory_search busca en toda la carpeta «${OBSIDIAN_FOLDER}». Para abrir, listar o escribir una nota usa read_file, list_dir o write_file con la ruta dentro de esa carpeta (p. ej. "MEMORY.md" o "Recuerdos"). El resto de la bóveda no lo ves.`,
+			save,
+		].join("\n");
 	}
-	return out.trim() || "";
+	if (s.kind === "supabase") {
+		return `## Tu memoria\nTus recuerdos (memory_add y memory_search) están en Supabase, compartidos con los otros equipos del usuario. MEMORY.md (lo importante y duradero, lo tienes más abajo) está en este equipo.\n${save}`;
+	}
+	return `## Tu memoria\nTu memoria está en este equipo, en la carpeta de datos de Shiro: MEMORY.md (lo importante y duradero, lo tienes más abajo) y los recuerdos que guardas con memory_add. No usas Obsidian: si el usuario lo menciona, dile que puede elegir guardar tu memoria en su bóveda en Ajustes → Datos.\n${save}`;
 }
-
-/** Contenido de HEARTBEAT.md (checklist para tareas periódicas). */
 /** Contenido de TOOLS.md (heurísticas de uso de herramientas). */
 export function readToolsGuide(): string | null {
 	ensureWorkspace();
 	return readFileSafe(join(getWorkspaceDir(), "TOOLS.md"));
 }
 
-/** Construye el bloque de contexto (soul + memory) para inyectar en el system prompt. */
+/**
+ * Construye el bloque de contexto para el system prompt: dónde está la memoria, SOUL.md, MEMORY.md
+ * y TOOLS.md, en ese orden (si no cabe todo, se recorta por el final).
+ */
 export function buildWorkspaceContext(opts: { includeLongTermMemory?: boolean } = {}): string {
 	const soul = readSoul();
-	const toolsGuide = readToolsGuide();
-	const recent = readMemoryRecent();
 	const longTerm = opts.includeLongTermMemory ? readMemoryLongTerm() : null;
-	const parts: string[] = [];
+	const toolsGuide = readToolsGuide();
+	const parts = [buildMemoryGuide()];
 	if (soul) parts.push("## SOUL.md (quién eres)\n" + soul);
-	if (toolsGuide) parts.push("## TOOLS.md (guía de herramientas)\n" + toolsGuide);
-	if (recent) parts.push("## Memoria reciente (hoy/ayer)\n" + recent);
 	if (longTerm) parts.push("## MEMORY.md (memoria a largo plazo)\n" + longTerm);
-	return parts.length ? parts.join("\n\n") : "";
+	if (toolsGuide) parts.push("## TOOLS.md (guía de herramientas)\n" + toolsGuide);
+	return parts.join("\n\n");
 }

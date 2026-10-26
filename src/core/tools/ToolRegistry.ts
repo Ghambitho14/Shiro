@@ -242,7 +242,7 @@ export const TOOLS: ToolDefinition[] = [
 	{
 		label: "Buscar en Memoria",
 		name: "memory_search",
-		description: "Busca en los recuerdos guardados (y, si el usuario guarda sus cosas en Obsidian, en todas sus notas). Úsalo cuando pregunte por algo que se haya hablado antes o por lo que tiene en sus notas.",
+		description: "Busca en tu memoria: los recuerdos guardados y, si el usuario guarda tus cosas en Obsidian, todas las notas de la carpeta Shiro de su bóveda. Úsalo cuando pregunte por algo que se haya hablado antes, por lo que recuerdas o por sus notas de Obsidian.",
 		category: "memoria",
 		parameters: {
 			type: "object",
@@ -269,6 +269,10 @@ export const TOOLS: ToolDefinition[] = [
 				content: { type: "string", description: "Contenido a recordar" },
 				type: { type: "string", description: "Tipo: conversation, tool_call, observation, decision" },
 				tags: { type: "array", items: { type: "string" }, description: "Etiquetas opcionales" },
+				important: {
+					type: "boolean",
+					description: "true si debes tenerlo siempre presente (su nombre, gustos, proyectos): además se apunta en MEMORY.md",
+				},
 			},
 			required: ["content"],
 		},

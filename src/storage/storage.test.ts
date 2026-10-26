@@ -17,7 +17,7 @@ const chats = await import("../chat/ChatStore.js");
 const memories = await import("../core/memory/memories.js");
 const reminders = await import("../core/reminders/reminders.js");
 const obsidian = await import("./obsidian.js");
-const { getWorkspaceDir, ensureWorkspace, LOCAL_WORKSPACE_DIR } = await import("../workspace.js");
+const { getWorkspaceDir, ensureWorkspace, buildMemoryGuide, LOCAL_WORKSPACE_DIR } = await import("../workspace.js");
 const { migrateStorage } = await import("./migrate.js");
 const supabase = await import("./supabase.js");
 const { testStorage } = await import("./storage.js");
@@ -118,7 +118,7 @@ test("pasar a Obsidian lleva chats, recuerdos, recordatorios y notas de memoria"
 	assert.match(readFileSync(join(root, "Recordatorios.md"), "utf-8"), /Llamar a mamá/);
 });
 
-test("con Obsidian, cada chat tiene su nota y la búsqueda mira toda la bóveda", async () => {
+test("con Obsidian, cada chat tiene su nota y la búsqueda mira solo la carpeta Shiro", async () => {
 	setConfig({ storage: "obsidian", obsidianVault: VAULT });
 	const c = await chats.createChatSession([{ role: "user", content: "Receta de cachapas" }]);
 	const notes = () => readdirSync(join(VAULT, "Shiro", "Chats")).filter((f) => f.includes(c.id.slice(0, 8)));
@@ -135,9 +135,55 @@ test("con Obsidian, cada chat tiene su nota y la búsqueda mira toda la bóveda"
 	assert.equal(m.embedding, undefined);
 	const found = await memories.searchMemories("color favorito", 3);
 	assert.equal(found[0]?.content, "Su color favorito es el verde");
-	const vault = await memories.searchMemories("arepa pepiada", 3);
-	assert.equal(vault[0]?.source, "Recetas.md");
-	assert.match(vault[0]?.content ?? "", /aguacate/);
+	assert.match(found[0]?.source ?? "", /^Recuerdos[\\/]/, "ruta que entiende read_file");
+
+	// Recetas.md está fuera de la carpeta Shiro: no es memoria de Shiro.
+	assert.deepEqual(await memories.searchMemories("arepa pepiada", 3), []);
+	mkdirSync(join(VAULT, "Shiro", "Notas"), { recursive: true });
+	writeFileSync(join(VAULT, "Shiro", "Notas", "Cachapas.md"), "# Cachapas\n\nLas cachapas llevan queso de mano.\n");
+	const inside = await memories.searchMemories("cachapas queso", 3);
+	assert.equal(inside[0]?.source, join("Notas", "Cachapas.md"));
+	assert.match(inside[0]?.content ?? "", /queso de mano/);
+});
+
+test("los recuerdos importantes también van a MEMORY.md, sin repetirse", async () => {
+	setConfig({ storage: "obsidian", obsidianVault: VAULT });
+	ensureWorkspace();
+	const file = join(VAULT, "Shiro", "MEMORY.md");
+	await memories.addMemory({ content: "Se llama Ghambitho y\nestudia ciberseguridad", important: true });
+	await memories.addMemory({ content: "Se llama Ghambitho y estudia ciberseguridad", important: true });
+	await memories.addMemory({ content: "Hoy almorzó arepas" });
+	const text = readFileSync(file, "utf-8");
+	assert.equal(text.match(/estudia ciberseguridad/g)?.length, 1);
+	assert.match(text, /^- Se llama Ghambitho y estudia ciberseguridad _\(\d{4}-\d{2}-\d{2}\)_$/m);
+	assert.doesNotMatch(text, /arepas/);
+});
+
+test("el modelo sabe dónde está su memoria", () => {
+	const obs = buildMemoryGuide(OBSIDIAN);
+	assert.match(obs, /Obsidian/);
+	assert.match(obs, /«Boveda»/);
+	assert.match(obs, /SON tu memoria/);
+	assert.match(obs, /Recuerdos\//);
+	assert.match(buildMemoryGuide({ kind: "obsidian", obsidianVault: join(TMP, "no-existe") }), /no la encuentro/);
+	assert.match(buildMemoryGuide(LOCAL), /en este equipo/);
+	assert.match(buildMemoryGuide({ kind: "supabase" }), /Supabase/);
+	for (const s of [OBSIDIAN, LOCAL]) assert.match(buildMemoryGuide(s), /memory_add/);
+});
+
+test("al cambiar de sitio no se pisa un MEMORY.md que ya tiene cosas", async () => {
+	const other = join(TMP, "Otra");
+	mkdirSync(join(other, "Shiro"), { recursive: true });
+	writeFileSync(join(other, "Shiro", "MEMORY.md"), "# MEMORY.md\n\n- Vive en Caracas\n");
+	writeFileSync(join(other, "Shiro", "SOUL.md"), "# Soy Aku\n");
+	await migrateStorage(OBSIDIAN, { kind: "obsidian", obsidianVault: other });
+	const memory = readFileSync(join(other, "Shiro", "MEMORY.md"), "utf-8");
+	assert.match(memory, /Vive en Caracas/);
+	assert.match(memory, /estudia ciberseguridad/);
+	assert.equal(memory.match(/Vive en Caracas/g)?.length, 1);
+	assert.equal(readFileSync(join(other, "Shiro", "SOUL.md"), "utf-8"), "# Soy Aku\n", "SOUL.md cambiado se respeta");
+	await migrateStorage(OBSIDIAN, { kind: "obsidian", obsidianVault: other });
+	assert.equal(readFileSync(join(other, "Shiro", "MEMORY.md"), "utf-8"), memory, "repetir no duplica");
 });
 
 test("volver a este equipo trae las notas de la bóveda", async () => {

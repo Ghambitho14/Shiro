@@ -1,7 +1,7 @@
 /**
  * Recuerdos de Shiro (tools memory_add / memory_search), guardados donde diga Ajustes → Datos:
  * - local: data/memories.json
- * - obsidian: una nota por recuerdo en <bóveda>/Shiro/Recuerdos (y la búsqueda mira toda la bóveda)
+ * - obsidian: una nota por recuerdo en <bóveda>/Shiro/Recuerdos (y la búsqueda mira toda la carpeta Shiro)
  * - supabase: tabla shiro_memories
  * La búsqueda usa palabras clave y, si Ollama da embeddings, también significado (similitud).
  */
@@ -9,9 +9,10 @@ import { existsSync, readFileSync, statSync, writeFileSync, mkdirSync } from "no
 import { join, relative } from "node:path";
 import { randomUUID } from "node:crypto";
 import { DATA_DIR } from "../../config/config.js";
-import { readMemoryNotes, vaultNotes, writeMemoryNote } from "../../storage/obsidian.js";
+import { obsidianRoot, readMemoryNotes, shiroNotes, writeMemoryNote } from "../../storage/obsidian.js";
 import { currentStorage, supabaseOf, vaultOf, type StorageSettings } from "../../storage/storage.js";
 import { supabaseRequest } from "../../storage/supabase.js";
+import { appendLongTermMemory } from "../../workspace.js";
 import { getEmbeddingsProvider } from "./EmbeddingsClient.js";
 
 export type MemoryType = "conversation" | "tool_call" | "observation" | "decision";
@@ -24,7 +25,7 @@ export type Memory = {
 	tags?: string[];
 	createdAt: string;
 	embedding?: number[];
-	/** Nota de Obsidian de donde sale (ruta relativa a la bóveda). */
+	/** Nota de Obsidian de donde sale (ruta relativa a la carpeta Shiro, la que entiende read_file). */
 	source?: string;
 };
 
@@ -161,7 +162,8 @@ function snippet(text: string, words: string[], max = 300): string {
 
 // ───────────────────────────── API ─────────────────────────────
 
-export async function addMemory(input: { content: string; type?: string; tags?: string[] }, s = currentStorage()): Promise<Memory> {
+/** Guarda un recuerdo. Con important, también se apunta en MEMORY.md (que va siempre en el system prompt). */
+export async function addMemory(input: { content: string; type?: string; tags?: string[]; important?: boolean }, s = currentStorage()): Promise<Memory> {
 	const content = input.content.trim();
 	if (!content) throw new Error("El recuerdo está vacío.");
 	const type = MEMORY_TYPES.includes(input.type as MemoryType) ? (input.type as MemoryType) : "observation";
@@ -173,6 +175,7 @@ export async function addMemory(input: { content: string; type?: string; tags?: 
 		if (embedding) memory.embedding = embedding;
 	}
 	await memoryBackendFor(s).add(memory);
+	if (input.important) appendLongTermMemory(content, s);
 	return memory;
 }
 
@@ -180,7 +183,7 @@ export async function listMemories(s = currentStorage()): Promise<Memory[]> {
 	return memoryBackendFor(s).all();
 }
 
-/** Busca en los recuerdos (y, con Obsidian, en todas las notas de la bóveda). */
+/** Busca en los recuerdos (y, con Obsidian, en todas las notas de la carpeta Shiro). */
 export async function searchMemories(query: string, limit = 5, s = currentStorage()): Promise<MemoryHit[]> {
 	const words = keywords(query);
 	const memories = await memoryBackendFor(s).all();
@@ -193,8 +196,8 @@ export async function searchMemories(query: string, limit = 5, s = currentStorag
 		if (score > 0) hits.push({ content: m.content, createdAt: m.createdAt, source: m.source, score });
 	}
 	if (s.kind === "obsidian" && words.length) {
-		const vault = vaultOf(s);
-		for (const file of vaultNotes(vault)) {
+		const root = obsidianRoot(vaultOf(s));
+		for (const file of shiroNotes(vaultOf(s))) {
 			let text: string;
 			try {
 				if (statSync(file).size > 300_000) continue;
@@ -203,7 +206,7 @@ export async function searchMemories(query: string, limit = 5, s = currentStorag
 				continue;
 			}
 			const score = keywordScore(words, `${file} ${text}`);
-			if (score > 0) hits.push({ content: snippet(text, words), source: relative(vault, file), score: score * 0.9 });
+			if (score > 0) hits.push({ content: snippet(text, words), source: relative(root, file), score: score * 0.9 });
 		}
 	}
 	return hits.sort((a, b) => b.score - a.score).slice(0, Math.max(1, limit));

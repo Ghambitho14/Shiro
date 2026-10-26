@@ -1,6 +1,7 @@
 /**
- * Obsidian como almacén: todo va a la carpeta "Shiro" de la bóveda, en notas Markdown.
- * - Shiro/            → SOUL.md, MEMORY.md, memory/AAAA-MM-DD.md y lo que escriba write_file
+ * Obsidian como almacén: todo va a la carpeta "Shiro" de la bóveda, en notas Markdown. Es la memoria
+ * del asistente: no lee ni busca fuera de esa carpeta.
+ * - Shiro/            → SOUL.md, TOOLS.md, MEMORY.md y lo que escriba write_file
  * - Shiro/Recuerdos/  → una nota por recuerdo (memory_add); las que escribas tú también cuentan
  * - Shiro/Chats/      → copia legible de cada chat (el chat en sí sigue en el índice de este equipo)
  * - Shiro/Recordatorios.md → lista de recordatorios (copia legible)
@@ -221,7 +222,7 @@ export function readMemoryNotes(vault: string): NoteMemory[] {
 				type: meta.tipo || "observation",
 				tags: tags.length ? tags : undefined,
 				createdAt: meta.fecha || statSync(file).mtime.toISOString(),
-				source: relative(vault, file),
+				source: relative(obsidianRoot(vault), file),
 			});
 		} catch {
 			// nota ilegible: se ignora
@@ -230,10 +231,10 @@ export function readMemoryNotes(vault: string): NoteMemory[] {
 	return out;
 }
 
-// ───────────────────────────── búsqueda en la bóveda ─────────────────────────────
+// ───────────────────────────── búsqueda en la carpeta Shiro ─────────────────────────────
 
-/** Notas .md de la bóveda (sin carpetas ocultas ni las copias de chats/recuerdos de Shiro). */
-export function vaultNotes(vault: string, maxFiles = 3000): string[] {
+/** Notas .md de la carpeta Shiro de la bóveda (sin carpetas ocultas ni las copias de chats/recuerdos). */
+export function shiroNotes(vault: string, maxFiles = 3000): string[] {
 	const skip = new Set([chatsDir(vault), memoriesDir(vault)].map((p) => p.toLowerCase()));
 	const files: string[] = [];
 	const walk = (dir: string) => {
@@ -252,6 +253,6 @@ export function vaultNotes(vault: string, maxFiles = 3000): string[] {
 			else if (e.name.endsWith(".md")) files.push(full);
 		}
 	};
-	walk(vault);
+	walk(obsidianRoot(vault));
 	return files;
 }
