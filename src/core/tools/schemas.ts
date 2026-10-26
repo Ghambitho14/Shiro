@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+/** Algunos modelos mandan los booleanos como texto ("true"/"false"). */
+const optionalBool = z.preprocess((v) => (typeof v === "string" ? v.trim().toLowerCase() === "true" : v), z.boolean().optional());
+
 export const readFileSchema = z.object({
 	path: z.string().min(1, "path requerido"),
 });
@@ -96,6 +99,7 @@ export const memoryAddSchema = z.object({
 	content: z.string().min(1, "contenido requerido"),
 	type: z.string().optional(),
 	tags: z.array(z.string()).optional(),
+	important: optionalBool,
 });
 
 export const sessionsListSchema = z.object({});
@@ -157,9 +161,6 @@ export const pcPowerSchema = z.object({
 	action: z.enum(["lock", "sleep", "shutdown", "restart", "logoff", "cancel"]),
 	delay_minutes: optionalNumber(0, 1440),
 });
-
-/** Algunos modelos mandan los booleanos como texto ("true"/"false"). */
-const optionalBool = z.preprocess((v) => (typeof v === "string" ? v.trim().toLowerCase() === "true" : v), z.boolean().optional());
 
 export const browserSchema = z
 	.object({

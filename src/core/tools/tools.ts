@@ -428,9 +428,13 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 				const content = String(args_.content ?? "").trim();
 				if (!content) return { ok: false, error: "El contenido es requerido" };
 				const tags = Array.isArray(args_.tags) ? (args_.tags as unknown[]).map(String) : undefined;
-				const memory = await addMemory({ content, type: args_.type ? String(args_.type) : undefined, tags });
+				const important = args_.important === true;
+				const memory = await addMemory({ content, type: args_.type ? String(args_.type) : undefined, tags, important });
 				const { currentStorage, STORAGE_LABELS } = await import("../../storage/storage.js");
-				return { ok: true, content: `✅ Recuerdo guardado en ${STORAGE_LABELS[currentStorage().kind]} (ID: ${memory.id})` };
+				return {
+					ok: true,
+					content: `✅ Recuerdo guardado en ${STORAGE_LABELS[currentStorage().kind]}${important ? " y apuntado en MEMORY.md" : ""} (ID: ${memory.id})`,
+				};
 			}
 			case "sessions_list": {
 				const { listChatSessions } = await import("../../chat/ChatStore.js");

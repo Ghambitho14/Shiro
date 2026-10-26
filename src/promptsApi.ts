@@ -25,12 +25,12 @@ const PROMPTS = [
 			"El comienzo de todo lo que lee antes de responder: quién es, cómo usa las herramientas y sus reglas. Puedes usar {{nombre}}, {{usuario}}, {{carpeta}} y {{fecha}}: se cambian por su nombre, el tuyo, tu carpeta personal y la fecha de hoy.",
 	},
 	{ id: "soul", title: "Personalidad (SOUL.md)", description: "Su forma de ser: carácter, tono, límites y lo que valora." },
-	{ id: "tools", title: "Guía de herramientas (TOOLS.md)", description: "Consejos sobre qué herramienta usar en cada caso." },
 	{
 		id: "memory",
 		title: "Memoria a largo plazo (MEMORY.md)",
 		description: "Lo que debe recordar siempre de ti y de tus cosas. También lo escribe él cuando aprende algo importante.",
 	},
+	{ id: "tools", title: "Guía de herramientas (TOOLS.md)", description: "Consejos sobre qué herramienta usar en cada caso." },
 ] as const;
 
 type PromptId = (typeof PROMPTS)[number]["id"];

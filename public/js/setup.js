@@ -58,7 +58,7 @@ const KINDS = [
 	{
 		value: "obsidian",
 		title: "En Obsidian",
-		text: "Tus chats, recuerdos y recordatorios se guardan como notas en tu bóveda, y Shiro puede buscar en todas tus notas.",
+		text: "Tus chats, recuerdos y recordatorios se guardan como notas en la carpeta Shiro de tu bóveda: esa carpeta es la memoria de Shiro.",
 	},
 	{
 		value: "supabase",
@@ -102,7 +102,7 @@ export async function mountStorageForm(container, { settings = false, onSaved } 
 				<div class="actions-row"><button type="button" class="btn sm" data-a="copy-sql">${icon("copy", "sm")}Copiar SQL</button></div>
 			</details>
 		</div>
-		<label class="migrate-row" hidden><input type="checkbox" checked /> <span>Llevar mis chats, recuerdos y recordatorios al nuevo sitio</span></label>
+		<label class="migrate-row" hidden><input type="checkbox" checked /> <span>Llevar mis chats, recuerdos, recordatorios y notas de memoria (MEMORY.md…) al nuevo sitio</span></label>
 		<div class="actions-row">
 			<button type="button" class="btn" data-a="test">Probar</button>
 			${settings ? `<button type="button" class="btn primary" data-a="save">Guardar</button>` : ""}
