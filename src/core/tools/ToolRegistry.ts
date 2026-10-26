@@ -386,14 +386,14 @@ export const TOOLS: ToolDefinition[] = [
 		parameters: {
 			type: "object",
 			properties: {
-				command: { type: "string", description: "Comando git (sin 'git', ej: 'status', 'add .', 'commit -m \"msg\"')" },
+				command: { type: "string", description: "Un solo comando git (sin 'git', ej: 'status', 'add .', 'commit -m \"msg\"'). Sin &&, | ni >: haz otra llamada para el siguiente" },
 				repoPath: { type: "string", description: "Ruta al repo (default: workspace)" },
 			},
 			required: ["command"],
 		},
 		examples: [
 			'"qué cambios hay" → git({command: "status"})',
-			'"guarda los cambios" → git({command: "add . && commit -m \"mejora\""})',
+			'"guarda los cambios" → git({command: "add ."}) y luego git({command: "commit -m \"mejora\""})',
 		],
 	},
 

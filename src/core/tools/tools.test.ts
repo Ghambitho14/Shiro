@@ -1,6 +1,6 @@
 import { after, test } from "node:test";
 import { strictEqual } from "node:assert";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -54,4 +54,19 @@ test("getWorkspaceDir devuelve ruta bajo data", () => {
 	const dir = getWorkspaceDir();
 	strictEqual(dir.includes("workspace"), true);
 	strictEqual(dir.startsWith(join(TMP, "data")), true);
+});
+
+test("git se ejecuta sin intérprete de comandos: & y | no encadenan otro programa", async (t) => {
+	mkdirSync(getWorkspaceDir(), { recursive: true });
+	const version = await executeTool("git", { command: "--version" });
+	if (!version.ok && /no está instalado/.test(version.error)) return t.skip("git no está instalado");
+	strictEqual(version.ok, true);
+	strictEqual((await executeTool("git", { command: "status", repoPath: "no-existe" })).ok, false);
+	// «git» delante también vale.
+	strictEqual((await executeTool("git", { command: "git --version" })).ok, true);
+	for (const command of ["--version & echo SHIRO_PWNED", "--version | echo SHIRO_PWNED", "--version && echo SHIRO_PWNED"]) {
+		const r = await executeTool("git", { command });
+		const text = r.ok ? r.content : r.error;
+		strictEqual(/^SHIRO_PWNED\s*$/m.test(text), false, command);
+	}
 });

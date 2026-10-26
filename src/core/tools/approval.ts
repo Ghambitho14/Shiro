@@ -45,7 +45,7 @@ const GIT_LIST_ARGS: Record<string, Set<string>> = {
  */
 function isReadOnlyGit(command: string, repoPath: string): boolean {
 	if (SHELL_META.test(command)) return false;
-	const [sub = "", ...rest] = command.split(/\s+/);
+	const [sub = "", ...rest] = command.replace(/^git\s+/i, "").split(/\s+/);
 	if (!READ_ONLY_GIT.has(sub)) return false;
 	if (rest.some((a) => /^--(output|no-index)\b/.test(a))) return false;
 	const listArgs = GIT_LIST_ARGS[sub];
