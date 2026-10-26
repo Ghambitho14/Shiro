@@ -342,7 +342,7 @@ test("Supabase: llevar los datos y usar chats, recuerdos y recordatorios", async
 	setConfig({ storage: "local" });
 });
 
-test("se quita lo que no se usa: HEARTBEAT.md y memory/ (sus notas pasan a Recuerdos)", () => {
+test("se quita lo que no se usa: HEARTBEAT.md, memory/ (sus notas pasan a Recuerdos) y el registro de decisiones", () => {
 	setConfig({ storage: "obsidian", obsidianVault: VAULT });
 	const root = join(VAULT, "Shiro");
 	writeFileSync(
@@ -351,7 +351,10 @@ test("se quita lo que no se usa: HEARTBEAT.md y memory/ (sus notas pasan a Recue
 	);
 	mkdirSync(join(root, "memory"), { recursive: true });
 	writeFileSync(join(root, "memory", "2026-10-01.md"), "Le gusta el café de Mérida\n");
+	mkdirSync(join(DATA_DIR, "logs", "decisions"), { recursive: true });
+	writeFileSync(join(DATA_DIR, "logs", "decisions", "2026-10-01.jsonl"), "{}\n");
 	ensureWorkspace();
+	assert.ok(!existsSync(join(DATA_DIR, "logs")));
 	assert.ok(!existsSync(join(root, "HEARTBEAT.md")));
 	assert.ok(!existsSync(join(root, "memory")));
 	assert.ok(existsSync(join(root, "Recuerdos", "2026-10-01.md")), "la nota no se pierde");

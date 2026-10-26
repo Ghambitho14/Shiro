@@ -14,7 +14,6 @@ import { SCREENSHOT_DIR } from "./core/pc/pc.js";
 import { getLastActive, setHealthActive } from "./core/health/HealthManager.js";
 import { buildWorkspaceContext } from "./workspace.js";
 import { getLLM } from "./core/llm/getLLM.js";
-import { createSessionMemoryStore } from "./core/memory/SessionMemoryStore.js";
 import { runAgent } from "./core/agent/Agent.js";
 import { getAllToolNames } from "./core/tools/ToolRegistry.js";
 import { matchSkillCommand, parseCommand } from "./commands.js";
@@ -158,7 +157,6 @@ function screenshotUrl(path: string | undefined): string | undefined {
 	return "/api/screenshots/" + encodeURIComponent(basename(full));
 }
 
-const sessionMemoryStore = createSessionMemoryStore();
 let shuttingDown = false;
 
 function readBody(req: import("node:http").IncomingMessage): Promise<string> {
@@ -856,7 +854,6 @@ const server = createServer(async (req, res) => {
 				sendJson(res, 404, { error: "Session not found" });
 				return;
 			}
-			sessionMemoryStore.delete(sessionId);
 			sessionApprovals.delete(sessionId);
 			forgetChat(sessionId);
 			deleteRoom(sessionId);
@@ -1123,7 +1120,6 @@ const server = createServer(async (req, res) => {
 				try {
 					const content = await runAgent(goal, {
 						llm: turn?.llm ?? getLLM(),
-						memory: sessionMemoryStore.getMemory(sessionId ?? "web-default"),
 						agentName: turn?.agentName ?? state.name,
 						tokenBudget: 8000,
 						textOnly: false,
@@ -1156,7 +1152,6 @@ const server = createServer(async (req, res) => {
 			}
 			const content = await runAgent(goal, {
 				llm: turn?.llm ?? getLLM(),
-				memory: sessionMemoryStore.getMemory(sessionId ?? "web-default"),
 				agentName: turn?.agentName ?? state.name,
 				tokenBudget: 8000,
 				textOnly: false,

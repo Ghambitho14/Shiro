@@ -13,7 +13,6 @@ import { getConfig, setConfig } from "./config/config.js";
 import { getState } from "./store.js";
 import { getUserProfile } from "./user-profile.js";
 import { buildWorkspaceContext } from "./workspace.js";
-import { createSessionMemoryStore } from "./core/memory/SessionMemoryStore.js";
 import { runAgent } from "./core/agent/Agent.js";
 import { getLLM } from "./core/llm/getLLM.js";
 import { setHealthActive } from "./core/health/HealthManager.js";
@@ -45,7 +44,6 @@ const status: { state: TelegramState; botUsername: string | null; lastError: str
 };
 /** Quién escribió al bot sin estar autorizado (solo en memoria: se olvida al reiniciar). */
 const pending = new Map<string, TelegramPending>();
-const chatMemoryStore = createSessionMemoryStore();
 /** Mensajes del mismo chat en orden; chats distintos en paralelo. */
 const chatQueues = new Map<string, Promise<void>>();
 let loop: AbortController | null = null;
@@ -171,7 +169,6 @@ async function answer(token: string, msg: TgMessage, text: string, signal: Abort
 		getMessagePreview(userContent) || "¿Qué hay en esta imagen?",
 		{
 			llm: getLLM(),
-			memory: chatMemoryStore.getMemory(chatId),
 			agentName: getState().name,
 			tokenBudget: 8000,
 			textOnly: false,

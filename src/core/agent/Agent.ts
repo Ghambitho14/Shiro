@@ -1,7 +1,6 @@
-import type { Message, ContentPart, AgentEvent } from "./Types.js";
+import type { Message, ContentPart } from "./Types.js";
 import { getMessagePreview } from "./contentUtils.js";
 import { LLMError, type LLMClient } from "../llm/LLMClient.js";
-import type { MemoryStore } from "../memory/MemoryStore.js";
 import { buildContext } from "./ContextBuilder.js";
 import { readFileSync } from "node:fs";
 import {
@@ -17,7 +16,6 @@ import type { PersonaContext, RoomContext } from "./ContextBuilder.js";
 import { logger } from "../logger.js";
 import { isMeaningfulResponse, FALLBACK_EMPTY_RESPONSE } from "../sanitizeResponse.js";
 import { createRetryPolicy, getBackoffMs, isRetryableError } from "../health/RetryPolicy.js";
-import { getDecisionLogger, type DecisionEvent } from "./DecisionLogger.js";
 import { getConfig } from "../../config/config.js";
 import { runWithApprover, type Approver } from "../tools/approval.js";
 import { mcpManager } from "../mcp/McpManager.js";
@@ -38,7 +36,6 @@ export type ToolEvent =
 
 export type AgentOptions = {
 	llm: LLMClient;
-	memory: MemoryStore;
 	agentName: string;
 	tokenBudget?: number;
 	textOnly?: boolean;
@@ -122,7 +119,6 @@ export function resolveTools(
 export async function runAgent(goal: string, opts: AgentOptions, workspaceContext?: string): Promise<string> {
 	const {
 		llm,
-		memory,
 		agentName,
 		tokenBudget = 8000,
 		allowedTools,
@@ -165,24 +161,6 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 	const wantExplain = /\b(explica|explicame|explícame|que hiciste|qué hiciste|como lo hiciste|cómo lo hiciste|pasos|tools|herramientas)\b/i.test(goal || "");
 	const effectiveExplainMode = wantExplain && explainMode === "off" ? "brief" : explainMode;
 
-	const runId = `run_${Date.now()}`;
-	const decisionLogger = getDecisionLogger();
-	const pushEvent = (type: AgentEvent["type"], payload: Record<string, unknown>) => {
-		const timestamp = new Date().toISOString();
-		memory.push({ type, timestamp, runId, payload });
-		decisionLogger.log({
-			type: type as DecisionEvent["type"],
-			goal: payload.goal as string,
-			content: payload.content as string,
-			name: payload.name as string,
-			argsKeys: payload.argsKeys as string[],
-			timestamp,
-			runId,
-		} as DecisionEvent);
-	};
-
-	pushEvent("decision", { goal });
-
 	const projectTool = !textOnly && (effectiveTools ?? getAllToolNames()).includes("project");
 	const projectContext = project
 		? {
@@ -198,7 +176,6 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 	const { system, messages } = buildContext({
 		goal,
 		agentName,
-		shortMemory: memory,
 		tokenBudget,
 		workspaceContext,
 		textOnly,
@@ -236,7 +213,6 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 		if (signal?.aborted) return { ok: false, content: "", error: "Cancelado por el usuario." };
 		const argsKeys = Object.keys(args ?? {}).slice(0, 12);
 		logger.info(`🔧 Tool: ${name}`);
-		pushEvent("tool_call", { name, argsKeys });
 
 		// Anti-bucle: los modelos pequeños a veces repiten la misma llamada sin fin.
 		const signature = `${name}:${JSON.stringify(args)}`;
@@ -316,11 +292,9 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 		if (signal?.aborted) return "";
 		const message = err instanceof Error ? err.message : String(err);
 		logger.error("Fallo del modelo", { error: message.slice(0, 300) });
-		pushEvent("error", { content: message });
 		return describeFailure(err);
 	}
 
-	pushEvent("observation", { content });
 	const finalText = isMeaningfulResponse(content) ? content : FALLBACK_EMPTY_RESPONSE;
 	return finalText + buildToolExplanation(usedTools, effectiveExplainMode);
 }

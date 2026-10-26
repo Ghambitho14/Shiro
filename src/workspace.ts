@@ -265,6 +265,12 @@ function adoptLegacySettings(dir: string): void {
  */
 function removeUnused(dir: string): void {
 	try {
+		// El registro de decisiones ya no existe: nadie lo leía y guardaba tus mensajes.
+		const logs = join(DATA_DIR, "logs");
+		if (existsSync(join(logs, "decisions"))) {
+			rmSync(join(logs, "decisions"), { recursive: true, force: true });
+			if (!readdirSync(logs).length) rmdirSync(logs);
+		}
 		const heartbeat = join(dir, "HEARTBEAT.md");
 		if (existsSync(heartbeat) && sameText(readFileSafe(heartbeat), OLD_HEARTBEAT_TEMPLATE)) rmSync(heartbeat, { force: true });
 		const daily = join(dir, "memory");

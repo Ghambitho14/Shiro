@@ -5,7 +5,6 @@ import { getUserProfile } from "./user-profile.js";
 import { getConfig, DATA_DIR } from "./config/config.js";
 import { join } from "node:path";
 import { buildWorkspaceContext } from "./workspace.js";
-import { createSessionMemoryStore } from "./core/memory/SessionMemoryStore.js";
 import { runAgent } from "./core/agent/Agent.js";
 import { getLLM } from "./core/llm/getLLM.js";
 import { setHealthActive } from "./core/health/HealthManager.js";
@@ -21,7 +20,6 @@ const WA_ONLY_PRIVATE = process.env.WA_ONLY_PRIVATE !== "0";
 const DEFAULT_WIN_CHROME = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 const WA_CHROME_PATH = process.env.WA_CHROME_PATH?.trim() || (process.platform === "win32" ? DEFAULT_WIN_CHROME : undefined);
 
-const chatMemoryStore = createSessionMemoryStore();
 const LocalAuth = WhatsAppWebJs.LocalAuth;
 let client: Client | null = null;
 let starting = false;
@@ -152,7 +150,6 @@ async function processIncomingMessage(message: Message): Promise<void> {
 		goal,
 		{
 			llm: getLLM(),
-			memory: chatMemoryStore.getMemory(message.from),
 			agentName: state.name,
 			tokenBudget: 8000,
 			textOnly: false,

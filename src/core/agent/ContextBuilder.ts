@@ -1,6 +1,4 @@
 import type { Message } from "./Types.js";
-import type { MemoryStore } from "../memory/MemoryStore.js";
-import { eventsToContextLines } from "../memory/serializers.js";
 import { getSoul, renderSystemPrompt, withAbilities } from "../soul/soul.js";
 import { buildSkillsBlock, type Skill } from "../skills/SkillLoader.js";
 import { getConfig } from "../../config/config.js";
@@ -15,7 +13,6 @@ export type UserProfileInput = {
 export type ContextInput = {
 	goal: string;
 	agentName: string;
-	shortMemory: MemoryStore;
 	tokenBudget: number;
 	workspaceContext?: string;
 	/** Si true, no se incluyen herramientas en el contexto (solo respuesta en texto). */
@@ -124,7 +121,7 @@ El usuario te habla por voz y tu respuesta se leerá en voz alta:
 export const WORKSPACE_MAX_CHARS = 8000;
 
 /**
- * Prioridad: SOUL > perfil > workspace > skills > memoria > mensaje del usuario.
+ * Prioridad: SOUL > perfil > proyecto > workspace (con la memoria) > skills. La conversación va aparte, como mensajes.
  * Las herramientas no se listan aquí: van por la API del modelo (o por textTools en modo texto),
  * así no se envían dos veces y se ahorra contexto en modelos locales.
  */
@@ -181,20 +178,6 @@ export function buildContext(input: ContextInput): { system: string; messages: M
 		input.skills?.length && !textOnly
 			? buildSkillsBlock(input.goal, Math.max(800, Math.min(remaining, getConfig().skillsMaxChars)), input.skills)
 			: "";
-	if (skillsBlock) remaining -= skillsBlock.length;
-
-	// Conversación simple: menos contexto para mantener el prompt conciso
-	const shortMaxChars = textOnly ? 400 : Math.min(remaining - 400, 2000);
-	const recent = input.shortMemory.getRecent(textOnly ? 10 : 30);
-	const shortBlock = eventsToContextLines(recent, shortMaxChars);
-	remaining -= shortBlock.length;
-
-	const long = input.shortMemory.getLongTerm();
-	const longBlock =
-		long && remaining > 100 && !textOnly
-			? `## Memoria a largo plazo (resumen)\n${long.summary}`
-			: "";
-
 	const system =
 		soul +
 		roomBlock +
@@ -204,9 +187,7 @@ export function buildContext(input: ContextInput): { system: string; messages: M
 		(projectBlock ? "\n\n" + projectBlock : "") +
 		(workspaceBlock ? "\n\n" + workspaceBlock : "") +
 		(skillsBlock ? "\n\n" + skillsBlock : "") +
-		(forcedBlock ? "\n\n" + forcedBlock : "") +
-		(shortBlock ? "\n\n## Eventos recientes\n" + shortBlock : "") +
-		(longBlock ? "\n\n" + longBlock : "");
+		(forcedBlock ? "\n\n" + forcedBlock : "");
 
 	// Conversación simple: solo el mensaje del usuario. Modo acción: el goal tal cual.
 	const userContent = input.goal;
