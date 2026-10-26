@@ -3,7 +3,8 @@
  * y recomienda ajustes (por ejemplo, modo texto si el modelo no soporta tools).
  */
 import { getConfig, setConfig } from "./config/config.js";
-import { resolveLLMSettings, PROVIDER_PRESETS, maskKey, type LLMSettings } from "./core/llm/providers.js";
+import { prepareLLM, resolveLLMSettings, PROVIDER_PRESETS, maskKey, type LLMSettings } from "./core/llm/providers.js";
+import { listProviderModels } from "./core/llm/modelList.js";
 import { sendTurn } from "./core/llm/transports.js";
 import { LLMError, type ToolDef } from "./core/llm/LLMClient.js";
 import { parseTextToolCalls, buildTextToolInstructions } from "./core/llm/textTools.js";
@@ -14,17 +15,8 @@ const info = (m: string) => console.log(`    ${m}`);
 
 /** Lista los modelos disponibles en el servidor (vacío si no se puede). */
 export async function listModels(s: LLMSettings): Promise<string[]> {
-	try {
-		const url = s.dialect === "ollama" ? `${s.baseUrl}/api/tags` : `${s.baseUrl}/models`;
-		const headers: Record<string, string> = {};
-		if (s.headers.Authorization) headers.Authorization = s.headers.Authorization;
-		const res = await fetch(url, { headers, signal: AbortSignal.timeout(8000) });
-		if (!res.ok) return [];
-		const data = (await res.json()) as { models?: { name: string }[]; data?: { id: string }[] };
-		return (data.models?.map((m) => m.name) ?? data.data?.map((m) => m.id) ?? []).sort();
-	} catch {
-		return [];
-	}
+	const list = await listProviderModels({ provider: s.provider, baseUrl: s.baseUrl, apiKey: s.apiKey });
+	return list.models.map((m) => m.id);
 }
 
 const PROBE_TOOL: ToolDef = {
@@ -37,24 +29,28 @@ const PROBE_TOOL: ToolDef = {
 };
 
 export async function runDoctor(opts: { fix?: boolean } = {}): Promise<boolean> {
-	const s = resolveLLMSettings();
+	let s = resolveLLMSettings();
 	const preset = PROVIDER_PRESETS[s.provider];
 	console.log(`\n  Shiro doctor — ${preset.label}`);
-	info(`URL: ${s.baseUrl}`);
-	info(`Modelo: ${s.model}`);
+	if (!preset.managed) info(`URL: ${s.baseUrl}`);
+	info(`Modelo: ${s.model || "(sin elegir)"}`);
 	if (s.apiKey) info(`API key: ${maskKey(s.apiKey)}`);
 	if (s.dialect === "ollama") info(`Contexto (num_ctx): ${s.contextWindow} tokens`);
+	if (preset.managed) info(`Contexto: ${getConfig().llamaContext || "automático (el mayor que quepa en la tarjeta)"}`);
 	console.log("");
 
 	// 1. API key
 	if (preset.needsApiKey && !s.apiKey) {
-		bad(`Falta la API key. Configúrala con "npm run config" o la variable ${preset.apiKeyEnv ?? "SHIRO_LLM_API_KEY"}.`);
+		bad(`Falta la API key. Ponla en Ajustes → Modelo (npm start) o en la variable ${preset.apiKeyEnv ?? "SHIRO_LLM_API_KEY"}.`);
 		return false;
 	}
 
 	// 2. Servidor y modelo
 	const models = await listModels(s);
-	if (models.length) {
+	if (preset.managed) {
+		// llama.cpp integrado: prepareLLM() (paso 3) explica si falta el modelo o llama.cpp.
+		info(`Modelos GGUF encontrados en este equipo: ${models.length}`);
+	} else if (models.length) {
 		ok(`Servidor accesible (${models.length} modelos)`);
 		if (s.local && !models.includes(s.model) && !models.some((m) => m.startsWith(`${s.model}:`))) {
 			bad(`El modelo "${s.model}" no está en el servidor.`);
@@ -67,6 +63,15 @@ export async function runDoctor(opts: { fix?: boolean } = {}): Promise<boolean> 
 	}
 
 	// 3. Chat simple
+	try {
+		// Catálogo de OpenCode, o abrir el llama.cpp integrado con el modelo (puede tardar en cargar).
+		await prepareLLM();
+		s = resolveLLMSettings();
+		if (preset.managed) info(`llama.cpp abierto con un contexto de ${s.contextWindow} tokens`);
+	} catch (err) {
+		bad(err instanceof Error ? err.message : String(err));
+		return false;
+	}
 	try {
 		const t0 = Date.now();
 		const r = await sendTurn(s, { messages: [{ role: "user", content: "Responde solo: ok" }] });
@@ -118,7 +123,7 @@ export async function runDoctor(opts: { fix?: boolean } = {}): Promise<boolean> 
 		}
 	}
 
-	if (s.local && s.dialect !== "ollama") {
+	if (s.local && s.dialect !== "ollama" && !preset.managed) {
 		info("Recuerda: el tamaño de contexto se configura en el propio servidor (LM Studio / llama.cpp). Usa 8192 o más.");
 	}
 	console.log("");

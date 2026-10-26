@@ -2,12 +2,14 @@ import type { ToolResult } from "../agent/Types.js";
 import type { ToolDef } from "../llm/LLMClient.js";
 import { executeTool } from "./tools.js";
 import { requestApproval } from "./approval.js";
+import { isMcpToolName, mcpManager } from "../mcp/McpManager.js";
+import { shiroBrowser } from "../browser/browser.js";
 
 export interface ToolDefinition {
 	label: string;
 	name: string;
 	description: string;
-	category: "archivos" | "sistema" | "web" | "utilidades" | "memoria" | "sesion";
+	category: "archivos" | "sistema" | "web" | "utilidades" | "memoria" | "sesion" | "pc";
 	examples?: string[];
 	parameters: ToolDef["function"]["parameters"];
 }
@@ -240,7 +242,7 @@ export const TOOLS: ToolDefinition[] = [
 	{
 		label: "Buscar en Memoria",
 		name: "memory_search",
-		description: "Busca en la memoria a largo plazo. Úsalo cuando el usuario pregunte sobre algo que se haya hablado antes.",
+		description: "Busca en los recuerdos guardados (y, si el usuario guarda sus cosas en Obsidian, en todas sus notas). Úsalo cuando pregunte por algo que se haya hablado antes o por lo que tiene en sus notas.",
 		category: "memoria",
 		parameters: {
 			type: "object",
@@ -253,12 +255,13 @@ export const TOOLS: ToolDefinition[] = [
 		examples: [
 			'"qué me dijiste sobre recetas" → memory_search({query: "recetas"})',
 			'"busca lo de la reunión" → memory_search({query: "reunión"})',
+			'"qué tengo en mis notas sobre la arepera" → memory_search({query: "arepera"})',
 		],
 	},
 	{
 		label: "Guardar en Memoria",
 		name: "memory_add",
-		description: "Guarda información importante en la memoria a largo plazo.",
+		description: "Guarda un dato importante (del usuario, una preferencia o una decisión) para recordarlo en otras conversaciones. Escríbelo en el idioma del usuario y como frase completa, p. ej. \"Su cámara favorita es la Fujifilm X100V\".",
 		category: "memoria",
 		parameters: {
 			type: "object",
@@ -268,6 +271,22 @@ export const TOOLS: ToolDefinition[] = [
 				tags: { type: "array", items: { type: "string" }, description: "Etiquetas opcionales" },
 			},
 			required: ["content"],
+		},
+	},
+
+	// ============ HABILIDADES ============
+	{
+		label: "Usar habilidad",
+		name: "use_skill",
+		description:
+			'Carga las instrucciones de una habilidad de la lista "Habilidades" del sistema. Úsala antes de responder cuando una encaje con lo que pide el usuario y sigue lo que diga. Sin name, lista todas. Con file, lee otro archivo de la habilidad (referencias, plantillas).',
+		category: "utilidades",
+		parameters: {
+			type: "object",
+			properties: {
+				name: { type: "string", description: "Nombre de la habilidad (tal cual aparece en la lista)" },
+				file: { type: "string", description: "Opcional: archivo dentro de la habilidad, p. ej. references/guia.md" },
+			},
 		},
 	},
 
@@ -354,43 +373,7 @@ export const TOOLS: ToolDefinition[] = [
 		},
 	},
 
-	// ============ AUTO-MODIFICACIÓN ============
-	{
-		label: "Analizar Proyecto",
-		name: "project_analyze",
-		description: "Analiza la estructura de un proyecto de código. Úsalo para entender cómo funciona un proyecto, qué tecnologías usa, y su estructura de archivos.",
-		category: "sistema",
-		parameters: {
-			type: "object",
-			properties: {
-				path: { type: "string", description: "Ruta al proyecto (default: workspace)" },
-				deep: { type: "boolean", description: "Análisis profundo (default: false)" },
-			},
-		},
-		examples: [
-			'"analiza este proyecto" → project_analyze({path: "."})',
-			'"qué hace este código" → project_analyze({path: "./src", deep: true})',
-		],
-	},
-	{
-		label: "Auto-Modificar Código",
-		name: "self_modify",
-		description: "Modifica el propio código de Shiro (archivos en src/). Úsalo para corregir bugs, refactorizar, añadir features, o mejorar el código. El archivo debe existir y estar en src/.",
-		category: "sistema",
-		parameters: {
-			type: "object",
-			properties: {
-				file: { type: "string", description: "Archivo a modificar (ej: src/core/agent/Agent.ts)" },
-				search: { type: "string", description: "Texto a buscar en el archivo" },
-				replace: { type: "string", description: "Texto de reemplazo (deja vacío para solo buscar)" },
-			},
-			required: ["file", "search"],
-		},
-		examples: [
-			'"corrige el bug en Agent.ts" → self_modify({file: "src/core/agent/Agent.ts", search: "bug...", replace: "codigo corregido"})',
-			'"refactoriza la función" → self_modify({file: "src/core/tools/tools.ts", search: "function old", replace: "function new..."})',
-		],
-	},
+	// ============ GIT ============
 	{
 		label: "Git Operations",
 		name: "git",
@@ -408,30 +391,6 @@ export const TOOLS: ToolDefinition[] = [
 			'"qué cambios hay" → git({command: "status"})',
 			'"guarda los cambios" → git({command: "add . && commit -m \"mejora\""})',
 		],
-	},
-
-	// ============ AUTO-REFLEXIÓN ============
-	{
-		label: "Auto-Analizarse",
-		name: "self_analyze",
-		description: "Analiza el propio código de Shiro para entender su estado actual y sugiere mejoras. Úsalo para auto-diagnosticarte.",
-		category: "sistema",
-		parameters: {
-			type: "object",
-			properties: {},
-		},
-	},
-	{
-		label: "Reflexiones",
-		name: "self_reflect",
-		description: "Lista las reflexiones previas del sistema, insights generados, y sugerencias de mejora pendientes.",
-		category: "sistema",
-		parameters: {
-			type: "object",
-			properties: {
-				pending: { type: "boolean", description: "Solo mostrar pendientes (default: false)" },
-			},
-		},
 	},
 	{
 		label: "Preguntar al Usuario",
@@ -451,56 +410,215 @@ export const TOOLS: ToolDefinition[] = [
 		],
 	},
 
-	// ============ CANALES ============
+	// ============ CONTROL DEL PC ============
 	{
-		label: "Crear Canal",
-		name: "channel_create",
-		description: "Crea un nuevo canal de comunicación (Telegram, Discord, etc). USA ESTO cuando el usuario quiera conectarse desde otra plataforma.",
-		category: "utilidades",
+		label: "Abrir en el PC",
+		name: "pc_open",
+		description:
+			"Abre en el PC del usuario una aplicación por su nombre ('Spotify', 'Calculadora', 'Chrome', 'Discord'), una web en SU navegador normal ('youtube.com' o URL completa; si pide 'tu navegador' usa browser), una carpeta ('Descargas', 'Documentos', 'C:/ruta') o un archivo. Para buscar en YouTube abre https://www.youtube.com/results?search_query=... y en Google https://www.google.com/search?q=...",
+		category: "pc",
 		parameters: {
 			type: "object",
-			properties: {
-				name: { type: "string", description: "Nombre del canal (ej: 'Mi Telegram')" },
-				type: { type: "string", description: "Tipo: telegram, discord, slack" },
-				token: { type: "string", description: "Token del bot/API" },
-			},
-			required: ["name", "type", "token"],
+			properties: { target: { type: "string", description: "Qué abrir: nombre de la app, URL, carpeta o ruta de archivo" } },
+			required: ["target"],
 		},
 		examples: [
-			'"créame un canal de Telegram" → channel_create({name: "Telegram", type: "telegram", token: "mi-token"})',
+			'"abre spotify" → pc_open({target: "Spotify"})',
+			'"pon lofi en youtube" → pc_open({target: "https://www.youtube.com/results?search_query=lofi"})',
+			'"abre mis descargas" → pc_open({target: "Descargas"})',
 		],
 	},
 	{
-		label: "Listar Canales",
-		name: "channel_list",
-		description: "Lista todos los canales configurados.",
-		category: "utilidades",
+		label: "Captura de pantalla",
+		name: "pc_screenshot",
+		description: "Toma una captura de la pantalla del PC para ver qué hay abierto. Úsala antes de hacer clic con pc_mouse.",
+		category: "pc",
+		parameters: { type: "object", properties: {} },
+	},
+	{
+		label: "Teclado",
+		name: "pc_keyboard",
+		description:
+			"Escribe texto y/o pulsa teclas en el PC, en la ventana indicada con 'window' (recomendado) o en la activa. Primero escribe 'text' y después pulsa 'keys'. Ejemplos de keys: 'enter', 'ctrl+c', 'ctrl+v', 'alt+tab', 'win+d', 'ctrl+a, supr'.",
+		category: "pc",
 		parameters: {
 			type: "object",
-			properties: {},
+			properties: {
+				text: { type: "string", description: "Texto a escribir tal cual" },
+				keys: { type: "string", description: "Teclas o atajos a pulsar, separados por comas" },
+				window: { type: "string", description: "Ventana donde escribir (ej: 'Bloc de notas', 'Chrome'); se trae al frente antes" },
+			},
+		},
+		examples: ['"escribe hola en el bloc de notas" → pc_keyboard({window: "Bloc de notas", text: "hola"})'],
+	},
+	{
+		label: "Ratón",
+		name: "pc_mouse",
+		description:
+			"Mueve el ratón, hace clic o desplaza la página. x e y son píxeles de la última captura de pantalla (toma una con pc_screenshot antes). Sin x/y actúa donde esté el puntero.",
+		category: "pc",
+		parameters: {
+			type: "object",
+			properties: {
+				action: { type: "string", enum: ["click", "double_click", "right_click", "move", "scroll_up", "scroll_down"] },
+				x: { type: "number", description: "Posición horizontal en la captura" },
+				y: { type: "number", description: "Posición vertical en la captura" },
+				amount: { type: "number", description: "Pasos de scroll (por defecto 3)" },
+			},
+			required: ["action"],
 		},
 	},
 	{
-		label: "Iniciar Canal",
-		name: "channel_start",
-		description: "Inicia un canal existente. El canal debe estar creado primero.",
-		category: "utilidades",
+		label: "Volumen y música",
+		name: "pc_media",
+		description:
+			"Controla el volumen y la reproducción del PC (Spotify, YouTube, etc.): subir, bajar o fijar el volumen, silenciar, reproducir/pausar, siguiente o anterior canción.",
+		category: "pc",
 		parameters: {
 			type: "object",
-			properties: { id: { type: "string", description: "ID del canal" } },
-			required: ["id"],
+			properties: {
+				action: {
+					type: "string",
+					enum: ["volume_up", "volume_down", "set_volume", "get_volume", "mute", "unmute", "play_pause", "next", "previous", "stop"],
+				},
+				value: { type: "number", description: "Porcentaje: volumen exacto para set_volume, o cuánto subir/bajar (por defecto 10)" },
+			},
+			required: ["action"],
+		},
+		examples: ['"pon el volumen al 30" → pc_media({action: "set_volume", value: 30})', '"siguiente canción" → pc_media({action: "next"})'],
+	},
+	{
+		label: "Ventanas",
+		name: "pc_windows",
+		description: "Gestiona las ventanas abiertas: listarlas, traer una al frente, minimizar, maximizar, restaurar, cerrar o mostrar el escritorio.",
+		category: "pc",
+		parameters: {
+			type: "object",
+			properties: {
+				action: { type: "string", enum: ["list", "focus", "minimize", "maximize", "restore", "close", "show_desktop"] },
+				title: { type: "string", description: "Nombre de la app o parte del título de la ventana (ej: 'Spotify', 'Chrome')" },
+			},
+			required: ["action"],
 		},
 	},
 	{
-		label: "Eliminar Canal",
-		name: "channel_delete",
-		description: "Elimina un canal configurado.",
-		category: "utilidades",
+		label: "Programas en ejecución",
+		name: "pc_processes",
+		description: "Lista los programas en ejecución y la memoria que usan, o cierra a la fuerza uno que no responde (kill).",
+		category: "pc",
 		parameters: {
 			type: "object",
-			properties: { id: { type: "string", description: "ID del canal" } },
-			required: ["id"],
+			properties: {
+				action: { type: "string", enum: ["list", "kill"] },
+				name: { type: "string", description: "Nombre del proceso (ej: chrome, spotify)" },
+			},
+			required: ["action"],
 		},
+	},
+	{
+		label: "Portapapeles",
+		name: "pc_clipboard",
+		description: "Lee el texto copiado en el portapapeles o copia un texto nuevo en él.",
+		category: "pc",
+		parameters: {
+			type: "object",
+			properties: {
+				action: { type: "string", enum: ["read", "write"] },
+				text: { type: "string", description: "Texto a copiar (para write)" },
+			},
+			required: ["action"],
+		},
+	},
+	{
+		label: "Estado del PC",
+		name: "pc_system",
+		description: "Estado del PC: uso de CPU y RAM, espacio libre en disco, batería y tiempo encendido.",
+		category: "pc",
+		parameters: { type: "object", properties: {} },
+	},
+	{
+		label: "Energía",
+		name: "pc_power",
+		description:
+			"Bloquea, suspende, apaga o reinicia el PC, cierra la sesión, o cancela un apagado programado. Úsalo solo si el usuario lo pide claramente.",
+		category: "pc",
+		parameters: {
+			type: "object",
+			properties: {
+				action: { type: "string", enum: ["lock", "sleep", "shutdown", "restart", "logoff", "cancel"] },
+				delay_minutes: { type: "number", description: "Minutos de espera antes de apagar/reiniciar (por defecto 1)" },
+			},
+			required: ["action"],
+		},
+	},
+
+	{
+		label: "Navegador",
+		name: "browser",
+		description:
+			"Tu propio navegador web (\"tu navegador\": el usuario lo ve en vivo en el panel Navegador). Acciones: open (abre una dirección o busca un texto en internet), read (lee la página: texto y elementos numerados [n]), click (pulsa el elemento ref), type (escribe text en el campo ref; enter=true para enviar), scroll (direction up/down), back (página anterior), screenshot (captura), close. open, click, type, scroll y back devuelven la página actualizada con números nuevos.",
+		category: "pc",
+		parameters: {
+			type: "object",
+			properties: {
+				action: { type: "string", enum: ["open", "read", "click", "type", "scroll", "back", "screenshot", "close"] },
+				url: { type: "string", description: "Para open: dirección (youtube.com, https://...) o texto a buscar" },
+				ref: { type: "number", description: "Para click/type: número [n] del elemento en la última lectura" },
+				text: { type: "string", description: "Para type: texto a escribir (reemplaza lo que hubiera)" },
+				enter: { type: "boolean", description: "Para type: pulsar Enter después (enviar/buscar)" },
+				direction: { type: "string", enum: ["up", "down"], description: "Para scroll" },
+			},
+			required: ["action"],
+		},
+		examples: [
+			'"busca vuelos a Madrid" → browser({action: "open", url: "vuelos a Madrid"})',
+			'"entra en wikipedia" → browser({action: "open", url: "wikipedia.org"}) y luego browser({action: "click", ref: 3})',
+		],
+	},
+	{
+		label: "Terminal",
+		name: "terminal",
+		description:
+			"Terminal (PowerShell en Windows) compartida con el usuario, visible en el panel Terminal. read: ver lo último que hay (comandos del usuario y su salida, errores). run: ejecutar un comando a la vista del usuario y recibir su salida. stop: detener lo que se esté ejecutando.",
+		category: "pc",
+		parameters: {
+			type: "object",
+			properties: {
+				action: { type: "string", enum: ["read", "run", "stop"] },
+				command: { type: "string", description: "Para run: el comando" },
+				lines: { type: "number", description: "Para read: cuántas líneas finales ver (por defecto 80)" },
+				timeout_seconds: { type: "number", description: "Para run: segundos máximos de espera (por defecto 60)" },
+			},
+			required: ["action"],
+		},
+		examples: [
+			'"mira qué error sale en la terminal" → terminal({action: "read"})',
+			'"instala las dependencias" → terminal({action: "run", command: "npm install"})',
+		],
+	},
+
+	// ============ PROYECTOS ============
+	{
+		label: "Archivos del proyecto",
+		name: "project",
+		description:
+			"Archivos del proyecto de este chat (documentos subidos y carpetas vinculadas; lee texto, PDF y Word). list: ver los archivos (opcional path de una carpeta). read: leer un archivo (path; si es largo, sigue con offset). search: buscar palabras en todos los archivos (query; opcional path para buscar solo en una carpeta). write: crear o cambiar un archivo de texto (path, content; pide permiso al usuario). Las rutas empiezan por el nombre de la carpeta del proyecto, p. ej. Subidos/informe.pdf.",
+		category: "archivos",
+		parameters: {
+			type: "object",
+			properties: {
+				action: { type: "string", enum: ["list", "read", "search", "write"] },
+				path: { type: "string", description: "Ruta dentro del proyecto (ej: Subidos/informe.pdf)" },
+				query: { type: "string", description: "Para search: palabras a buscar" },
+				offset: { type: "number", description: "Para read: carácter desde el que seguir leyendo" },
+				content: { type: "string", description: "Para write: contenido completo del archivo" },
+			},
+			required: ["action"],
+		},
+		examples: [
+			'"¿qué dice el contrato sobre el pago?" → project({action: "search", query: "pago"})',
+			'"resume el informe" → project({action: "read", path: "Subidos/informe.pdf"})',
+		],
 	},
 ];
 
@@ -520,8 +638,158 @@ export const LITE_TOOLS = [
 	"list_reminders",
 	"memory_search",
 	"memory_add",
+	"use_skill",
 	"exec",
+	"pc_open",
+	"pc_media",
+	"pc_windows",
+	"pc_keyboard",
+	"pc_screenshot",
+	"pc_system",
+	"pc_power",
+	"browser",
+	"terminal",
+	"project",
 ];
+
+/** Herramientas que controlan el PC (se pueden desactivar todas con `pcControl: false`). */
+export const PC_TOOLS = TOOLS.filter((t) => t.category === "pc").map((t) => t.name);
+
+function short(v: unknown, max = 60): string {
+	const s = typeof v === "string" ? v : v === undefined || v === null ? "" : JSON.stringify(v);
+	return s.length > max ? s.slice(0, max - 1) + "…" : s;
+}
+
+function hostOf(url: unknown): string {
+	try {
+		return new URL(String(url)).host;
+	} catch {
+		return short(url, 40);
+	}
+}
+
+/** Frase corta y legible de lo que está haciendo una herramienta (para mostrar en la interfaz). */
+export function describeToolUse(name: string, args: Record<string, unknown> = {}): string {
+	const a = args ?? {};
+	switch (name) {
+		case "search_web":
+			return `Buscando en internet: ${short(a.query)}`;
+		case "fetch_url":
+			return `Leyendo ${hostOf(a.url)}`;
+		case "get_weather":
+			return `Consultando el clima en ${short(a.city)}`;
+		case "calculator":
+			return `Calculando ${short(a.expression)}`;
+		case "get_time":
+			return "Mirando la hora";
+		case "read_file":
+		case "read_file_system":
+			return `Leyendo ${short(a.path)}`;
+		case "write_file":
+		case "write_file_system":
+			return `Escribiendo ${short(a.path)}`;
+		case "list_dir":
+		case "list_dir_system":
+			return `Revisando la carpeta ${short(a.path) || "principal"}`;
+		case "exec":
+			return `Ejecutando: ${short(a.command)}`;
+		case "create_reminder":
+			return `Creando el recordatorio "${short(a.title)}"`;
+		case "list_reminders":
+			return "Revisando tus recordatorios";
+		case "memory_search":
+			return `Buscando en la memoria: ${short(a.query)}`;
+		case "memory_add":
+			return "Guardando en la memoria";
+		case "use_skill":
+			if (!a.name) return "Revisando las habilidades";
+			return a.file ? `Leyendo ${short(a.file, 40)} de la habilidad ${short(a.name, 40)}` : `Usando la habilidad ${short(a.name, 40)}`;
+		case "project": {
+			const labels: Record<string, string> = {
+				list: `Revisando los archivos del proyecto${a.path ? ` en ${short(a.path, 40)}` : ""}`,
+				read: `Leyendo ${short(a.path)}`,
+				search: `Buscando en el proyecto: ${short(a.query)}`,
+				write: `Escribiendo ${short(a.path)}`,
+			};
+			return labels[String(a.action)] ?? "Usando los archivos del proyecto";
+		}
+		case "pc_open":
+			return `Abriendo ${short(a.target)}`;
+		case "pc_screenshot":
+			return "Mirando la pantalla";
+		case "pc_keyboard": {
+			const where = a.window ? ` en ${short(a.window, 30)}` : "";
+			return a.text ? `Escribiendo "${short(a.text, 40)}"${where}` : `Pulsando ${short(a.keys)}${where}`;
+		}
+		case "pc_mouse":
+			return a.action === "move" ? "Moviendo el ratón" : String(a.action ?? "").startsWith("scroll") ? "Desplazando la página" : "Haciendo clic";
+		case "pc_media": {
+			const labels: Record<string, string> = {
+				volume_up: "Subiendo el volumen",
+				volume_down: "Bajando el volumen",
+				set_volume: `Poniendo el volumen al ${short(a.value)}%`,
+				get_volume: "Mirando el volumen",
+				mute: "Silenciando",
+				unmute: "Quitando el silencio",
+				play_pause: "Reproducir / pausar",
+				next: "Siguiente canción",
+				previous: "Canción anterior",
+				stop: "Deteniendo la música",
+			};
+			return labels[String(a.action)] ?? "Controlando el sonido";
+		}
+		case "pc_windows": {
+			const t = short(a.title, 40);
+			const labels: Record<string, string> = {
+				list: "Revisando las ventanas abiertas",
+				focus: `Cambiando a ${t}`,
+				minimize: `Minimizando ${t}`,
+				maximize: `Maximizando ${t}`,
+				restore: `Restaurando ${t}`,
+				close: `Cerrando ${t}`,
+				show_desktop: "Mostrando el escritorio",
+			};
+			return labels[String(a.action)] ?? "Gestionando ventanas";
+		}
+		case "pc_processes":
+			return a.action === "kill" ? `Cerrando ${short(a.name)}` : "Revisando los programas abiertos";
+		case "pc_clipboard":
+			return a.action === "write" ? "Copiando al portapapeles" : "Leyendo el portapapeles";
+		case "pc_system":
+			return "Revisando el estado del PC";
+		case "pc_power": {
+			const labels: Record<string, string> = {
+				lock: "Bloqueando el PC",
+				sleep: "Suspendiendo el PC",
+				shutdown: "Programando el apagado",
+				restart: "Programando el reinicio",
+				logoff: "Cerrando la sesión",
+				cancel: "Cancelando el apagado",
+			};
+			return labels[String(a.action)] ?? "Energía del PC";
+		}
+		case "browser": {
+			const labels: Record<string, string> = {
+				open: `Abriendo ${hostOf(a.url) || short(a.url)} en el navegador`,
+				read: "Leyendo la página",
+				click: `Haciendo clic en ${shiroBrowser.describeRef(Number(a.ref)) ?? `[${short(a.ref)}]`}`,
+				type: `Escribiendo "${short(a.text, 40)}"`,
+				scroll: "Desplazando la página",
+				back: "Volviendo a la página anterior",
+				screenshot: "Mirando el navegador",
+				close: "Cerrando el navegador",
+			};
+			return labels[String(a.action)] ?? "Usando el navegador";
+		}
+		case "terminal":
+			return a.action === "run" ? `Ejecutando en la terminal: ${short(a.command)}` : a.action === "stop" ? "Deteniendo la terminal" : "Mirando la terminal";
+		default: {
+			const mcp = isMcpToolName(name) ? mcpManager.lookup(name) : undefined;
+			if (mcp) return `Usando ${mcp.tool} (${mcp.server})`;
+			return getToolDefinition(name)?.label ?? name;
+		}
+	}
+}
 
 /** Conversión al formato ToolDef para el LLM */
 function toToolDef(tool: ToolDefinition): ToolDef {
@@ -537,58 +805,42 @@ function toToolDef(tool: ToolDefinition): ToolDef {
 
 const TOOL_DEFS: ToolDef[] = TOOLS.map(tool => toToolDef(tool));
 
-/** Herramientas permitidas: HEALTH puede desactivar algunas en safe-mode. */
-let enabledSet: Set<string> = new Set(TOOLS.map((t) => t.name));
-
-export function getToolsDefinition(enabledOnly = true): ToolDef[] {
-	if (!enabledOnly) return [...TOOL_DEFS];
-	return TOOL_DEFS.filter((t) => enabledSet.has(t.function.name));
+export function getToolsDefinition(): ToolDef[] {
+	return [...TOOL_DEFS];
 }
 
 export function getAllToolNames(): string[] {
 	return TOOLS.map((t) => t.name);
 }
 
-export function getToolsByCategory(category: ToolDefinition["category"]): ToolDefinition[] {
-	return TOOLS.filter((t) => t.category === category);
-}
-
 export function getToolDefinition(name: string): ToolDefinition | undefined {
 	return TOOLS.find((t) => t.name === name);
 }
 
-export function getToolExamples(name: string): string[] {
-	const tool = getToolDefinition(name);
-	return tool?.examples ?? [];
-}
-
+/** Las tools de servidores MCP solo se incluyen si vienen en la lista (resolveTools las añade). */
 export function getToolsDefinitionScoped(allowedTools?: string[]): ToolDef[] {
 	if (!Array.isArray(allowedTools) || allowedTools.length === 0) {
-		return getToolsDefinition(true);
+		return getToolsDefinition();
 	}
 	const allowed = new Set(allowedTools);
-	return TOOL_DEFS.filter((t) => enabledSet.has(t.function.name) && allowed.has(t.function.name));
+	const builtIn = TOOL_DEFS.filter((t) => allowed.has(t.function.name));
+	return allowedTools.some(isMcpToolName) ? [...builtIn, ...mcpManager.getToolDefs(allowed)] : builtIn;
 }
 
-export function setToolsEnabled(names: string[], enabled: boolean): void {
-	for (const name of names) {
-		if (enabled) enabledSet.add(name);
-		else enabledSet.delete(name);
-	}
-}
-
-export async function executeToolSafe(name: string, args: Record<string, unknown>): Promise<ToolResult> {
-	return executeToolSafeScoped(name, args);
-}
-
-/** Ejecuta una tool comprobando safe-mode, la lista permitida y la aprobación del usuario. */
+/** Ejecuta una tool comprobando la lista permitida y la aprobación del usuario. */
 export async function executeToolSafeScoped(
 	name: string,
 	args: Record<string, unknown>,
 	allowedTools?: string[],
 ): Promise<ToolResult> {
-	if (!enabledSet.has(name)) {
-		return { ok: false, error: "Herramienta deshabilitada (safe-mode): " + name };
+	if (isMcpToolName(name)) {
+		// Tools de servidores MCP: solo si se ofrecieron explícitamente en esta sesión.
+		if (!Array.isArray(allowedTools) || !allowedTools.includes(name)) {
+			return { ok: false, error: "Herramienta no permitida en esta sesion: " + name };
+		}
+		const approval = await requestApproval(name, args);
+		if (!approval.ok) return { ok: false, error: approval.error };
+		return mcpManager.callTool(name, args);
 	}
 	if (Array.isArray(allowedTools) && !allowedTools.includes(name)) {
 		return { ok: false, error: "Herramienta no permitida en esta sesion: " + name };

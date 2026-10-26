@@ -1,15 +1,28 @@
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+/**
+ * Chats de Shiro. Esta parte decide título, resumen y limpieza de mensajes; dónde se guardan
+ * (memoria, este equipo, Obsidian o Supabase) lo decide backends.ts según Ajustes → Datos.
+ */
 import { randomUUID } from "node:crypto";
-import initSqlJs, { Database as SqlJsDatabase } from "sql.js";
-import { DATA_DIR, getConfig } from "../config/config.js";
+import { getConfig } from "../config/config.js";
+import { currentStorage } from "../storage/storage.js";
+import { chatBackendFor, createMemoryBackend, type ChatBackend } from "./backends.js";
 import type { ContentPart } from "../core/agent/Types.js";
 import { getMessagePreview } from "../core/agent/contentUtils.js";
+
+/** Herramienta usada en una respuesta (se muestra como "pasos" en la web). */
+export type ChatToolUse = { name: string; label: string; ok: boolean; image?: string };
 
 export type ChatMessage = {
 	role: "user" | "assistant";
 	/** Texto o, en mensajes de usuario, array de partes (texto + imagen) para visión. */
 	content: string | ContentPart[];
+	/** Hora del mensaje (ms). */
+	ts?: number;
+	tools?: ChatToolUse[];
+	/** En una sala: id del agente que respondió (sin él, el asistente de siempre). */
+	agent?: string;
+	/** Su nombre en ese momento (se sigue viendo aunque luego se borre el agente). */
+	agentName?: string;
 };
 
 export type ChatSessionMeta = {
@@ -23,96 +36,6 @@ export type ChatSessionMeta = {
 export type ChatSession = ChatSessionMeta & {
 	messages: ChatMessage[];
 };
-
-const CHAT_DIR = join(DATA_DIR, "chats");
-const DB_FILE = join(DATA_DIR, "chat-index.sqlite");
-
-// When persistChatHistory is disabled, keep sessions in memory only.
-const memorySessions = new Map<string, ChatSession>();
-const memoryLinks = new Map<string, string>();
-
-function persistChatHistory(): boolean {
-	return getConfig().persistChatHistory !== false;
-}
-
-type SessionRow = {
-	id: string;
-	title: string;
-	file_path: string;
-	created_at: number;
-	updated_at: number;
-	last_preview: string | null;
-};
-
-type LinkRow = {
-	session_id: string;
-};
-
-let db: SqlJsDatabase | null = null;
-
-function ensureDir(path: string): void {
-	if (!persistChatHistory()) return;
-	if (!existsSync(path)) mkdirSync(path, { recursive: true });
-}
-
-let SQL: Awaited<ReturnType<typeof initSqlJs>> | null = null;
-
-async function getSql(): Promise<NonNullable<typeof SQL>> {
-	if (SQL) return SQL as NonNullable<typeof SQL>;
-	SQL = await initSqlJs();
-	return SQL as NonNullable<typeof SQL>;
-}
-
-async function getDb(): Promise<SqlJsDatabase> {
-	if (!persistChatHistory()) {
-		throw new Error("Chat persistence is disabled");
-	}
-	if (db) return db;
-	ensureDir(DATA_DIR);
-	ensureDir(CHAT_DIR);
-	const SqlEngine = await getSql();
-	
-	if (existsSync(DB_FILE)) {
-		const buffer = readFileSync(DB_FILE);
-		db = new SqlEngine.Database(buffer);
-	} else {
-		db = new SqlEngine.Database();
-	}
-	
-	db.run("PRAGMA foreign_keys = ON");
-	db.run(`
-		CREATE TABLE IF NOT EXISTS chat_sessions (
-			id TEXT PRIMARY KEY,
-			title TEXT NOT NULL,
-			file_path TEXT NOT NULL,
-			created_at INTEGER NOT NULL,
-			updated_at INTEGER NOT NULL,
-			last_preview TEXT
-		);
-		CREATE INDEX IF NOT EXISTS idx_chat_sessions_updated_at ON chat_sessions(updated_at DESC);
-		CREATE TABLE IF NOT EXISTS chat_session_links (
-			channel TEXT NOT NULL,
-			external_id TEXT NOT NULL,
-			session_id TEXT NOT NULL,
-			PRIMARY KEY (channel, external_id),
-			FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE
-		);
-		CREATE INDEX IF NOT EXISTS idx_chat_session_links_session_id ON chat_session_links(session_id);
-	`);
-	saveDb();
-	return db;
-}
-
-function saveDb(): void {
-	if (!db) return;
-	const data = db.export();
-	const buffer = Buffer.from(data);
-	writeFileSync(DB_FILE, buffer);
-}
-
-function buildChatFilePath(id: string): string {
-	return join(CHAT_DIR, `${id}.json`);
-}
 
 function computeTitle(messages: ChatMessage[], fallback = "Nueva sesión"): string {
 	const firstUser = messages.find((m) => m.role === "user" && getMessagePreview(m.content).length > 0);
@@ -144,6 +67,33 @@ function isContentPartArray(raw: unknown): raw is ContentPart[] {
 	});
 }
 
+/** Datos extra de cada mensaje que guarda la web: hora, herramientas usadas y, en salas, qué agente habló. */
+function sanitizeMeta(item: Record<string, unknown>): Pick<ChatMessage, "ts" | "tools" | "agent" | "agentName"> {
+	const out: Pick<ChatMessage, "ts" | "tools" | "agent" | "agentName"> = {};
+	if (typeof item.ts === "number" && Number.isFinite(item.ts)) out.ts = item.ts;
+	if (item.role === "assistant" && typeof item.agent === "string" && /^[a-z0-9][a-z0-9-]{0,39}$/.test(item.agent)) {
+		out.agent = item.agent;
+		const name = typeof item.agentName === "string" ? item.agentName.trim().slice(0, 40) : "";
+		if (name) out.agentName = name;
+	}
+	if (Array.isArray(item.tools)) {
+		const tools = item.tools
+			.slice(0, 30)
+			.map((t): ChatToolUse | null => {
+				if (!t || typeof t !== "object") return null;
+				const r = t as Record<string, unknown>;
+				const name = String(r.name ?? "").slice(0, 60);
+				const label = String(r.label ?? "").slice(0, 200);
+				if (!name && !label) return null;
+				const image = typeof r.image === "string" && /^\/api\/screenshots\/[\w.%-]+$/.test(r.image) ? r.image : undefined;
+				return { name, label, ok: r.ok !== false, ...(image ? { image } : {}) };
+			})
+			.filter((t): t is ChatToolUse => t !== null);
+		if (tools.length) out.tools = tools;
+	}
+	return out;
+}
+
 export function sanitizeMessages(input: unknown): ChatMessage[] {
 	if (!Array.isArray(input)) return [];
 	return input
@@ -152,242 +102,82 @@ export function sanitizeMessages(input: unknown): ChatMessage[] {
 			const role = (item as { role?: unknown }).role;
 			const content = (item as { content?: unknown }).content;
 			if (role !== "user" && role !== "assistant") return null;
+			const meta = sanitizeMeta(item as Record<string, unknown>);
 			if (typeof content === "string") {
 				const trimmed = content.trim();
 				if (!trimmed) return null;
-				return { role, content: trimmed } as ChatMessage;
+				return { role, content: trimmed, ...meta } as ChatMessage;
 			}
 			if (isContentPartArray(content)) {
 				const hasText = content.some((p) => (p as ContentPart).type === "text" && String((p as { text?: string }).text).trim());
 				const hasImage = content.some((p) => (p as ContentPart).type === "image_url");
 				if (!hasText && !hasImage) return null;
-				return { role, content } as ChatMessage;
+				return { role, content, ...meta } as ChatMessage;
 			}
 			return null;
 		})
 		.filter((m): m is ChatMessage => m !== null);
 }
 
-function rowToMeta(row: SessionRow): ChatSessionMeta {
-	return {
-		id: row.id,
-		title: row.title,
-		createdAt: row.created_at,
-		updatedAt: row.updated_at,
-		lastPreview: row.last_preview ?? "",
-	};
-}
 
-function setSessionTitle(sqlite: SqlJsDatabase, id: string, title: string): void {
-	const trimmed = title.trim();
-	if (!trimmed) return;
-	sqlite.run("UPDATE chat_sessions SET title = ? WHERE id = ?", [trimmed, id]);
-	saveDb();
-}
+// ───────────────────────────── almacén ─────────────────────────────
 
-function writeSessionFile(id: string, messages: ChatMessage[]): void {
-	if (!persistChatHistory()) return;
-	ensureDir(CHAT_DIR);
-	const filePath = buildChatFilePath(id);
-	writeFileSync(filePath, JSON.stringify({ id, messages }, null, 2), "utf-8");
-}
+/** Si persistChatHistory es false, los chats viven solo en memoria (se pierden al cerrar Shiro). */
+const memoryBackend = createMemoryBackend();
 
-function readSessionFile(id: string): ChatMessage[] {
-	if (!persistChatHistory()) return [];
-	const filePath = buildChatFilePath(id);
-	if (!existsSync(filePath)) return [];
-	try {
-		const raw = readFileSync(filePath, "utf-8");
-		const parsed = JSON.parse(raw) as { messages?: unknown };
-		return sanitizeMessages(parsed.messages);
-	} catch {
-		return [];
-	}
+function backend(): ChatBackend {
+	if (getConfig().persistChatHistory === false) return memoryBackend;
+	return chatBackendFor(currentStorage(), sanitizeMessages);
 }
 
 export async function listChatSessions(): Promise<ChatSessionMeta[]> {
-	if (!persistChatHistory()) {
-		return Array.from(memorySessions.values())
-			.sort((a, b) => b.updatedAt - a.updatedAt)
-			.map(({ id, title, createdAt, updatedAt, lastPreview }) => ({
-				id,
-				title,
-				createdAt,
-				updatedAt,
-				lastPreview,
-			}));
-	}
-
-	const sqlite = await getDb();
-	const result = sqlite.exec("SELECT id, title, file_path, created_at, updated_at, last_preview FROM chat_sessions ORDER BY updated_at DESC");
-	if (!result.length) return [];
-	const rows = result[0].values.map((row: unknown[]) => ({
-		id: row[0] as string,
-		title: row[1] as string,
-		file_path: row[2] as string,
-		created_at: row[3] as number,
-		updated_at: row[4] as number,
-		last_preview: row[5] as string | null,
-	})) as SessionRow[];
-	return rows.map(rowToMeta);
+	return backend().list();
 }
 
 export async function createChatSession(initialMessages: ChatMessage[] = []): Promise<ChatSession> {
 	const now = Date.now();
-	const id = randomUUID();
-	const cleanMessages = sanitizeMessages(initialMessages);
-	const title = computeTitle(cleanMessages);
-	const lastPreview = computeLastPreview(cleanMessages);
-
-	if (!persistChatHistory()) {
-		const session: ChatSession = {
-			id,
-			title,
-			createdAt: now,
-			updatedAt: now,
-			lastPreview,
-			messages: cleanMessages,
-		};
-		memorySessions.set(id, session);
-		return session;
-	}
-
-	const sqlite = await getDb();
-	const filePath = buildChatFilePath(id);
-
-	writeSessionFile(id, cleanMessages);
-
-	sqlite.run(
-		"INSERT INTO chat_sessions (id, title, file_path, created_at, updated_at, last_preview) VALUES (?, ?, ?, ?, ?, ?)",
-		[id, title, filePath, now, now, lastPreview]
-	);
-	saveDb();
-
-	return {
-		id,
-		title,
+	const messages = sanitizeMessages(initialMessages);
+	const session: ChatSession = {
+		id: randomUUID(),
+		title: computeTitle(messages),
 		createdAt: now,
 		updatedAt: now,
-		lastPreview,
-		messages: cleanMessages,
+		lastPreview: computeLastPreview(messages),
+		messages,
 	};
+	await backend().insert(session);
+	return session;
 }
 
 export async function getChatSession(id: string): Promise<ChatSession | null> {
-	if (!persistChatHistory()) {
-		return memorySessions.get(id) ?? null;
-	}
-
-	const sqlite = await getDb();
-	const stmt = sqlite.prepare("SELECT id, title, file_path, created_at, updated_at, last_preview FROM chat_sessions WHERE id = ?");
-	stmt.bind([id]);
-	if (!stmt.step()) {
-		stmt.free();
-		return null;
-	}
-	const row = stmt.getAsObject() as SessionRow;
-	stmt.free();
-	return {
-		...rowToMeta(row),
-		messages: readSessionFile(id),
-	};
+	return backend().get(id);
 }
 
 export async function saveChatSession(id: string, messages: ChatMessage[]): Promise<ChatSession | null> {
+	const store = backend();
+	const existing = await store.meta(id);
+	if (!existing) return null;
 	const cleanMessages = sanitizeMessages(messages);
-	const now = Date.now();
-	const title = computeTitle(cleanMessages);
-	const lastPreview = computeLastPreview(cleanMessages);
-
-	if (!persistChatHistory()) {
-		const existing = memorySessions.get(id);
-		if (!existing) return null;
-		const session: ChatSession = {
-			id,
-			title: title || existing.title,
-			createdAt: existing.createdAt,
-			updatedAt: now,
-			lastPreview,
-			messages: cleanMessages,
-		};
-		memorySessions.set(id, session);
-		return session;
-	}
-
-	const sqlite = await getDb();
-	const stmt = sqlite.prepare("SELECT id, title, file_path, created_at, updated_at, last_preview FROM chat_sessions WHERE id = ?");
-	stmt.bind([id]);
-	if (!stmt.step()) {
-		stmt.free();
-		return null;
-	}
-	const row = stmt.getAsObject() as SessionRow;
-	stmt.free();
-
-	const resolvedTitle = title || row.title || "Nueva sesión";
-
-	writeSessionFile(id, cleanMessages);
-
-	sqlite.run("UPDATE chat_sessions SET title = ?, updated_at = ?, last_preview = ? WHERE id = ?", [resolvedTitle, now, lastPreview, id]);
-	saveDb();
-
-	return {
-		id,
-		title: resolvedTitle,
-		createdAt: row.created_at,
-		updatedAt: now,
-		lastPreview,
+	const patch = {
+		title: computeTitle(cleanMessages) || existing.title || "Nueva sesión",
+		updatedAt: Date.now(),
+		lastPreview: computeLastPreview(cleanMessages),
 		messages: cleanMessages,
 	};
+	if (!(await store.update(id, patch))) return null;
+	return { id, createdAt: existing.createdAt, ...patch };
 }
 
 export async function renameChatSession(id: string, title: string): Promise<ChatSession | null> {
 	const trimmed = title.trim();
 	if (!trimmed) return null;
-	const now = Date.now();
-	if (!persistChatHistory()) {
-		const existing = memorySessions.get(id);
-		if (!existing) return null;
-		const session: ChatSession = { ...existing, title: trimmed, updatedAt: now };
-		memorySessions.set(id, session);
-		return session;
-	}
-	const sqlite = await getDb();
-	const stmt = sqlite.prepare("SELECT id FROM chat_sessions WHERE id = ?");
-	stmt.bind([id]);
-	if (!stmt.step()) {
-		stmt.free();
-		return null;
-	}
-	stmt.free();
-	sqlite.run("UPDATE chat_sessions SET title = ?, updated_at = ? WHERE id = ?", [trimmed, now, id]);
-	saveDb();
-	return getChatSession(id);
+	const store = backend();
+	if (!(await store.update(id, { title: trimmed, updatedAt: Date.now() }))) return null;
+	return store.get(id);
 }
 
 export async function deleteChatSession(id: string): Promise<boolean> {
-	if (!persistChatHistory()) {
-		const existed = memorySessions.delete(id);
-		for (const [key, sessionId] of Array.from(memoryLinks.entries())) {
-			if (sessionId === id) memoryLinks.delete(key);
-		}
-		return existed;
-	}
-
-	const sqlite = await getDb();
-	const stmt = sqlite.prepare("SELECT id FROM chat_sessions WHERE id = ?");
-	stmt.bind([id]);
-	if (!stmt.step()) {
-		stmt.free();
-		return false;
-	}
-	stmt.free();
-	
-	sqlite.run("DELETE FROM chat_sessions WHERE id = ?", [id]);
-	saveDb();
-	const filePath = buildChatFilePath(id);
-	if (existsSync(filePath)) unlinkSync(filePath);
-	return true;
+	return backend().remove(id);
 }
 
 export async function getOrCreateLinkedChatSession(channel: string, externalId: string, titleHint?: string): Promise<ChatSession> {
@@ -396,48 +186,17 @@ export async function getOrCreateLinkedChatSession(channel: string, externalId: 
 	if (!cleanChannel || !cleanExternalId) {
 		throw new Error("channel y externalId son requeridos");
 	}
-
-	const key = `${cleanChannel}:${cleanExternalId}`;
-	if (!persistChatHistory()) {
-		const existingSessionId = memoryLinks.get(key);
-		if (existingSessionId) {
-			const existing = await getChatSession(existingSessionId);
-			if (existing) return existing;
-		}
-
-		const created = await createChatSession();
-		if (titleHint?.trim()) {
-			created.title = titleHint.trim();
-		}
-		memoryLinks.set(key, created.id);
-		return created;
-	}
-
-	const sqlite = await getDb();
-	const stmt = sqlite.prepare("SELECT session_id FROM chat_session_links WHERE channel = ? AND external_id = ?");
-	stmt.bind([cleanChannel, cleanExternalId]);
-	const hasRow = stmt.step();
-	let linkRow: LinkRow | undefined;
-	if (hasRow) {
-		linkRow = stmt.getAsObject() as LinkRow;
-	}
-	stmt.free();
-
-	if (linkRow) {
-		const existing = await getChatSession(linkRow.session_id);
+	const store = backend();
+	const linkedId = await store.findLink(cleanChannel, cleanExternalId);
+	if (linkedId) {
+		const existing = await store.get(linkedId);
 		if (existing) return existing;
 	}
-
 	const created = await createChatSession();
 	if (titleHint?.trim()) {
-		setSessionTitle(sqlite, created.id, titleHint);
+		created.title = titleHint.trim();
+		await store.update(created.id, { title: created.title });
 	}
-
-	sqlite.run(
-		"INSERT INTO chat_session_links (channel, external_id, session_id) VALUES (?, ?, ?) ON CONFLICT(channel, external_id) DO UPDATE SET session_id = excluded.session_id",
-		[cleanChannel, cleanExternalId, created.id]
-	);
-	saveDb();
-
-	return (await getChatSession(created.id)) ?? created;
+	await store.setLink(cleanChannel, cleanExternalId, created.id);
+	return created;
 }

@@ -1,17 +1,3 @@
-import type { ToolDefinition } from "../ToolRegistry.js";
-
-export const calculatorTool: ToolDefinition = {
-	label: "Calculadora",
-	name: "calculator",
-	description: "Calcula operaciones matemáticas.",
-	category: "utilidades",
-	parameters: {
-		type: "object",
-		properties: { expression: { type: "string", description: "Expresión (ej: 25 * 4, sqrt(144))" } },
-		required: ["expression"],
-	},
-};
-
 export async function executeCalculator(args: Record<string, unknown>): Promise<{ ok: boolean; content: string }> {
 	const expression = String(args.expression ?? "").trim();
 	if (!expression) return { ok: false, content: "Expresión requerida" };

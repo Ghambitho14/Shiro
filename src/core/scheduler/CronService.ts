@@ -1,9 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+import { DATA_DIR } from "../../config/config.js";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = join(__dirname, "..", "..", "..", "data");
 const CRON_FILE = join(DATA_DIR, "cron-tasks.json");
 
 export interface CronTask {
@@ -98,11 +96,6 @@ export function createCronTask(
 
 export function listCronTasks(): CronTask[] {
 	return loadTasks();
-}
-
-export function getCronTask(id: string): CronTask | undefined {
-	const tasks = loadTasks();
-	return tasks.find(t => t.id === id);
 }
 
 export function deleteCronTask(id: string): boolean {
@@ -213,7 +206,7 @@ export function initCronScheduler(): void {
 }
 
 export function stopCronScheduler(): void {
-	for (const [id, timeout] of scheduledTimeouts) {
+	for (const timeout of scheduledTimeouts.values()) {
 		clearInterval(timeout);
 	}
 	scheduledTimeouts.clear();

@@ -1,56 +1,90 @@
-import { createRequire } from "node:module";
-import { existsSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-import { getState, setState } from "./store.js";
+import { getState } from "./store.js";
+import { APP_VERSION, IS_EXE } from "./runtime.js";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const require = createRequire(import.meta.url);
-const pkg = require("../package.json") as { version: string; name: string };
-
-const DATA_DIR = join(__dirname, "..", "data");
-const CONFIG_FILE = join(DATA_DIR, "config.json");
-
-function isFirstRun(): boolean {
-	return !existsSync(CONFIG_FILE);
-}
+/** Comandos antiguos: todo lo que hacían ahora está en Ajustes de la ventana. */
+const REMOVED = new Set(["config", "onboard", "personalize", "set-name"]);
 
 function buildHelp(): string {
 	const name = getState().name;
+	if (IS_EXE) return buildExeHelp(name);
 	return `
-${name} v${pkg.version}
+${name} v${APP_VERSION}
 
-Comandos:
-  npm run tui       Chat en terminal (recomendado)
-  npm run dev       Servidor web
-  npm run wa        WhatsApp Web
-  npm run config    Configuración (modelo, conexión)
-  npm run doctor    Comprobar que el modelo funciona
-  npm run mcp       Servidor MCP (para OpenCode, Claude Code...)
-  npm run onboard   Primera configuración
-  npm run test      Tests
+Usar ${name}:
+  npm start          Abre ${name} en su propia ventana (igual que npm run app)
+  npm run app        Lo mismo; con "-- --acceso-directo" crea un icono en el escritorio
+  npm run dev        Solo el servidor web (ábrelo en http://127.0.0.1:1406)
+  npm run tui        Chat en la terminal
+  npm run wa         Puente de WhatsApp
 
-Más info en: README.md
+Herramientas:
+  npm run doctor     Comprueba que el modelo responde ("-- --fix" aplica lo recomendado)
+  npm run mcp        ${name} como servidor MCP (para OpenCode, Claude Code, Cursor...)
+  npm test           Pruebas
+  npm run check      Revisión de tipos
+
+La configuración (modelo, voz, control del PC, habilidades, MCP...) está en
+la ventana de ${name}: Ajustes, abajo a la izquierda.
+
+En el chat escribe /ayuda para ver los comandos (/modelo, /habilidades, /mcp...).
+`.trim();
+}
+
+/** Ayuda de Shiro.exe (sin npm ni código fuente). */
+function buildExeHelp(name: string): string {
+	return `
+${name} v${APP_VERSION}
+
+  Shiro.exe                    Abre ${name} en su propia ventana (doble clic)
+  Shiro.exe --acceso-directo   Lo mismo y crea un icono en el escritorio
+  Shiro.exe web                Solo el servidor web (http://127.0.0.1:1406)
+  Shiro.exe tui                Chat en la terminal
+  Shiro.exe wa                 Puente de WhatsApp
+  Shiro.exe doctor             Comprueba que el modelo responde
+  Shiro.exe mcp                ${name} como servidor MCP (OpenCode, Claude Code, Cursor...)
+
+La configuración está en la ventana de ${name}: Ajustes, abajo a la izquierda.
 `.trim();
 }
 
 async function main(): Promise<void> {
 	let argv = process.argv.slice(2);
 	if (argv[0] === "--") argv = argv.slice(1);
+	// Shiro.exe con doble clic (o solo con opciones como --acceso-directo): abre la ventana.
+	if (IS_EXE && (!argv[0] || argv[0].startsWith("--acceso") || argv[0] === "--shortcut")) argv = ["app", ...argv];
+	if (IS_EXE) process.title = "Shiro";
 	const arg = argv[0];
 
-	if (arg === "--help" || arg === "-h") {
+	if (!arg || arg === "--help" || arg === "-h" || arg === "ayuda" || arg === "help") {
 		console.log(buildHelp());
 		return;
 	}
-	if (!arg) {
-		console.log(buildHelp());
+
+	if (arg === "--version" || arg === "-v") {
+		console.log(APP_VERSION);
+		return;
+	}
+
+	if (arg === "app") {
+		const { runApp } = await import("./app.js");
+		await runApp(argv.slice(1));
+		return;
+	}
+
+	if (arg === "web" || arg === "server") {
+		await import("./server.js");
 		return;
 	}
 
 	if (arg === "tui") {
 		const { runChat } = await import("./chat-cli.js");
 		await runChat();
+		return;
+	}
+
+	if (arg === "wa" || arg === "whatsapp") {
+		const { runWhatsAppBridge } = await import("./whatsapp.js");
+		await runWhatsAppBridge();
 		return;
 	}
 
@@ -70,57 +104,16 @@ async function main(): Promise<void> {
 		return;
 	}
 
-	if (arg === "config") {
-		const { runTui } = await import("./tui.js");
-		await runTui();
+	if (REMOVED.has(arg)) {
+		console.log(`\n  "${arg}" ya no existe: ahora todo se configura en la ventana de Shiro.`);
+		console.log(`  Ábrela con: ${IS_EXE ? "Shiro.exe" : "npm start"}   → Ajustes (abajo a la izquierda)\n`);
+		process.exitCode = 1;
 		return;
 	}
 
-	if (arg === "onboard") {
-		const { runOnboard } = await import("./onboard.js");
-		await runOnboard();
-		return;
-	}
-
-	if (arg === "personalize") {
-		const { runPersonalize } = await import("./personalize.js");
-		await runPersonalize();
-		return;
-	}
-
-	if (arg === "web" || arg === "server") {
-		if (isFirstRun()) {
-			console.log("\n  Primera vez: ejecuta 'npm run onboard' para configurar.\n");
-			return;
-		}
-		await import("./server.js");
-		return;
-	}
-
-	if (arg === "wa" || arg === "whatsapp") {
-		const { runWhatsAppBridge } = await import("./whatsapp.js");
-		await runWhatsAppBridge();
-		return;
-	}
-
-	if (arg === "--version" || arg === "-v") {
-		console.log(pkg.version);
-		return;
-	}
-
-	if (arg === "set-name") {
-		const name = argv[1]?.trim();
-		if (!name) {
-			console.error("Uso: npm start -- set-name <nombre>");
-			process.exitCode = 1;
-			return;
-		}
-		setState({ name });
-		console.log(`Nombre guardado: ${getState().name}`);
-		return;
-	}
-
+	console.log(`Comando desconocido: ${arg}\n`);
 	console.log(buildHelp());
+	process.exitCode = 1;
 }
 
 void main();

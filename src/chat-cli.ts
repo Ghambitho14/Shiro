@@ -13,6 +13,8 @@ import { MemoryManager } from "./core/memory/MemoryManager.js";
 import { runAgent } from "./core/agent/Agent.js";
 import { setLogLevel } from "./core/logger.js";
 import type { Approver } from "./core/tools/approval.js";
+import { mcpManager } from "./core/mcp/McpManager.js";
+import { matchSkillCommand, parseCommand, plainText } from "./commands.js";
 
 const C = {
 	reset: "\x1b[0m",
@@ -23,11 +25,9 @@ const C = {
 	red: "\x1b[31m",
 };
 
-const HELP = `
-  /ayuda    Muestra esta ayuda
-  /estado   Modelo y configuración actual
+/** Comandos que solo existen en la terminal; el resto son los mismos que en la web (commands.ts). */
+const TERMINAL_HELP = `
   /doctor   Comprueba que el modelo funciona
-  /limpiar  Olvida la conversación actual
   /salir    Cierra el chat
 `;
 
@@ -68,6 +68,8 @@ export async function runChat(): Promise<void> {
 		return approved;
 	};
 
+	// Servidores MCP de Ajustes → Conectores MCP (sus herramientas aparecen cuando terminan de arrancar).
+	mcpManager.start();
 	const llm = getLLM().getConfig();
 	stdout.write(`\n${C.cyan}${name}${C.reset} ${C.dim}— ${llm.model} (${PROVIDER_PRESETS[llm.provider as keyof typeof PROVIDER_PRESETS]?.label ?? llm.provider})${C.reset}\n`);
 	stdout.write(`${C.dim}Escribe /ayuda para ver los comandos. Ctrl+C para salir.${C.reset}\n\n`);
@@ -84,23 +86,24 @@ export async function runChat(): Promise<void> {
 		if (!text) continue;
 
 		if (text.startsWith("/")) {
-			const cmd = text.toLowerCase();
-			if (cmd === "/salir" || cmd === "/exit") break;
-			if (cmd === "/ayuda" || cmd === "/help") stdout.write(HELP + "\n");
-			else if (cmd === "/limpiar" || cmd === "/clear") {
-				history.length = 0;
-				stdout.write(`${C.dim}Conversación olvidada.${C.reset}\n\n`);
-			} else if (cmd === "/estado" || cmd === "/status") {
-				const cfg = getConfig();
-				const l = getLLM().getConfig();
-				stdout.write(
-					`  Modelo: ${l.model}\n  URL: ${l.baseUrl}\n  Modo: ${cfg.autonomousMode ? "con herramientas" : "solo texto"} · tools: ${cfg.toolMode}/${cfg.toolProfile} · aprobación: ${cfg.approvalMode}\n\n`,
-				);
-			} else if (cmd === "/doctor") {
+			const word = text.slice(1).split(/\s+/)[0]?.toLowerCase() ?? "";
+			if (word === "salir" || word === "exit") break;
+			if (word === "doctor") {
 				const { runDoctor } = await import("./doctor.js");
 				await runDoctor();
-			} else stdout.write(`${C.dim}Comando desconocido. /ayuda para ver la lista.${C.reset}\n\n`);
-			continue;
+				continue;
+			}
+			if (["nuevo", "new", "limpiar", "clear", "reset"].includes(word)) {
+				history.length = 0;
+				stdout.write(`${C.dim}Conversación olvidada. Empezamos de nuevo.${C.reset}\n\n`);
+				continue;
+			}
+			const result = parseCommand(text);
+			if (result?.executed) {
+				stdout.write(`${plainText(result.content)}\n${word === "ayuda" || word === "help" ? TERMINAL_HELP : ""}\n`);
+				continue;
+			}
+			// Si no es un comando, puede ser "/habilidad mensaje" o texto normal: sigue abajo.
 		}
 
 		history.push({ role: "user", content: text });
@@ -118,6 +121,7 @@ export async function runChat(): Promise<void> {
 				userProfile: getUserProfile(),
 				conversation: history.slice(-20),
 				approver,
+				skill: matchSkillCommand(text)?.skill,
 				onStreamDelta: (chunk) => {
 					streamed = true;
 					stdout.write(chunk);
@@ -132,5 +136,6 @@ export async function runChat(): Promise<void> {
 	}
 
 	rl.close();
+	await mcpManager.closeAll();
 	stdout.write("Hasta luego.\n");
 }

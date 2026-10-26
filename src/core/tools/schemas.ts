@@ -59,46 +59,13 @@ export const cronToggleSchema = z.object({
 	enabled: z.boolean(),
 });
 
-export const projectAnalyzeSchema = z.object({
-	path: z.string().optional().default("."),
-	deep: z.boolean().optional().default(false),
-});
-
-export const selfModifySchema = z.object({
-	file: z.string().min(1, "archivo requerido"),
-	search: z.string().min(1, "texto a buscar requerido"),
-	replace: z.string().optional().default(""),
-});
-
 export const gitSchema = z.object({
 	command: z.string().min(1, "comando requerido"),
 	repoPath: z.string().optional().default("."),
 });
 
-export const selfAnalyzeSchema = z.object({});
-
-export const selfReflectSchema = z.object({
-	pending: z.boolean().optional(),
-});
-
 export const askUserSchema = z.object({
 	question: z.string().min(1, "pregunta requerida"),
-});
-
-export const channelCreateSchema = z.object({
-	name: z.string().min(1, "nombre requerido"),
-	type: z.enum(["telegram", "discord", "slack"]),
-	token: z.string().min(1, "token requerido"),
-});
-
-export const channelListSchema = z.object({});
-
-export const channelStartSchema = z.object({
-	id: z.string().min(1, "id requerido"),
-});
-
-export const channelDeleteSchema = z.object({
-	id: z.string().min(1, "id requerido"),
 });
 
 export const createReminderSchema = z.object({
@@ -138,30 +105,103 @@ export const sessionsHistorySchema = z.object({
 	limit: z.number().optional().default(50),
 });
 
-export const executePythonSchema = z.object({
-	code: z.string().min(1, "código requerido").max(5000, "código demasiado largo"),
-	timeout: z.number().min(1000).max(30000).optional().default(10000),
+// ---------- Control del PC ----------
+// Los números usan coerce: algunos modelos locales los mandan como texto ("50").
+
+const optionalNumber = (min: number, max: number) => z.coerce.number().min(min).max(max).optional();
+
+export const pcOpenSchema = z.object({
+	target: z.string().trim().min(1, "indica qué abrir").max(2000),
 });
 
-export const httpRequestSchema = z.object({
-	url: z.string().url("URL inválida"),
-	method: z.enum(["GET", "POST", "PUT", "DELETE", "PATCH"]).default("GET"),
-	headers: z.record(z.string()).optional(),
-	body: z.string().optional(),
+export const pcScreenshotSchema = z.object({});
+
+export const pcKeyboardSchema = z
+	.object({
+		text: z.string().max(5000, "texto demasiado largo (máx. 5000)").optional(),
+		keys: z.string().trim().max(200).optional(),
+		window: z.string().trim().max(200).optional(),
+	})
+	.refine((a) => Boolean(a.text) || Boolean(a.keys), { message: "indica 'text' (texto a escribir) o 'keys' (teclas a pulsar)" });
+
+export const pcMouseSchema = z.object({
+	action: z.enum(["click", "double_click", "right_click", "move", "scroll_up", "scroll_down"]),
+	x: optionalNumber(0, 20000),
+	y: optionalNumber(0, 20000),
+	amount: optionalNumber(1, 30),
 });
 
-export type SearchWebArgs = z.infer<typeof searchWebSchema>;
-export type ExecArgs = z.infer<typeof execSchema>;
-export type CronCreateArgs = z.infer<typeof cronCreateSchema>;
-export type CronListArgs = z.infer<typeof cronListSchema>;
-export type CronDeleteArgs = z.infer<typeof cronDeleteSchema>;
-export type CronToggleArgs = z.infer<typeof cronToggleSchema>;
-export type ProjectAnalyzeArgs = z.infer<typeof projectAnalyzeSchema>;
-export type SelfModifyArgs = z.infer<typeof selfModifySchema>;
-export type GitArgs = z.infer<typeof gitSchema>;
-export type SelfAnalyzeArgs = z.infer<typeof selfAnalyzeSchema>;
-export type SelfReflectArgs = z.infer<typeof selfReflectSchema>;
-export type AskUserArgs = z.infer<typeof askUserSchema>;
+export const pcMediaSchema = z.object({
+	action: z.enum(["volume_up", "volume_down", "set_volume", "get_volume", "mute", "unmute", "play_pause", "next", "previous", "stop"]),
+	value: optionalNumber(0, 100),
+});
+
+export const pcWindowsSchema = z.object({
+	action: z.enum(["list", "focus", "minimize", "maximize", "restore", "close", "show_desktop"]),
+	title: z.string().trim().max(200).optional(),
+});
+
+export const pcProcessesSchema = z.object({
+	action: z.enum(["list", "kill"]).default("list"),
+	name: z.string().trim().max(100).optional(),
+});
+
+export const pcClipboardSchema = z.object({
+	action: z.enum(["read", "write"]),
+	text: z.string().max(20000).optional(),
+});
+
+export const pcSystemSchema = z.object({});
+
+export const pcPowerSchema = z.object({
+	action: z.enum(["lock", "sleep", "shutdown", "restart", "logoff", "cancel"]),
+	delay_minutes: optionalNumber(0, 1440),
+});
+
+/** Algunos modelos mandan los booleanos como texto ("true"/"false"). */
+const optionalBool = z.preprocess((v) => (typeof v === "string" ? v.trim().toLowerCase() === "true" : v), z.boolean().optional());
+
+export const browserSchema = z
+	.object({
+		action: z.enum(["open", "read", "click", "type", "scroll", "back", "screenshot", "close"]),
+		url: z.string().trim().max(2000).optional(),
+		ref: optionalNumber(1, 10000),
+		text: z.string().max(5000, "texto demasiado largo (máx. 5000)").optional(),
+		enter: optionalBool,
+		direction: z.enum(["up", "down"]).optional(),
+	})
+	.superRefine((a, ctx) => {
+		if (a.action === "open" && !a.url) ctx.addIssue({ code: "custom", path: ["url"], message: "indica 'url': la dirección o lo que quieres buscar" });
+		if ((a.action === "click" || a.action === "type") && a.ref === undefined) {
+			ctx.addIssue({ code: "custom", path: ["ref"], message: "indica 'ref': el número [n] del elemento según la última lectura de la página" });
+		}
+	});
+
+export const terminalSchema = z
+	.object({
+		action: z.enum(["read", "run", "stop"]).default("read"),
+		command: z.string().trim().max(8000, "comando demasiado largo").optional(),
+		lines: optionalNumber(5, 400),
+		timeout_seconds: optionalNumber(1, 600),
+	})
+	.refine((a) => a.action !== "run" || Boolean(a.command), { message: "indica 'command' con el comando a ejecutar" });
+
+export const projectSchema = z
+	.object({
+		action: z.enum(["list", "read", "search", "write"]).default("list"),
+		path: z.string().trim().max(1000).optional(),
+		query: z.string().trim().max(300).optional(),
+		offset: optionalNumber(0, 1e9),
+		content: z.string().max(2_000_000, "contenido demasiado largo").optional(),
+	})
+	.refine((a) => a.action !== "read" || Boolean(a.path), { message: "indica 'path' con el archivo a leer" })
+	.refine((a) => a.action !== "search" || Boolean(a.query), { message: "indica 'query' con lo que quieres buscar" })
+	.refine((a) => a.action !== "write" || (Boolean(a.path) && a.content !== undefined), { message: "indica 'path' y 'content'" });
+
+export const useSkillSchema = z.object({
+	name: z.string().trim().max(200).optional(),
+	file: z.string().trim().max(500).optional(),
+});
 
 export const toolSchemas: Record<string, z.ZodType<Record<string, unknown>>> = {
 	read_file: readFileSchema,
@@ -177,16 +217,8 @@ export const toolSchemas: Record<string, z.ZodType<Record<string, unknown>>> = {
 	cron_list: cronListSchema,
 	cron_delete: cronDeleteSchema,
 	cron_toggle: cronToggleSchema,
-	project_analyze: projectAnalyzeSchema,
-	self_modify: selfModifySchema,
 	git: gitSchema,
-	self_analyze: selfAnalyzeSchema,
-	self_reflect: selfReflectSchema,
 	ask_user: askUserSchema,
-	channel_create: channelCreateSchema,
-	channel_list: channelListSchema,
-	channel_start: channelStartSchema,
-	channel_delete: channelDeleteSchema,
 	create_reminder: createReminderSchema,
 	list_reminders: listRemindersSchema,
 	complete_reminder: completeReminderSchema,
@@ -195,6 +227,18 @@ export const toolSchemas: Record<string, z.ZodType<Record<string, unknown>>> = {
 	memory_add: memoryAddSchema,
 	sessions_list: sessionsListSchema,
 	sessions_history: sessionsHistorySchema,
-	execute_python: executePythonSchema,
-	http_request: httpRequestSchema,
+	pc_open: pcOpenSchema,
+	pc_screenshot: pcScreenshotSchema,
+	pc_keyboard: pcKeyboardSchema,
+	pc_mouse: pcMouseSchema,
+	pc_media: pcMediaSchema,
+	pc_windows: pcWindowsSchema,
+	pc_processes: pcProcessesSchema,
+	pc_clipboard: pcClipboardSchema,
+	pc_system: pcSystemSchema,
+	pc_power: pcPowerSchema,
+	browser: browserSchema,
+	terminal: terminalSchema,
+	use_skill: useSkillSchema,
+	project: projectSchema,
 };

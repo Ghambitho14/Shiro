@@ -1,17 +1,3 @@
-import type { ToolDefinition } from "../ToolRegistry.js";
-
-export const searchWebTool: ToolDefinition = {
-	label: "Buscar en Internet",
-	name: "search_web",
-	description: "Busca información en internet.",
-	category: "web",
-	parameters: {
-		type: "object",
-		properties: { query: { type: "string", description: "Consulta de búsqueda" } },
-		required: ["query"],
-	},
-};
-
 function normalizeDuckDuckGoUrl(href: string): string {
 	// DuckDuckGo suele devolver links tipo "/l/?uddg=<encoded>&..." en vez de la URL final.
 	try {

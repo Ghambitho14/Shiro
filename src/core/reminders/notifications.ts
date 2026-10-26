@@ -1,4 +1,4 @@
-import { getDueReminders, completeReminder, getReminders, type Reminder } from "./reminders.js";
+import { getDueReminders, completeReminder, type Reminder } from "./reminders.js";
 
 export type NotificationCallback = (reminder: Reminder) => void | Promise<void>;
 
@@ -10,8 +10,21 @@ export function setNotificationCallback(callback: NotificationCallback): void {
 	notificationCallback = callback;
 }
 
+/** Último error al leer los recordatorios: se muestra una vez, no cada 5 s. */
+let lastError = "";
+
 export async function checkAndNotifyDueReminders(): Promise<void> {
-	const due = getDueReminders();
+	let due: Reminder[];
+	try {
+		due = await getDueReminders();
+		if (lastError) console.log("🔔 Recordatorios: se recuperó el acceso a los recordatorios.");
+		lastError = "";
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		if (message !== lastError) console.error(`🔔 No pude leer los recordatorios: ${message}`);
+		lastError = message;
+		return;
+	}
 	for (const reminder of due) {
 		if (notificationCallback) {
 			try {
@@ -21,7 +34,7 @@ export async function checkAndNotifyDueReminders(): Promise<void> {
 			}
 		}
 		
-		completeReminder(reminder.id);
+		await completeReminder(reminder.id);
 		
 		console.log(`🔔 Recordatorio: ${reminder.title}`);
 	}
@@ -30,7 +43,7 @@ export async function checkAndNotifyDueReminders(): Promise<void> {
 export function startHeartbeat(): void {
 	if (heartbeatInterval) return;
 	
-	checkAndNotifyDueReminders();
+	checkAndNotifyDueReminders().catch((err) => console.error("Error en heartbeat de recordatorios:", err));
 	
 	heartbeatInterval = setInterval(() => {
 		checkAndNotifyDueReminders().catch((err) => {
@@ -41,17 +54,3 @@ export function startHeartbeat(): void {
 	console.log("💓 Heartbeat de recordatorios iniciado (cada 5s)");
 }
 
-export function stopHeartbeat(): void {
-	if (heartbeatInterval) {
-		clearInterval(heartbeatInterval);
-		heartbeatInterval = null;
-		console.log("⏹ Heartbeat de recordatorios detenido");
-	}
-}
-
-export function getHeartbeatStatus(): { running: boolean; nextCheck: number } {
-	return {
-		running: heartbeatInterval !== null,
-		nextCheck: NOTIFICATION_CHECK_MS,
-	};
-}

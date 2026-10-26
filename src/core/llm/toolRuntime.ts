@@ -1,8 +1,9 @@
 import { getConfig } from "../../config/config.js";
+import { activeModelTuning, type ModelRef } from "./providers.js";
 
-export function getMaxToolIterations(): number {
-	const cfg = getConfig();
-	return cfg.maxToolIterations ?? 10;
+/** Máximo de pasos con herramientas por respuesta (del modelo activo o el de `ref`, o el general). */
+export function getMaxToolIterations(ref?: ModelRef): number {
+	return activeModelTuning(ref).maxToolIterations;
 }
 
 export function normalizeToolResult(content: string): string {

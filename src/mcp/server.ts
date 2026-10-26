@@ -10,7 +10,7 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { createRequire } from "node:module";
+import { APP_VERSION } from "../runtime.js";
 import { executeToolSafeScoped, getToolsDefinitionScoped } from "../core/tools/ToolRegistry.js";
 
 /**
@@ -31,8 +31,7 @@ export const MCP_TOOLS = [
 ];
 
 export async function runMcpServer(): Promise<void> {
-	const pkg = createRequire(import.meta.url)("../../package.json") as { version: string };
-	const server = new Server({ name: "shiro", version: pkg.version }, { capabilities: { tools: {} } });
+	const server = new Server({ name: "shiro", version: APP_VERSION }, { capabilities: { tools: {} } });
 
 	server.setRequestHandler(ListToolsRequestSchema, async () => ({
 		tools: getToolsDefinitionScoped(MCP_TOOLS).map((t) => ({

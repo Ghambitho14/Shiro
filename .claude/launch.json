@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "shiro-prueba",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--import",
+        "tsx",
+        "--input-type=module",
+        "-e",
+        "process.env.PORT = '1407'; await import('./src/server.ts');"
+      ],
+      "port": 1407
+    }
+  ]
+}

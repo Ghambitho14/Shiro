@@ -1,2894 +1,608 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="es">
-<head>
-	<meta charset="UTF-8">
-	<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-	<title>Shiro — Control Center</title>
-	<link rel="icon" type="image/png" href="/Shiro_chiquito.png">
-	<link rel="preconnect" href="https://fonts.googleapis.com">
-	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-	<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-	<style>
-		:root, [data-theme="dark"] {
-			--bg-app: #0a0e17;
-			--bg-sidebar: #060a12;
-			--bg-header: #080c18;
-			--bg-workspace: #0b1019;
-			--bg-card: #0e1520;
-			--bg-input: #0d1420;
-			--bg-hover: rgba(99, 102, 241, 0.06);
-			--bg-active: rgba(99, 102, 241, 0.12);
-			--border: #1a2540;
-			--border-subtle: #111827;
-			--border-focus: #6366f1;
-			--text-primary: #e2e8f0;
-			--text-secondary: #94a3b8;
-			--text-muted: #475569;
-			--text-dim: #334155;
-			--accent: #6366f1;
-			--accent-soft: rgba(99, 102, 241, 0.15);
-			--accent-hover: #818cf8;
-			--success: #10b981;
-			--success-soft: rgba(16, 185, 129, 0.12);
-			--warning: #f59e0b;
-			--warning-soft: rgba(245, 158, 11, 0.12);
-			--error: #ef4444;
-			--error-soft: rgba(239, 68, 68, 0.12);
-			--info: #3b82f6;
-			--info-soft: rgba(59, 130, 246, 0.12);
-			--purple: #a855f7;
-			--purple-soft: rgba(168, 85, 247, 0.12);
-			--font: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
-			--mono: "JetBrains Mono", "Fira Code", monospace;
-			--radius: 10px;
-			--radius-sm: 6px;
-			--radius-xs: 4px;
-			--shadow: 0 20px 50px rgba(2, 8, 23, 0.45);
-			--shadow-sm: 0 8px 20px rgba(2, 8, 23, 0.28);
-			--glow: 0 0 0 3px rgba(99, 102, 241, 0.2);
-		}
-
-		[data-theme="light"] {
-			--bg-app: #f1f5f9;
-			--bg-sidebar: #e2e8f0;
-			--bg-header: #f8fafc;
-			--bg-workspace: #ffffff;
-			--bg-card: #ffffff;
-			--bg-input: #f1f5f9;
-			--bg-hover: rgba(99, 102, 241, 0.06);
-			--bg-active: rgba(99, 102, 241, 0.12);
-			--border: #cbd5e1;
-			--border-subtle: #e2e8f0;
-			--border-focus: #6366f1;
-			--text-primary: #0f172a;
-			--text-secondary: #475569;
-			--text-muted: #64748b;
-			--text-dim: #94a3b8;
-			--shadow: 0 20px 40px rgba(15, 23, 42, 0.1);
-			--shadow-sm: 0 8px 18px rgba(15, 23, 42, 0.08);
-			--glow: 0 0 0 3px rgba(99, 102, 241, 0.14);
-		}
-
-		*, *::before, *::after { box-sizing: border-box; }
-		html { -webkit-text-size-adjust: 100%; }
-		
-		body {
-			margin: 0;
-			font-family: var(--font);
-			background:
-				radial-gradient(1200px 700px at -10% -20%, rgba(99, 102, 241, 0.16), transparent 60%),
-				radial-gradient(900px 600px at 110% 0%, rgba(59, 130, 246, 0.1), transparent 55%),
-				var(--bg-app);
-			color: var(--text-primary);
-			height: 100vh;
-			height: 100dvh;
-			overflow: hidden;
-			display: flex;
-			font-size: 14px;
-			line-height: 1.5;
-		}
-
-		/* ===== SIDEBAR ===== */
-		.sidebar {
-			width: 236px;
-			min-width: 236px;
-			background: var(--bg-sidebar);
-			border-right: 1px solid var(--border);
-			display: flex;
-			flex-direction: column;
-			height: 100vh;
-			overflow: hidden;
-		}
-
-		.sidebar-brand {
-			padding: 1rem 1rem 0.75rem;
-			border-bottom: 1px solid var(--border);
-			display: flex;
-			align-items: center;
-			gap: 0.65rem;
-		}
-
-		.sidebar-brand-icon {
-			width: 32px;
-			height: 32px;
-			border-radius: 8px;
-			overflow: hidden;
-			flex-shrink: 0;
-		}
-
-		.sidebar-brand-icon img {
-			width: 100%;
-			height: 100%;
-			object-fit: cover;
-		}
-
-		.sidebar-brand-text h1 {
-			margin: 0;
-			font-size: 0.95rem;
-			font-weight: 700;
-			color: var(--text-primary);
-			letter-spacing: -0.01em;
-		}
-
-		.sidebar-brand-text span {
-			font-size: 0.65rem;
-			color: var(--text-muted);
-			font-weight: 500;
-		}
-
-		.sidebar-nav {
-			flex: 1;
-			overflow-y: auto;
-			padding: 0.5rem 0.5rem;
-		}
-
-		.nav-section-label {
-			font-size: 0.6rem;
-			font-weight: 600;
-			text-transform: uppercase;
-			letter-spacing: 0.1em;
-			color: var(--text-dim);
-			padding: 0.75rem 0.5rem 0.35rem;
-			margin-top: 0.25rem;
-		}
-
-		.nav-item {
-			display: flex;
-			align-items: center;
-			gap: 0.6rem;
-			padding: 0.5rem 0.65rem;
-			border-radius: var(--radius-sm);
-			cursor: pointer;
-			transition: all 0.12s ease;
-			color: var(--text-secondary);
-			font-size: 0.82rem;
-			font-weight: 500;
-			border: none;
-			background: none;
-			width: 100%;
-			text-align: left;
-			position: relative;
-		}
-
-		.nav-item:hover {
-			background: var(--bg-hover);
-			color: var(--text-primary);
-		}
-
-		.nav-item.active {
-			background: var(--bg-active);
-			color: var(--accent);
-		}
-
-		.nav-item .nav-icon {
-			font-size: 1rem;
-			width: 18px;
-			text-align: center;
-			flex-shrink: 0;
-		}
-
-		.nav-item .nav-label { flex: 1; }
-
-		.nav-item .nav-badge {
-			background: var(--accent);
-			color: #fff;
-			font-size: 0.6rem;
-			font-weight: 600;
-			padding: 0.1rem 0.35rem;
-			border-radius: 999px;
-			min-width: 16px;
-			text-align: center;
-		}
-
-		.nav-item .nav-dot {
-			width: 6px;
-			height: 6px;
-			border-radius: 50%;
-			background: var(--success);
-			flex-shrink: 0;
-		}
-
-		.nav-item .nav-dot.warning { background: var(--warning); }
-		.nav-item .nav-dot.error { background: var(--error); }
-
-		.sidebar-footer {
-			padding: 0.75rem;
-			border-top: 1px solid var(--border);
-		}
-
-		.sidebar-session {
-			background: var(--bg-card);
-			border: 1px solid var(--border);
-			border-radius: var(--radius-sm);
-			padding: 0.6rem 0.75rem;
-		}
-
-		.sidebar-session-label {
-			font-size: 0.6rem;
-			text-transform: uppercase;
-			letter-spacing: 0.08em;
-			color: var(--text-muted);
-			margin-bottom: 0.2rem;
-		}
-
-		.sidebar-session-id {
-			font-family: var(--mono);
-			font-size: 0.65rem;
-			color: var(--text-secondary);
-			overflow: hidden;
-			text-overflow: ellipsis;
-			white-space: nowrap;
-		}
-
-		/* ===== MAIN ===== */
-		.main {
-			flex: 1;
-			display: flex;
-			flex-direction: column;
-			min-width: 0;
-			height: 100vh;
-			overflow: hidden;
-		}
-
-		/* ===== HEADER ===== */
-		.header {
-			height: 48px;
-			min-height: 48px;
-			background: color-mix(in srgb, var(--bg-header) 88%, transparent);
-			backdrop-filter: blur(8px);
-			border-bottom: 1px solid var(--border);
-			display: flex;
-			align-items: center;
-			padding: 0 1rem;
-			gap: 0.75rem;
-			overflow: hidden;
-		}
-
-		.header-breadcrumb {
-			display: flex;
-			align-items: center;
-			gap: 0.4rem;
-			flex: 1;
-			min-width: 0;
-		}
-
-		.header-breadcrumb .breadcrumb-section {
-			font-size: 0.8rem;
-			font-weight: 600;
-			color: var(--text-primary);
-		}
-
-		.header-breadcrumb .breadcrumb-sep {
-			color: var(--text-dim);
-			font-size: 0.75rem;
-		}
-
-		.header-breadcrumb .breadcrumb-page {
-			font-size: 0.8rem;
-			color: var(--text-muted);
-		}
-
-		.header-controls {
-			display: flex;
-			align-items: center;
-			gap: 0.5rem;
-			flex-shrink: 0;
-		}
-
-		.hc-btn {
-			height: 30px;
-			padding: 0 0.6rem;
-			border-radius: var(--radius-xs);
-			border: 1px solid var(--border);
-			background: var(--bg-card);
-			color: var(--text-secondary);
-			cursor: pointer;
-			font-size: 0.72rem;
-			font-weight: 500;
-			display: flex;
-			align-items: center;
-			gap: 0.35rem;
-			transition: all 0.12s ease;
-			white-space: nowrap;
-		}
-
-		.hc-btn:hover {
-			background: var(--bg-hover);
-			color: var(--text-primary);
-		}
-
-		.hc-dot {
-			width: 6px;
-			height: 6px;
-			border-radius: 50%;
-		}
-
-		.hc-dot.green { background: var(--success); }
-		.hc-dot.yellow { background: var(--warning); }
-		.hc-dot.red { background: var(--error); }
-
-		.hc-status {
-			display: flex;
-			align-items: center;
-			gap: 0.35rem;
-			font-size: 0.7rem;
-			color: var(--text-muted);
-			padding: 0 0.5rem;
-		}
-
-		.theme-btn {
-			width: 30px;
-			height: 30px;
-			border-radius: var(--radius-xs);
-			border: 1px solid var(--border);
-			background: var(--bg-card);
-			color: var(--text-secondary);
-			cursor: pointer;
-			font-size: 0.85rem;
-			display: flex;
-			align-items: center;
-			justify-content: center;
-			transition: all 0.12s ease;
-		}
-
-		.theme-btn:hover {
-			background: var(--bg-hover);
-			color: var(--text-primary);
-		}
-
-	/* ===== WORKSPACE ===== */
-	.workspace-wrap {
-		flex: 1;
-		display: block;
-		min-height: 0;
-		overflow: hidden;
-		position: relative;
-	}
-
-		.workspace {
-			position: absolute;
-			inset: 0;
-			overflow-y: auto;
-			padding: 1.5rem;
-			display: none;
-			background: var(--bg-workspace);
-		}
-
-		.workspace.active {
-			display: block;
-		}
-
-		.workspace.active {
-			display: block;
-		}
-
-		/* ===== PAGE HEADER ===== */
-		.page-header {
-			margin-bottom: 1.5rem;
-		}
-
-		.page-title {
-			font-size: 1.3rem;
-			font-weight: 700;
-			margin: 0 0 0.25rem;
-			color: var(--text-primary);
-			letter-spacing: -0.02em;
-		}
-
-		.page-subtitle {
-			font-size: 0.82rem;
-			color: var(--text-muted);
-			margin: 0;
-		}
-
-		/* ===== CARDS ===== */
-		.card {
-			background: var(--bg-card);
-			border: 1px solid var(--border);
-			border-radius: var(--radius);
-			padding: 1.25rem;
-			margin-bottom: 1rem;
-			box-shadow: var(--shadow-sm);
-		}
-
-		.card-header {
-			display: flex;
-			align-items: center;
-			justify-content: space-between;
-			margin-bottom: 1rem;
-		}
-
-		.card-title {
-			font-size: 0.85rem;
-			font-weight: 600;
-			color: var(--text-primary);
-		}
-
-		.card-subtitle {
-			font-size: 0.75rem;
-			color: var(--text-muted);
-			margin-top: 0.15rem;
-		}
-
-		/* ===== STAT GRID ===== */
-		.stat-grid {
-			display: grid;
-			grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-			gap: 0.75rem;
-			margin-bottom: 1rem;
-		}
-
-		.stat-card {
-			background: var(--bg-card);
-			border: 1px solid var(--border);
-			border-radius: var(--radius);
-			padding: 1rem;
-			box-shadow: var(--shadow-sm);
-			transition: transform 0.12s ease, border-color 0.12s ease;
-		}
-
-		.stat-card:hover {
-			transform: translateY(-1px);
-			border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
-		}
-
-		.stat-icon {
-			font-size: 1.2rem;
-			margin-bottom: 0.5rem;
-		}
-
-		.stat-label {
-			font-size: 0.68rem;
-			text-transform: uppercase;
-			letter-spacing: 0.06em;
-			color: var(--text-muted);
-			margin-bottom: 0.25rem;
-		}
-
-		.stat-value {
-			font-size: 1.4rem;
-			font-weight: 700;
-			color: var(--text-primary);
-			font-variant-numeric: tabular-nums;
-		}
-
-		.stat-meta {
-			font-size: 0.68rem;
-			color: var(--text-dim);
-			margin-top: 0.2rem;
-		}
-
-		/* ===== STATUS BARS ===== */
-		.status-pills {
-			display: flex;
-			flex-wrap: wrap;
-			gap: 0.5rem;
-			margin-bottom: 1rem;
-		}
-
-		.status-pill {
-			display: flex;
-			align-items: center;
-			gap: 0.4rem;
-			padding: 0.35rem 0.75rem;
-			border-radius: 999px;
-			font-size: 0.72rem;
-			font-weight: 500;
-			border: 1px solid var(--border);
-			background: var(--bg-card);
-			color: var(--text-secondary);
-		}
-
-		.status-pill.success { border-color: var(--success); color: var(--success); background: var(--success-soft); }
-		.status-pill.warning { border-color: var(--warning); color: var(--warning); background: var(--warning-soft); }
-		.status-pill.error { border-color: var(--error); color: var(--error); background: var(--error-soft); }
-		.status-pill.info { border-color: var(--info); color: var(--info); background: var(--info-soft); }
-		.status-pill.purple { border-color: var(--purple); color: var(--purple); background: var(--purple-soft); }
-
-		/* ===== FORM CONTROLS ===== */
-		.form-group {
-			margin-bottom: 1rem;
-		}
-
-		.form-label {
-			display: block;
-			font-size: 0.75rem;
-			font-weight: 500;
-			color: var(--text-secondary);
-			margin-bottom: 0.35rem;
-		}
-
-		.form-input {
-			width: 100%;
-			background: var(--bg-input);
-			border: 1px solid var(--border);
-			border-radius: var(--radius-sm);
-			color: var(--text-primary);
-			padding: 0.5rem 0.75rem;
-			font-size: 0.82rem;
-			font-family: var(--font);
-			transition: border-color 0.12s;
-		}
-
-		.form-input:focus {
-			outline: none;
-			border-color: var(--border-focus);
-			box-shadow: var(--glow);
-		}
-
-		.form-input::placeholder { color: var(--text-dim); }
-
-		.form-input.mono {
-			font-family: var(--mono);
-			font-size: 0.78rem;
-		}
-
-		.form-textarea {
-			resize: vertical;
-			min-height: 60px;
-		}
-
-		.form-row {
-			display: grid;
-			grid-template-columns: 1fr 1fr;
-			gap: 0.75rem;
-		}
-
-		.toolbar-row {
-			display: flex;
-			gap: 0.6rem;
-			align-items: center;
-			flex-wrap: wrap;
-			margin-bottom: 0.9rem;
-		}
-
-		.tool-chip {
-			display: inline-flex;
-			align-items: center;
-			gap: 0.35rem;
-			padding: 0.28rem 0.62rem;
-			border-radius: 999px;
-			border: 1px solid var(--border);
-			background: var(--bg-card);
-			color: var(--text-secondary);
-			font-size: 0.68rem;
-			font-weight: 600;
-			letter-spacing: 0.03em;
-			text-transform: uppercase;
-		}
-
-		.tool-chip.is-active {
-			border-color: var(--accent);
-			color: var(--accent);
-			background: var(--accent-soft);
-		}
-
-		.kpi-strip {
-			display: grid;
-			grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-			gap: 0.7rem;
-			margin-bottom: 1rem;
-		}
-
-		.kpi-item {
-			background: var(--bg-card);
-			border: 1px solid var(--border);
-			border-radius: var(--radius-sm);
-			padding: 0.75rem 0.85rem;
-			box-shadow: var(--shadow-sm);
-		}
-
-		.kpi-item .kpi-label {
-			font-size: 0.68rem;
-			color: var(--text-muted);
-			text-transform: uppercase;
-			letter-spacing: 0.05em;
-		}
-
-		.kpi-item .kpi-value {
-			font-size: 1.05rem;
-			font-weight: 700;
-			color: var(--text-primary);
-			margin-top: 0.18rem;
-		}
-
-		.memory-list {
-			display: grid;
-			grid-template-columns: 1fr;
-			gap: 0.6rem;
-		}
-
-		.memory-item {
-			border: 1px solid var(--border);
-			border-radius: var(--radius-sm);
-			background: var(--bg-card);
-			padding: 0.7rem 0.8rem;
-			box-shadow: var(--shadow-sm);
-		}
-
-		.memory-item h4 {
-			margin: 0 0 0.2rem;
-			font-size: 0.8rem;
-			color: var(--text-primary);
-		}
-
-		.memory-item p {
-			margin: 0;
-			font-size: 0.75rem;
-			color: var(--text-secondary);
-		}
-
-		/* ===== BUTTONS ===== */
-		.btn {
-			padding: 0.45rem 0.9rem;
-			border-radius: var(--radius-sm);
-			font-size: 0.78rem;
-			font-weight: 600;
-			cursor: pointer;
-			transition: all 0.12s ease;
-			border: 1px solid transparent;
-			font-family: var(--font);
-			box-shadow: var(--shadow-sm);
-		}
-
-		.btn-primary {
-			background: var(--accent);
-			color: #fff;
-			border-color: var(--accent);
-		}
-
-		.btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
-		.btn-primary:focus-visible,
-		.btn-secondary:focus-visible,
-		.btn-danger:focus-visible,
-		.hc-btn:focus-visible,
-		.theme-btn:focus-visible,
-		.composer-send:focus-visible,
-		.composer-tool:focus-visible {
-			outline: none;
-			box-shadow: var(--glow);
-		}
-
-		.btn-secondary {
-			background: var(--bg-card);
-			color: var(--text-secondary);
-			border-color: var(--border);
-		}
-
-		.btn-secondary:hover { background: var(--bg-hover); color: var(--text-primary); }
-
-		.btn-danger {
-			background: var(--error-soft);
-			color: var(--error);
-			border-color: var(--error);
-		}
-
-		.btn-danger:hover { background: var(--error); color: #fff; }
-
-		.btn-group {
-			display: flex;
-			gap: 0.5rem;
-			flex-wrap: wrap;
-		}
-
-		/* ===== TABLES ===== */
-		.table-wrap {
-			overflow-x: auto;
-		}
-
-		table {
-			width: 100%;
-			border-collapse: collapse;
-			font-size: 0.78rem;
-		}
-
-		th {
-			text-align: left;
-			padding: 0.5rem 0.75rem;
-			font-size: 0.68rem;
-			text-transform: uppercase;
-			letter-spacing: 0.06em;
-			color: var(--text-muted);
-			border-bottom: 1px solid var(--border);
-			font-weight: 600;
-		}
-
-		td {
-			padding: 0.6rem 0.75rem;
-			color: var(--text-secondary);
-			border-bottom: 1px solid var(--border-subtle);
-		}
-
-		tr:last-child td { border-bottom: none; }
-
-		tr:hover td { background: var(--bg-hover); }
-
-		/* ===== TOGGLE SWITCH ===== */
-		.toggle-switch {
-			position: relative;
-			width: 36px;
-			height: 20px;
-			flex-shrink: 0;
-		}
-
-		.toggle-switch input {
-			opacity: 0;
-			width: 0;
-			height: 0;
-		}
-
-		.toggle-slider {
-			position: absolute;
-			cursor: pointer;
-			inset: 0;
-			background: var(--border);
-			border-radius: 999px;
-			transition: background 0.15s ease;
-		}
-
-		.toggle-slider::before {
-			content: "";
-			position: absolute;
-			height: 14px;
-			width: 14px;
-			left: 3px;
-			bottom: 3px;
-			background: #fff;
-			border-radius: 50%;
-			transition: transform 0.15s ease;
-		}
-
-		.toggle-switch input:checked + .toggle-slider {
-			background: var(--success);
-		}
-
-		.toggle-switch input:checked + .toggle-slider::before {
-			transform: translateX(16px);
-		}
-
-		/* ===== LOG VIEW ===== */
-		.log-view {
-			background: var(--bg-app);
-			border: 1px solid var(--border);
-			border-radius: var(--radius-sm);
-			padding: 0.75rem;
-			font-family: var(--mono);
-			font-size: 0.72rem;
-			max-height: 200px;
-			overflow-y: auto;
-			color: var(--text-secondary);
-		}
-
-		.log-line { padding: 0.1rem 0; }
-		.log-line .log-time { color: var(--text-dim); margin-right: 0.5rem; }
-		.log-line.info .log-msg { color: var(--info); }
-		.log-line.success .log-msg { color: var(--success); }
-		.log-line.warning .log-msg { color: var(--warning); }
-		.log-line.error .log-msg { color: var(--error); }
-
-		/* ===== CHAT VIEW ===== */
-		#view-chat {
-			height: 100%;
-			display: flex;
-			flex-direction: column;
-			padding: 0;
-		}
-
-		.chat-layout {
-			display: flex;
-			height: 100%;
-			overflow: hidden;
-		}
-
-		.chat-sessions-sidebar {
-			width: 240px;
-			min-width: 240px;
-			background: var(--bg-sidebar);
-			border-right: 1px solid var(--border);
-			display: flex;
-			flex-direction: column;
-			overflow: hidden;
-		}
-
-		.chat-sessions-header {
-			padding: 0.75rem;
-			border-bottom: 1px solid var(--border);
-		}
-
-		.chat-sessions-title {
-			font-size: 0.78rem;
-			font-weight: 600;
-			color: var(--text-secondary);
-			margin-bottom: 0.5rem;
-			letter-spacing: 0.02em;
-			text-transform: uppercase;
-		}
-
-		.session-search {
-			width: 100%;
-			margin-bottom: 0.5rem;
-			padding: 0.35rem 0.5rem;
-			font-size: 0.78rem;
-			border-radius: var(--radius-sm);
-			border: 1px solid var(--border);
-			background: var(--bg-app);
-			color: var(--text-primary);
-			box-sizing: border-box;
-		}
-
-		.session-group-label {
-			font-size: 0.68rem;
-			font-weight: 600;
-			color: var(--text-dim);
-			padding: 0.45rem 0.5rem 0.15rem;
-			text-transform: uppercase;
-			letter-spacing: 0.04em;
-		}
-
-		#chat-session-list {
-			flex: 1;
-			overflow-y: auto;
-			padding: 0.5rem;
-		}
-
-		.chat-main-area {
-			flex: 1;
-			display: flex;
-			flex-direction: column;
-			min-width: 0;
-			overflow: hidden;
-			padding: 0 1.5rem;
-		}
-
-		.chat-container {
-			flex: 1;
-			display: flex;
-			flex-direction: column;
-			min-height: 0;
-		}
-
-		#chat-messages {
-			flex: 1;
-			overflow-y: auto;
-			padding: 1.5rem 0;
-			display: flex;
-			flex-direction: column;
-			gap: 0.5rem;
-		}
-
-		.chat-empty {
-			flex: 1;
-			display: flex;
-			flex-direction: column;
-			align-items: center;
-			justify-content: center;
-			text-align: center;
-			color: var(--text-muted);
-		}
-
-		.chat-empty-icon { font-size: 2.5rem; margin-bottom: 0.75rem; }
-		.chat-empty h3 { margin: 0 0 0.35rem; font-size: 1rem; color: var(--text-secondary); }
-		.chat-empty p { margin: 0; font-size: 0.78rem; }
-
-		.msg-row {
-			display: flex;
-			gap: 0.75rem;
-			max-width: 800px;
-			animation: fadeIn 0.2s ease;
-		}
-
-		@keyframes fadeIn {
-			from { opacity: 0; transform: translateY(4px); }
-			to { opacity: 1; transform: translateY(0); }
-		}
-
-		.msg-row.user { align-self: flex-end; flex-direction: row-reverse; }
-		.msg-row.assistant { align-self: flex-start; }
-
-		.msg-avatar {
-			width: 28px;
-			height: 28px;
-			border-radius: 8px;
-			overflow: hidden;
-			flex-shrink: 0;
-			margin-top: 2px;
-		}
-
-		.msg-avatar img {
-			width: 100%;
-			height: 100%;
-			object-fit: cover;
-		}
-
-		.msg-avatar.user-emoji {
-			background: linear-gradient(135deg, var(--accent), #8b5cf6);
-			display: flex;
-			align-items: center;
-			justify-content: center;
-			font-size: 0.9rem;
-		}
-
-		.msg-row.user .msg-avatar {
-			background: linear-gradient(135deg, var(--accent), #8b5cf6);
-			display: flex;
-			align-items: center;
-			justify-content: center;
-		}
-
-		.msg-row.assistant .msg-avatar {
-			background: var(--bg-card);
-			border: 1px solid var(--border);
-			display: flex;
-			align-items: center;
-			justify-content: center;
-		}
-
-		.msg-body { display: flex; flex-direction: column; gap: 0.2rem; max-width: calc(100% - 44px); }
-
-		.msg-bubble {
-			background: var(--bg-card);
-			border: 1px solid var(--border);
-			border-radius: var(--radius);
-			padding: 0.65rem 0.9rem;
-			font-size: 0.85rem;
-			line-height: 1.6;
-			white-space: pre-wrap;
-			word-break: break-word;
-			box-shadow: var(--shadow-sm);
-		}
-
-		.msg-row.user .msg-bubble {
-			background: var(--accent-soft);
-			border-color: var(--accent);
-			color: var(--text-primary);
-		}
-
-		.msg-time {
-			font-size: 0.62rem;
-			color: var(--text-dim);
-			padding: 0 0.25rem;
-		}
-
-		.msg-row.user .msg-time { text-align: right; }
-
-		/* Typing indicator */
-		.typing-dots {
-			display: inline-flex;
-			gap: 3px;
-			padding: 0.25rem;
-		}
-
-		.typing-dots span {
-			width: 5px;
-			height: 5px;
-			border-radius: 50%;
-			background: var(--text-muted);
-			animation: pulse 1.2s infinite ease-in-out;
-		}
-
-		.typing-dots span:nth-child(1) { animation-delay: 0s; }
-		.typing-dots span:nth-child(2) { animation-delay: 0.2s; }
-		.typing-dots span:nth-child(3) { animation-delay: 0.4s; }
-
-		@keyframes pulse {
-			0%, 80%, 100% { transform: scale(0.7); opacity: 0.5; }
-			40% { transform: scale(1); opacity: 1; }
-		}
-
-		/* Chat Composer */
-		.chat-composer {
-			padding: 1rem 0 1.25rem;
-			border-top: 1px solid var(--border);
-		}
-
-		.composer-inner {
-			display: flex;
-			gap: 0.5rem;
-			align-items: flex-end;
-		}
-
-		.composer-input {
-			flex: 1;
-			background: var(--bg-input);
-			border: 1px solid var(--border);
-			border-radius: var(--radius);
-			color: var(--text-primary);
-			padding: 0.65rem 0.9rem;
-			font-size: 0.85rem;
-			font-family: var(--font);
-			resize: none;
-			min-height: 44px;
-			max-height: 140px;
-			transition: border-color 0.12s;
-		}
-
-		.composer-input:focus {
-			outline: none;
-			border-color: var(--border-focus);
-		}
-
-		.composer-input::placeholder { color: var(--text-dim); }
-
-		.composer-send {
-			height: 44px;
-			padding: 0 1rem;
-			background: var(--accent);
-			color: #fff;
-			border: none;
-			border-radius: var(--radius);
-			font-size: 0.85rem;
-			font-weight: 600;
-			cursor: pointer;
-			transition: all 0.12s ease;
-			display: flex;
-			align-items: center;
-			gap: 0.35rem;
-			flex-shrink: 0;
-		}
-
-		.composer-send:hover:not(:disabled) { background: var(--accent-hover); }
-		.composer-send:disabled { opacity: 0.4; cursor: not-allowed; }
-
-		.composer-tools {
-			display: flex;
-			gap: 0.35rem;
-			margin-bottom: 0.5rem;
-		}
-
-		.composer-tool {
-			width: 30px;
-			height: 30px;
-			border-radius: var(--radius-xs);
-			border: 1px solid var(--border);
-			background: var(--bg-card);
-			color: var(--text-muted);
-			cursor: pointer;
-			font-size: 0.85rem;
-			display: flex;
-			align-items: center;
-			justify-content: center;
-			transition: all 0.12s ease;
-		}
-
-		.composer-tool:hover {
-			background: var(--bg-hover);
-			color: var(--text-primary);
-		}
-
-		/* Session List */
-		.session-list {
-			display: flex;
-			flex-direction: column;
-			gap: 0.25rem;
-		}
-
-		.session-item {
-			display: flex;
-			align-items: center;
-			gap: 0.6rem;
-			padding: 0.6rem 0.75rem;
-			border-radius: var(--radius-sm);
-			cursor: pointer;
-			transition: all 0.12s ease;
-			border: 1px solid transparent;
-		}
-
-		.session-item:hover { background: var(--bg-hover); }
-		.session-item.active {
-			background: var(--bg-active);
-			border-color: var(--accent);
-		}
-
-		.session-item:focus-visible {
-			outline: 2px solid var(--accent);
-			outline-offset: 2px;
-		}
-
-		.session-icon { font-size: 0.9rem; color: var(--text-muted); }
-		.session-info { flex: 1; min-width: 0; }
-		.session-title {
-			font-size: 0.8rem;
-			font-weight: 500;
-			color: var(--text-primary);
-			white-space: nowrap;
-			overflow: hidden;
-			text-overflow: ellipsis;
-		}
-		.session-time {
-			font-size: 0.65rem;
-			color: var(--text-dim);
-		}
-		.session-preview {
-			font-size: 0.68rem;
-			color: var(--text-muted);
-			margin-top: 0.1rem;
-			white-space: nowrap;
-			overflow: hidden;
-			text-overflow: ellipsis;
-		}
-		.session-del {
-			opacity: 0;
-			width: 24px;
-			height: 24px;
-			border: none;
-			background: transparent;
-			color: var(--text-dim);
-			cursor: pointer;
-			font-size: 1rem;
-			border-radius: var(--radius-xs);
-			display: flex;
-			align-items: center;
-			justify-content: center;
-			transition: all 0.12s ease;
-			flex-shrink: 0;
-		}
-		.session-item:hover .session-del { opacity: 1; }
-		.session-del:hover { color: var(--error); background: var(--error-soft); }
-
-		/* Scrollbar */
-		::-webkit-scrollbar { width: 4px; height: 4px; }
-		::-webkit-scrollbar-track { background: transparent; }
-		::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
-		::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
-
-		/* Error banner */
-		.error-banner {
-			background: var(--error-soft);
-			border: 1px solid var(--error);
-			color: var(--error);
-			padding: 0.5rem 0.75rem;
-			border-radius: var(--radius-sm);
-			font-size: 0.78rem;
-			margin-bottom: 0.75rem;
-			display: none;
-		}
-
-		.error-banner.show { display: block; }
-
-		/* Responsive */
-		@media (max-width: 768px) {
-			.sidebar {
-				position: fixed;
-				left: -240px;
-				z-index: 100;
-				transition: left 0.2s ease;
-			}
-			body.sidebar-open .sidebar { left: 0; }
-			.sidebar-overlay {
-				display: block;
-				position: fixed;
-				inset: 0;
-				background: rgba(0, 0, 0, 0.5);
-				z-index: 99;
-				opacity: 0;
-				pointer-events: none;
-				transition: opacity 0.2s;
-			}
-			body.sidebar-open .sidebar-overlay { opacity: 1; pointer-events: auto; }
-			.main { width: 100%; }
-			.stat-grid { grid-template-columns: 1fr 1fr; }
-		}
-
-		@media (min-width: 769px) {
-			.sidebar-overlay { display: none !important; }
-		}
-	</style>
-</head>
-<body>
-
-<div class="sidebar-overlay" id="sidebar-overlay"></div>
-
-<!-- ===== SIDEBAR ===== -->
-<aside class="sidebar" id="sidebar">
-	<div class="sidebar-brand">
-		<div class="sidebar-brand-icon"><img src="/Shiro.PNG?t=1" alt="Shiro" onerror="this.parentElement.style.background='linear-gradient(135deg, var(--accent), #8b5cf6)'; this.parentElement.style.display='flex'; this.parentElement.style.alignItems='center'; this.parentElement.style.justifyContent='center'; this.remove()"></div>
-		<div class="sidebar-brand-text">
-			<h1>Shiro</h1>
-			<span>AI Agent</span>
-		</div>
-	</div>
-
-	<nav class="sidebar-nav">
-		<div class="nav-section-label">Navegación</div>
-		<button class="nav-item active" data-view="chat">
-			<span class="nav-icon">💬</span>
-			<span class="nav-label">Chat</span>
-		</button>
-		<button class="nav-item" data-view="dashboard">
-			<span class="nav-icon">📊</span>
-			<span class="nav-label">Dashboard</span>
-		</button>
-
-		<div class="nav-section-label">Sistema</div>
-		<button class="nav-item" data-view="tools">
-			<span class="nav-icon">🔧</span>
-			<span class="nav-label">Herramientas</span>
-			<span class="nav-badge">15</span>
-		</button>
-		<button class="nav-item" data-view="memory">
-			<span class="nav-icon">🧠</span>
-			<span class="nav-label">Memoria</span>
-		</button>
-		<button class="nav-item" data-view="reminders">
-			<span class="nav-icon">🔔</span>
-			<span class="nav-label">Recordatorios</span>
-		</button>
-		<button class="nav-item" data-view="gateway">
-			<span class="nav-icon">🌐</span>
-			<span class="nav-label">Gateway</span>
-			<span class="nav-dot" id="nav-gateway-dot"></span>
-		</button>
-		<button class="nav-item" data-view="health">
-			<span class="nav-icon">💚</span>
-			<span class="nav-label">Health</span>
-		</button>
-
-		<div class="nav-section-label">Configuración</div>
-		<button class="nav-item" data-view="config">
-			<span class="nav-icon">⚙️</span>
-			<span class="nav-label">Configuración</span>
-		</button>
-		<button class="nav-item" data-view="profile">
-			<span class="nav-icon">👤</span>
-			<span class="nav-label">Perfil</span>
-		</button>
-	</nav>
-
-	<div class="sidebar-footer">
-		<div class="sidebar-session">
-			<div class="sidebar-session-label">Sesión activa</div>
-			<div class="sidebar-session-id" id="sidebar-session-id">—</div>
-		</div>
-	</div>
-</aside>
-
-<!-- ===== MAIN ===== -->
-<main class="main">
-	<!-- Header -->
-	<header class="header">
-		<div class="header-breadcrumb">
-			<span class="breadcrumb-section" id="bc-section">Shiro</span>
-			<span class="breadcrumb-sep">/</span>
-			<span class="breadcrumb-page" id="bc-page">Chat</span>
-		</div>
-		<div class="header-controls">
-			<div class="hc-status">
-				<span class="hc-dot green" id="hc-llm-dot"></span>
-				<span id="hc-model">—</span>
-			</div>
-			<div class="hc-status">
-				<span class="hc-dot green" id="hc-health-dot"></span>
-				<span>Health</span>
-			</div>
-			<div class="hc-status">
-				<span class="hc-dot green" id="hc-gateway-dot"></span>
-				<span>Gateway</span>
-			</div>
-			<button type="button" class="hc-btn" id="whatsapp-btn" title="WhatsApp" aria-label="WhatsApp">💬</button>
-			<button type="button" class="theme-btn" id="theme-btn" title="Cambiar tema" aria-label="Cambiar tema claro u oscuro">🌙</button>
-		</div>
-	</header>
-
-	<!-- ===== WORKSPACES ===== -->
-	<div class="workspace-wrap">
-
-	<!-- ===== VIEW: CHAT ===== -->
-		<div class="workspace active" id="view-chat" data-view="chat">
-		<div class="chat-layout">
-			<div class="chat-sessions-sidebar" id="chat-sidebar">
-				<div class="chat-sessions-header">
-					<div class="chat-sessions-title">Historial de chats</div>
-				<div style="font-size:0.68rem;color:var(--text-dim);margin-bottom:0.45rem;" id="session-count-label">0 conversaciones</div>
-					<input type="search" class="session-search" id="session-search" placeholder="Buscar…" autocomplete="off" aria-label="Buscar en el historial de chats">
-					<button type="button" class="btn btn-primary" id="new-chat-btn" style="width:100%; padding:0.5rem;" aria-label="Nueva conversación">➕ Nueva</button>
-				</div>
-				<div class="session-list" id="chat-session-list" role="list" aria-label="Lista de conversaciones"></div>
-			</div>
-			<div class="chat-main-area">
-				<div class="error-banner" id="chat-error"></div>
-				<div id="chat-messages">
-					<div class="chat-empty" id="chat-empty">
-						<div class="chat-empty-icon">✨</div>
-						<h3>Shiro está listo</h3>
-						<p>Escribe un mensaje para comenzar</p>
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+		<title>Shiro</title>
+		<meta name="description" content="Shiro, tu asistente personal con IA" />
+		<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+		<meta name="theme-color" content="#212121" media="(prefers-color-scheme: dark)" />
+		<link rel="icon" href="/icons/icon-64.png" />
+		<link rel="apple-touch-icon" href="/icons/icon-192.png" />
+		<link rel="manifest" href="/manifest.webmanifest" />
+		<script>
+			// Tema antes de pintar (evita el parpadeo blanco en modo oscuro).
+			(function () {
+				var pref = "system";
+				try { pref = localStorage.getItem("shiro.theme") || "system"; } catch (e) {}
+				var dark = pref === "dark" || (pref === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+				document.documentElement.dataset.theme = dark ? "dark" : "light";
+			})();
+		</script>
+		<link rel="stylesheet" href="/css/app.css" />
+		<link rel="stylesheet" id="hljs-theme" href="/vendor/hljs-light.css" />
+		<script src="/vendor/marked.js" defer></script>
+		<script src="/vendor/purify.js" defer></script>
+		<script src="/vendor/highlight.js" defer></script>
+		<script type="module" src="/js/app.js"></script>
+	</head>
+	<body>
+		<div class="app" id="app">
+			<!-- ============ Barra lateral ============ -->
+			<aside class="sidebar" id="sidebar" aria-label="Conversaciones">
+				<div class="sb-top">
+					<div class="sb-brand">
+						<img src="/icons/icon-64.png" alt="" />
+						<span id="brand-name">Shiro</span>
 					</div>
+					<button class="icon-btn" id="sb-close" title="Cerrar barra lateral" aria-label="Cerrar barra lateral" data-icon="panel"></button>
 				</div>
-				<div class="chat-composer">
-					<div class="composer-tools">
-						<button class="composer-tool" id="attach-img-btn" title="Adjuntar imagen">🖼</button>
-						<button class="composer-tool" id="clear-chat-btn" title="Limpiar chat">🗑️</button>
+				<nav class="sb-nav">
+					<button class="sb-item" id="nav-new"><span data-icon="edit"></span>Nuevo chat<kbd>Ctrl+Mayús+O</kbd></button>
+					<button class="sb-item" id="nav-search"><span data-icon="search"></span>Buscar chats<kbd>Ctrl+K</kbd></button>
+					<button class="sb-item" id="nav-projects"><span data-icon="folder"></span>Proyectos</button>
+					<button class="sb-item" id="nav-voice"><span data-icon="voice"></span>Modo voz</button>
+					<button class="sb-item" id="nav-reminders"><span data-icon="bell"></span>Recordatorios</button>
+				</nav>
+				<div class="sb-search" id="sb-search">
+					<span data-icon="search" data-size="sm"></span>
+					<input type="search" id="search-input" placeholder="Buscar en tus chats" autocomplete="off" aria-label="Buscar chats" />
+				</div>
+				<div class="sb-list">
+					<div id="project-list" role="list" aria-label="Proyectos"></div>
+					<div id="chat-list" role="list" aria-label="Chats"></div>
+				</div>
+				<div class="sb-footer">
+					<button class="sb-user" id="open-settings" aria-label="Abrir ajustes">
+						<span class="avatar-initials" id="user-initials">?</span>
+						<span class="who">
+							<strong id="user-name">Tú</strong>
+							<span>Ajustes</span>
+						</span>
+						<span data-icon="settings"></span>
+					</button>
+				</div>
+			</aside>
+			<div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+
+			<!-- ============ Zona principal ============ -->
+			<main class="main">
+				<header class="topbar">
+					<button class="icon-btn show-when-collapsed" id="sb-open" title="Abrir barra lateral" aria-label="Abrir barra lateral" data-icon="panel"></button>
+					<button class="icon-btn show-when-collapsed" id="top-new" title="Nuevo chat" aria-label="Nuevo chat" data-icon="edit"></button>
+					<button class="model-btn" id="model-btn" aria-haspopup="menu" title="Cambiar de modelo">
+						<span class="status-dot" id="status-dot"></span>
+						<span id="model-assistant">Shiro</span>
+						<span class="model-name" id="model-name">…</span>
+						<span data-icon="chevronDown" data-size="sm"></span>
+					</button>
+					<button class="crumb-btn" id="project-crumb" hidden title="Ir a la página del proyecto"><span data-icon="folder" data-size="sm"></span><span class="crumb-name"></span></button>
+					<div class="spacer"></div>
+					<button class="icon-btn" id="browser-btn" title="Navegador de Shiro" aria-label="Navegador" aria-pressed="false" data-icon="globe"></button>
+					<button class="icon-btn" id="terminal-btn" title="Terminal" aria-label="Terminal" aria-pressed="false" data-icon="terminal"></button>
+					<button class="icon-btn" id="theme-btn" title="Cambiar tema" aria-label="Cambiar tema" data-icon="moon"></button>
+					<button class="icon-btn" id="chat-menu-btn" title="Opciones del chat" aria-label="Opciones del chat" data-icon="dots"></button>
+				</header>
+
+				<div class="chat-area is-empty" id="chat-area">
+					<section class="thread" id="thread" aria-live="polite">
+						<div class="thread-inner" id="messages"></div>
+					</section>
+
+					<div class="hero" id="hero">
+						<img src="/icons/icon-192.png" alt="" />
+						<h1 id="hero-title">¿En qué puedo ayudarte?</h1>
 					</div>
-					<form class="composer-inner" id="chat-form">
-						<input type="file" id="image-input" accept="image/*" style="display:none">
-						<textarea class="composer-input" id="chat-input" placeholder="Escribe un mensaje..." rows="1"></textarea>
-						<button class="composer-send" id="send-btn" type="submit">Enviar</button>
+
+					<!-- Página de un proyecto: cabecera encima del cuadro de texto, archivos/instrucciones/chats debajo. -->
+					<div class="project-hero" id="project-hero" hidden>
+						<div class="ph-head">
+							<span class="ph-icon" data-icon="folder" data-size="lg"></span>
+							<h1 class="ph-title"></h1>
+							<button class="icon-btn" id="ph-menu" title="Opciones del proyecto" aria-label="Opciones del proyecto" data-icon="dots"></button>
+						</div>
+						<p class="ph-desc"></p>
+					</div>
+
+					<footer class="composer-wrap">
+						<button class="scroll-bottom" id="scroll-bottom" aria-label="Ir al final" data-icon="arrowDown"></button>
+						<div class="room-bar" id="room-bar" hidden aria-label="Agentes en esta sala"></div>
+						<form class="composer" id="composer" autocomplete="off">
+							<div class="attachments" id="attachments"></div>
+							<label class="visually-hidden" for="input">Mensaje</label>
+							<textarea id="input" rows="1" placeholder="Pregunta o pide lo que quieras" enterkeyhint="send"></textarea>
+							<div class="composer-bar">
+								<button type="button" class="icon-btn" id="attach-btn" title="Adjuntar imágenes o archivos de texto" aria-label="Adjuntar" data-icon="plus"></button>
+								<span class="composer-hint" id="dictate-hint"><span class="rec-dot"></span><span id="dictate-text">Escuchando…</span></span>
+								<div class="spacer"></div>
+								<button type="button" class="icon-btn dictate-btn" id="dictate-btn" title="Dictar (tu voz se escribe en el cuadro)" aria-label="Dictar" data-icon="mic"></button>
+								<button type="button" class="round-btn voice-btn" id="voice-btn" title="Modo voz: habla con Shiro" aria-label="Modo voz" data-icon="voice"></button>
+								<button type="submit" class="round-btn send-btn" id="send-btn" title="Enviar (Enter)" aria-label="Enviar" data-icon="arrowUp" hidden></button>
+								<button type="button" class="round-btn stop-btn" id="stop-btn" title="Detener (Esc)" aria-label="Detener" data-icon="stop" hidden></button>
+							</div>
+						</form>
+						<div class="suggestions" id="suggestions"></div>
+						<div class="disclaimer">Shiro puede equivocarse. Antes de acciones delicadas en tu PC te pide permiso.</div>
+					</footer>
+
+					<section class="project-home" id="project-home" hidden aria-label="Proyecto">
+						<div class="ph-grid">
+							<div class="ph-card">
+								<div class="ph-card-head">
+									<h3>Archivos</h3>
+									<span class="ph-upload-status" id="ph-upload-status" hidden></span>
+									<button class="btn sm" id="ph-add" aria-haspopup="menu"><span data-icon="plus" data-size="sm"></span>Añadir</button>
+								</div>
+								<div class="ph-files" id="ph-files"></div>
+							</div>
+							<div class="ph-card">
+								<div class="ph-card-head">
+									<h3>Instrucciones</h3>
+									<button class="btn sm" id="ph-edit-instructions"><span data-icon="pencil" data-size="sm"></span>Editar</button>
+								</div>
+								<p class="ph-instructions" id="ph-instructions" role="button" tabindex="0"></p>
+							</div>
+						</div>
+						<h3 class="ph-section">Chats del proyecto</h3>
+						<div class="ph-chats" id="ph-chats"></div>
+					</section>
+				</div>
+
+				<!-- Lista de proyectos -->
+				<section class="projects-view" id="projects-view" hidden aria-label="Proyectos">
+					<div class="pv-inner">
+						<div class="pv-head">
+							<h1>Proyectos</h1>
+							<button class="btn primary" id="pv-new"><span data-icon="folderPlus" data-size="sm"></span>Nuevo proyecto</button>
+						</div>
+						<p class="set-desc">Cada proyecto junta sus chats, sus documentos y carpetas y unas instrucciones, que se tienen en cuenta en todos los chats del proyecto.</p>
+						<div class="pv-grid" id="pv-grid"></div>
+					</div>
+				</section>
+			</main>
+
+			<!-- ============ Paneles: navegador y terminal ============ -->
+			<aside class="dock" id="dock" hidden aria-label="Paneles">
+				<div class="dock-resizer" id="dock-resizer" role="separator" aria-orientation="vertical" aria-label="Arrastra para cambiar el ancho de los paneles" tabindex="0"></div>
+				<section class="pane browser-pane" id="browser-pane" hidden aria-label="Navegador">
+					<div class="pane-head">
+						<span data-icon="globe" data-size="sm"></span>
+						<span class="pane-title">Navegador</span>
+						<span class="pane-badge" id="browser-badge" hidden><span class="pane-dot"></span><span class="pane-badge-text"></span></span>
+						<div class="spacer"></div>
+						<button class="icon-btn sm" id="browser-shutdown" title="Cerrar el navegador (libera memoria)" aria-label="Cerrar el navegador" data-icon="power" data-size="sm"></button>
+						<button class="icon-btn sm" id="browser-hide" title="Ocultar el panel" aria-label="Ocultar el panel del navegador" data-icon="x" data-size="sm"></button>
+					</div>
+					<form class="browser-bar" id="browser-form" autocomplete="off">
+						<button type="button" class="icon-btn sm" id="browser-back" title="Atrás" aria-label="Atrás" data-icon="arrowLeft" data-size="sm"></button>
+						<button type="button" class="icon-btn sm" id="browser-forward" title="Adelante" aria-label="Adelante" data-icon="arrowRight" data-size="sm"></button>
+						<button type="button" class="icon-btn sm" id="browser-reload" title="Recargar" aria-label="Recargar" data-icon="refresh" data-size="sm"></button>
+						<input id="browser-url" type="text" spellcheck="false" autocapitalize="off" placeholder="Escribe una dirección o lo que quieras buscar" aria-label="Dirección" />
 					</form>
+					<div class="browser-view" id="browser-view" tabindex="0" aria-label="Página web: haz clic en ella para usarla con el ratón y el teclado">
+						<img id="browser-frame" alt="" draggable="false" hidden />
+						<div class="browser-empty" id="browser-empty">
+							<span data-icon="globe" data-size="lg"></span>
+							<p>Este es el navegador de Shiro. Escribe una dirección arriba, o pídele a Shiro que busque algo y míralo trabajar aquí.</p>
+						</div>
+						<div class="browser-loading" id="browser-loading" hidden></div>
+					</div>
+				</section>
+				<section class="pane terminal-pane" id="terminal-pane" hidden aria-label="Terminal">
+					<div class="pane-head">
+						<span data-icon="terminal" data-size="sm"></span>
+						<span class="pane-title">Terminal</span>
+						<span class="pane-sub" id="terminal-shell"></span>
+						<span class="pane-badge" id="terminal-badge" hidden><span class="pane-dot"></span><span class="pane-badge-text"></span></span>
+						<div class="spacer"></div>
+						<button class="icon-btn sm" id="terminal-stop" title="Detener lo que se está ejecutando (Ctrl+C)" aria-label="Detener" data-icon="stop" data-size="sm" disabled></button>
+						<button class="icon-btn sm" id="terminal-clear" title="Limpiar (Ctrl+L)" aria-label="Limpiar la terminal" data-icon="trash" data-size="sm"></button>
+						<button class="icon-btn sm" id="terminal-hide" title="Ocultar el panel" aria-label="Ocultar el panel de la terminal" data-icon="x" data-size="sm"></button>
+					</div>
+					<div class="term-out" id="term-out" role="log" aria-label="Salida de la terminal"></div>
+					<form class="term-input" id="term-form" autocomplete="off">
+						<span class="term-prompt" id="term-prompt">PS&gt;</span>
+						<input id="term-cmd" type="text" spellcheck="false" autocapitalize="off" placeholder="Escribe un comando y pulsa Enter" aria-label="Comando" />
+					</form>
+				</section>
+			</aside>
+		</div>
+
+		<!-- ============ Modo voz ============ -->
+		<div class="voice-overlay" id="voice-overlay" hidden role="dialog" aria-label="Modo voz">
+			<div class="voice-top">
+				<div class="voice-title"><span data-icon="voice" data-size="sm"></span><span id="voice-title">Modo voz</span></div>
+				<button class="icon-btn" id="voice-close" title="Salir del modo voz" aria-label="Salir del modo voz" data-icon="x"></button>
+			</div>
+			<div class="voice-center">
+				<button class="orb" id="orb" data-state="idle" aria-label="Tocar para hablar o interrumpir"></button>
+				<div class="voice-status" id="voice-status">Preparando…</div>
+				<div class="voice-transcript" id="voice-transcript"></div>
+				<div class="voice-approval" id="voice-approval"></div>
+			</div>
+			<div class="voice-hint" id="voice-hint">Toca el círculo para interrumpir · Esc para salir</div>
+			<div class="voice-bottom">
+				<button class="round-btn" id="voice-mute" title="Pausar micrófono" aria-label="Pausar micrófono" data-icon="mic"></button>
+				<button class="round-btn end" id="voice-end" title="Terminar" aria-label="Terminar modo voz" data-icon="x"></button>
+			</div>
+		</div>
+
+		<!-- ============ Ajustes ============ -->
+		<dialog class="settings-dialog" id="settings-dialog" aria-labelledby="settings-title">
+			<div class="dialog-head">
+				<h2 id="settings-title">Ajustes</h2>
+				<button class="icon-btn" data-close title="Cerrar" aria-label="Cerrar" data-icon="x"></button>
+			</div>
+			<div class="settings-body">
+				<nav class="settings-nav" id="settings-nav">
+					<button data-tab="general" class="active"><span data-icon="settings" data-size="sm"></span>General</button>
+					<button data-tab="model"><span data-icon="sparkles" data-size="sm"></span>Modelo</button>
+					<button data-tab="voice"><span data-icon="voice" data-size="sm"></span>Voz</button>
+					<button data-tab="agents"><span data-icon="sparkles" data-size="sm"></span>Agentes</button>
+					<button data-tab="pc"><span data-icon="monitor" data-size="sm"></span>Control del PC</button>
+					<button data-tab="skills"><span data-icon="puzzle" data-size="sm"></span>Habilidades</button>
+					<button data-tab="mcp"><span data-icon="plug" data-size="sm"></span>Conectores MCP</button>
+					<button data-tab="profile"><span data-icon="user" data-size="sm"></span>Personalización</button>
+					<button data-tab="storage"><span data-icon="folder" data-size="sm"></span>Datos</button>
+					<button data-tab="connections"><span data-icon="phone" data-size="sm"></span>Conexiones</button>
+				</nav>
+				<div class="settings-panel" id="settings-panel">
+					<!-- General -->
+					<section data-panel="general" class="active">
+						<div class="set-group">
+							<div class="set-row">
+								<div class="label"><strong>Tema</strong><span>Claro, oscuro o el mismo que Windows.</span></div>
+								<div class="segmented" id="theme-seg">
+									<button data-value="system">Sistema</button>
+									<button data-value="light">Claro</button>
+									<button data-value="dark">Oscuro</button>
+								</div>
+							</div>
+							<div class="set-row">
+								<div class="label"><strong>Nombre del asistente</strong><span>Cómo se presenta y cómo lo llamas.</span></div>
+								<input class="input" id="set-assistant-name" style="max-width: 200px" maxlength="40" />
+							</div>
+							<div class="set-row">
+								<div class="label"><strong>Usar herramientas</strong><span>Buscar en internet, leer archivos, recordatorios y controlar el PC. Si lo apagas, Shiro solo conversa.</span></div>
+								<label class="switch"><input type="checkbox" id="set-autonomous" /><span class="track"></span></label>
+							</div>
+							<div class="set-row">
+								<div class="label"><strong>Bienvenida</strong><span>Vuelve a hacer las preguntas del primer día: quién eres, cómo me llamo, dónde guardo tus cosas y qué modelo uso.</span></div>
+								<button class="btn sm" id="set-rerun-setup">Repetir</button>
+							</div>
+							<div class="set-row">
+								<div class="label"><strong>Enviar con Enter</strong><span>Si lo apagas, Enter hace salto de línea y se envía con Ctrl+Enter.</span></div>
+								<label class="switch"><input type="checkbox" id="set-enter-send" /><span class="track"></span></label>
+							</div>
+						</div>
+						<div class="set-group">
+							<h3>Atajos de teclado</h3>
+							<p class="set-desc">Ctrl+Mayús+O nuevo chat · Ctrl+K buscar chats · Ctrl+Mayús+Espacio modo voz · Esc detener la respuesta · / ir al cuadro de texto · Escribir / al empezar un mensaje muestra los comandos y las habilidades</p>
+						</div>
+					</section>
+
+					<!-- Modelo -->
+					<section data-panel="model">
+						<div class="set-group">
+							<h3>Modelo de IA</h3>
+							<p class="set-desc">Es el "cerebro" de Shiro. Elige dónde funciona: en tu PC o en la nube.</p>
+							<div id="cfg-model-form"></div>
+						</div>
+						<div class="set-group" id="cfg-tuning-group" hidden>
+							<details class="mf-tuning">
+								<summary>Ajustes avanzados del modelo <span>temperatura, contexto, herramientas…</span></summary>
+								<div id="cfg-tuning"></div>
+							</details>
+						</div>
+						<div class="set-group">
+							<div class="set-row">
+								<div class="label"><strong>Visión (ver imágenes y la pantalla)</strong><span id="vision-desc">Si el modelo puede ver imágenes, Shiro puede mirar tu pantalla para hacer clic donde haga falta.</span></div>
+								<select class="select" id="set-vision" style="max-width: 190px">
+									<option value="auto">Automático</option>
+									<option value="on">Sí, puede ver</option>
+									<option value="off">No puede ver</option>
+								</select>
+							</div>
+						</div>
+					</section>
+
+					<!-- Voz -->
+					<section data-panel="voice">
+						<div class="set-group">
+							<h3>Tu voz → texto</h3>
+							<p class="set-desc">Para dictar y para el modo voz.</p>
+							<div class="set-row">
+								<div class="label"><strong>Motor de reconocimiento</strong><span id="stt-support"></span></div>
+								<select class="select" id="set-stt-engine" style="max-width: 220px">
+									<option value="browser">Navegador (sin instalar nada)</option>
+									<option value="server">Servidor Whisper</option>
+								</select>
+							</div>
+							<div id="stt-server-fields" hidden>
+								<label class="field"><span>Dirección del servidor Whisper</span><input class="input mono" id="set-stt-url" placeholder="http://localhost:8000/v1" /><small>Compatible con OpenAI: speaches / faster-whisper-server (local), Groq (https://api.groq.com/openai/v1), OpenAI…</small></label>
+								<div class="grid-2">
+									<label class="field"><span>Modelo</span><input class="input mono" id="set-stt-model" placeholder="whisper-1" /></label>
+									<label class="field"><span>API key (opcional)</span><input class="input mono" id="set-stt-key" type="password" autocomplete="off" /><small id="stt-key-hint"></small></label>
+								</div>
+							</div>
+							<div class="set-row">
+								<div class="label"><strong>Idioma</strong><span>Idioma en el que le hablas.</span></div>
+								<select class="select" id="set-lang" style="max-width: 220px">
+									<option value="es-ES">Español (España)</option>
+									<option value="es-MX">Español (México)</option>
+									<option value="es-US">Español (EE. UU.)</option>
+									<option value="es-AR">Español (Argentina)</option>
+									<option value="es-CL">Español (Chile)</option>
+									<option value="es-CO">Español (Colombia)</option>
+									<option value="es-PE">Español (Perú)</option>
+									<option value="es-VE">Español (Venezuela)</option>
+									<option value="en-US">English (US)</option>
+									<option value="pt-BR">Português (Brasil)</option>
+								</select>
+							</div>
+						</div>
+						<div class="set-group">
+							<h3>Voz de Shiro</h3>
+							<div class="set-row">
+								<div class="label"><strong>Motor de voz</strong><span>El navegador usa las voces de Windows (Edge trae voces "naturales" muy buenas).</span></div>
+								<select class="select" id="set-tts-engine" style="max-width: 220px">
+									<option value="browser">Navegador</option>
+									<option value="server">Servidor TTS</option>
+								</select>
+							</div>
+							<div id="tts-browser-fields">
+								<div class="grid-2">
+									<label class="field"><span>Voz</span><select class="select" id="set-tts-voice-browser"></select></label>
+									<label class="field"><span>Velocidad: <b id="rate-label">1.0×</b></span><input type="range" id="set-tts-rate" min="0.7" max="1.6" step="0.05" /></label>
+								</div>
+							</div>
+							<div id="tts-server-fields" hidden>
+								<label class="field"><span>Dirección del servidor TTS</span><input class="input mono" id="set-tts-url" placeholder="http://localhost:8880/v1" /><small>Compatible con OpenAI: Kokoro-FastAPI (local, voz española "ef_dora"), speaches, OpenAI…</small></label>
+								<div class="grid-2">
+									<label class="field"><span>Modelo</span><input class="input mono" id="set-tts-model" placeholder="tts-1" /></label>
+									<label class="field"><span>Voz</span><input class="input mono" id="set-tts-voice" placeholder="alloy" /></label>
+								</div>
+								<label class="field"><span>API key (opcional)</span><input class="input mono" id="set-tts-key" type="password" autocomplete="off" /><small id="tts-key-hint"></small></label>
+							</div>
+							<div class="actions-row">
+								<button class="btn" id="tts-test"><span data-icon="volume" data-size="sm"></span>Probar voz</button>
+								<button class="btn primary" id="voice-save">Guardar</button>
+							</div>
+						</div>
+						<div class="set-group">
+							<div class="set-row">
+								<div class="label"><strong>Leer las respuestas en voz alta</strong><span>También en el chat escrito, no solo en modo voz.</span></div>
+								<label class="switch"><input type="checkbox" id="set-autoread" /><span class="track"></span></label>
+							</div>
+						</div>
+					</section>
+
+					<!-- Agentes -->
+					<section data-panel="agents">
+						<div class="set-group">
+							<div class="panel-head">
+								<div>
+									<h3>Agentes</h3>
+									<p class="set-desc">Asistentes con nombre propio, cada uno con su modelo, su forma de ser y su voz. Actívalos diciendo «Aku, activa Viernes»; dentro de la sala puedes sumar a otro («Viernes, agrega a Lunes»), nombrarlo para que responda él, despedirlo («gracias Lunes, puedes irte») o pasarle el mando («Lunes, ahora te encargas tú»). Responde uno a la vez.</p>
+								</div>
+								<button class="btn sm" id="agent-add"><span data-icon="plus" data-size="sm"></span>Nuevo agente</button>
+							</div>
+							<div class="ext-list" id="agent-list"></div>
+						</div>
+					</section>
+
+					<!-- Control del PC -->
+					<section data-panel="pc">
+						<div class="set-group">
+							<div class="set-row">
+								<div class="label"><strong>Permitir que Shiro controle este PC</strong><span>Abrir programas y webs, música y volumen, ventanas, escribir, hacer clic, capturas de pantalla y apagar o bloquear el equipo.</span></div>
+								<label class="switch"><input type="checkbox" id="set-pc" /><span class="track"></span></label>
+							</div>
+							<div id="pc-platform-note"></div>
+							<div class="capability-list">
+								<div class="capability"><span data-icon="apps"></span><div><strong>Abrir apps y webs</strong>"Abre Spotify", "pon lofi en YouTube", "abre mis descargas".</div></div>
+								<div class="capability"><span data-icon="volume"></span><div><strong>Música y volumen</strong>"Sube el volumen", "pon el volumen al 30", "siguiente canción".</div></div>
+								<div class="capability"><span data-icon="window"></span><div><strong>Ventanas</strong>"Cierra el Bloc de notas", "minimiza todo", "cambia a Chrome".</div></div>
+								<div class="capability"><span data-icon="keyboard"></span><div><strong>Teclado y ratón</strong>"Escribe un correo en el Bloc de notas", "haz clic en Aceptar".</div></div>
+								<div class="capability"><span data-icon="cpu"></span><div><strong>Estado del equipo</strong>"¿Cuánta RAM uso?", "¿cuánto espacio me queda?".</div></div>
+								<div class="capability"><span data-icon="power"></span><div><strong>Energía</strong>"Bloquea el PC", "apaga el PC en 30 minutos".</div></div>
+							</div>
+						</div>
+						<div class="set-group">
+							<h3>Permisos</h3>
+							<p class="set-desc">Acciones sensibles: ejecutar comandos o programas, escribir con el teclado, hacer clic, leer el portapapeles, cerrar programas a la fuerza y apagar el equipo.</p>
+							<div class="choice-list" id="approval-choices">
+								<label class="choice"><input type="radio" name="approval" value="ask" /><div><strong>Preguntarme antes (recomendado)</strong><span>Verás una tarjeta para permitir o rechazar cada acción. En el teclado y el ratón puedes permitirlo para toda la conversación.</span></div></label>
+								<label class="choice"><input type="radio" name="approval" value="allow" /><div><strong>No preguntar nunca</strong><span>Más rápido, pero Shiro podrá hacer cualquier cosa sin avisar. Úsalo solo si confías en tu modelo.</span></div></label>
+								<label class="choice"><input type="radio" name="approval" value="deny" /><div><strong>Bloquear las acciones sensibles</strong><span>Shiro solo podrá hacer cosas inofensivas (abrir apps, volumen, consultar).</span></div></label>
+							</div>
+							<label class="field" style="margin-top: 14px"><span>Comandos que se pueden ejecutar sin preguntar</span><input class="input mono" id="set-allowlist" placeholder="git, npm, dir" /><small>Separados por comas. Solo la primera palabra del comando.</small></label>
+							<div class="actions-row"><button class="btn primary" id="pc-save">Guardar</button></div>
+						</div>
+					</section>
+
+					<!-- Habilidades -->
+					<section data-panel="skills">
+						<div class="set-group">
+							<div class="panel-head">
+								<div>
+									<h3>Habilidades de Shiro</h3>
+									<p class="set-desc">Instrucciones especializadas que creas o instalas en Shiro (por ejemplo "cómo resumir mis correos" o "cómo escribo los informes"). Shiro las usa solo cuando encajan con lo que pides, o cuando escribes <code>/nombre</code> en el chat.</p>
+								</div>
+								<button class="btn sm" id="skill-add" aria-haspopup="menu">Agregar habilidad<span data-icon="chevronDown" data-size="sm"></span></button>
+							</div>
+							<div class="ext-list" id="skills-own"></div>
+							<input type="file" id="skill-file" hidden accept=".md,text/markdown" />
+						</div>
+
+						<div class="set-group" id="skill-editor" hidden>
+							<h3 id="skill-editor-title">Nueva habilidad</h3>
+							<label class="field"><span>Nombre</span><input class="input" id="skill-name" maxlength="64" placeholder="resumir-correos" /><small>Se usa para llamarla en el chat: /nombre</small></label>
+							<label class="field"><span>¿Cuándo debe usarla?</span><input class="input" id="skill-desc" maxlength="400" placeholder="Cuando pida resumir correos o mensajes largos" /><small>El modelo lee esta frase para decidir si la necesita.</small></label>
+							<label class="field"><span>Instrucciones</span><textarea class="textarea mono" id="skill-body" rows="12" placeholder="# Resumir correos&#10;&#10;1. Empieza por lo más importante en una frase.&#10;2. Luego una lista con lo que tengo que hacer y para cuándo.&#10;3. …"></textarea><small>Escríbelas como se las explicarías a una persona. Admite formato Markdown.</small></label>
+							<div class="actions-row">
+								<button class="btn primary" id="skill-save">Guardar</button>
+								<button class="btn" id="skill-cancel">Cancelar</button>
+							</div>
+						</div>
+
+						<div class="set-group">
+							<h3>Usar habilidades de otras aplicaciones</h3>
+							<p class="set-desc">Shiro encuentra solo las habilidades que tengas instaladas en Claude Code, Codex, OpenCode u otros agentes, y las usa. Toca una fila para verlas y apagar las que no quieras.</p>
+							<div class="ext-list" id="skills-apps"></div>
+						</div>
+
+						<div class="set-group" id="skills-folders-group" hidden>
+							<h3>Otras carpetas</h3>
+							<div class="ext-list" id="skills-folders"></div>
+						</div>
+					</section>
+
+					<!-- Conectores MCP -->
+					<section data-panel="mcp">
+						<div class="set-group">
+							<div class="panel-head">
+								<div>
+									<h3>Servidores MCP</h3>
+									<p class="set-desc">Conecta a Shiro con otras aplicaciones y servicios (el navegador, tus archivos, GitHub, Notion, bases de datos…) mediante el protocolo MCP. Sus herramientas aparecen en el chat y piden permiso antes de usarse.</p>
+								</div>
+								<button class="btn sm" id="mcp-add" aria-haspopup="menu">Agregar servidor<span data-icon="chevronDown" data-size="sm"></span></button>
+							</div>
+							<div id="mcp-config-error"></div>
+							<div class="ext-list" id="mcp-list"></div>
+						</div>
+
+						<div class="set-group" id="mcp-editor" hidden>
+							<h3 id="mcp-editor-title">Nuevo servidor</h3>
+							<label class="field"><span>Nombre</span><input class="input" id="mcp-name" maxlength="40" placeholder="navegador" /></label>
+							<div class="field">
+								<span>Tipo</span>
+								<div class="segmented" id="mcp-kind">
+									<button type="button" data-value="stdio">Programa en este PC</button>
+									<button type="button" data-value="http">Servidor remoto (URL)</button>
+								</div>
+							</div>
+							<div id="mcp-stdio-fields">
+								<label class="field"><span>Comando</span><input class="input mono" id="mcp-command" placeholder="npx -y @playwright/mcp@latest" spellcheck="false" /><small>El programa y sus opciones, como lo pondrías en la terminal. Lo verás en las instrucciones de cada servidor.</small></label>
+								<label class="field"><span>Variables de entorno (opcional)</span><textarea class="textarea mono" id="mcp-env" rows="3" placeholder="GITHUB_TOKEN=tu-clave" spellcheck="false"></textarea><small>Una por línea: NOMBRE=valor. Suelen ser claves: después de guardarlas se muestran como ••••••.</small></label>
+							</div>
+							<div id="mcp-http-fields" hidden>
+								<label class="field"><span>URL</span><input class="input mono" id="mcp-url" placeholder="https://mcp.ejemplo.com/mcp" spellcheck="false" /></label>
+								<label class="field"><span>Cabeceras (opcional)</span><textarea class="textarea mono" id="mcp-headers" rows="3" placeholder="Authorization: Bearer tu-clave" spellcheck="false"></textarea><small>Una por línea: Nombre: valor.</small></label>
+							</div>
+							<div class="notice warn"><span data-icon="shield"></span><span>Añade solo servidores en los que confíes: un servidor MCP es un programa que se ejecuta en tu PC con tus permisos.</span></div>
+							<div class="actions-row">
+								<button class="btn primary" id="mcp-save">Guardar y conectar</button>
+								<button class="btn" id="mcp-cancel">Cancelar</button>
+							</div>
+						</div>
+
+						<div class="set-group" id="mcp-raw" hidden>
+							<h3>Editar mcp.json</h3>
+							<p class="set-desc">El mismo formato que LM Studio, Claude Desktop o Cursor: puedes pegar aquí la configuración que dan las instrucciones de cada servidor. Se guarda en <code id="mcp-raw-file">data/mcp.json</code>. Puede contener claves: no lo compartas.</p>
+							<textarea class="textarea mono code-editor" id="mcp-raw-text" rows="16" spellcheck="false"></textarea>
+							<div id="mcp-raw-error"></div>
+							<div class="actions-row">
+								<button class="btn primary" id="mcp-raw-save">Guardar</button>
+								<button class="btn" id="mcp-raw-cancel">Cancelar</button>
+							</div>
+						</div>
+
+						<div class="set-group">
+							<h3>Shiro como servidor MCP</h3>
+							<p class="set-desc">Al revés: OpenCode, Claude Code o Cursor pueden usar la memoria, los recordatorios y la búsqueda web de Shiro. Añade esto a su configuración de MCP:</p>
+							<div class="snippet"><pre id="mcp-self-snippet"></pre><button class="btn sm" id="mcp-self-copy"><span data-icon="copy" data-size="sm"></span>Copiar</button></div>
+						</div>
+					</section>
+
+					<!-- Personalización -->
+					<section data-panel="profile">
+						<div class="set-group">
+							<h3>Sobre ti</h3>
+							<p class="set-desc">Shiro usa esto en todas las conversaciones para responderte mejor.</p>
+							<div class="grid-2">
+								<label class="field"><span>¿Cómo quieres que te llame?</span><input class="input" id="profile-name" maxlength="60" /></label>
+								<label class="field"><span>Idioma de las respuestas</span><input class="input" id="profile-lang" placeholder="Español" maxlength="40" /></label>
+							</div>
+							<label class="field"><span>¿Qué debería saber Shiro de ti?</span><textarea class="textarea" id="profile-about" placeholder="A qué te dedicas, tus gustos, tu ciudad…" maxlength="1500"></textarea></label>
+							<label class="field"><span>¿Cómo quieres que responda?</span><textarea class="textarea" id="profile-extra" placeholder="Directo y breve, con humor, explícame como a principiante…" maxlength="1500"></textarea></label>
+							<div class="actions-row"><button class="btn primary" id="profile-save">Guardar</button></div>
+						</div>
+						<div class="set-group">
+							<h3>Instrucciones de Shiro</h3>
+							<p class="set-desc">Lo que lee antes de cada respuesta, en todos los chats (web, terminal, WhatsApp y Telegram). Todo viene con un texto por defecto: cámbialo como quieras y, si algo sale mal, vuelve al original con un clic.</p>
+							<div class="ext-list" id="prompt-list"></div>
+						</div>
+					</section>
+
+					<!-- Datos -->
+					<section data-panel="storage">
+						<div class="set-group">
+							<h3>¿Dónde guardo tus cosas?</h3>
+							<p class="set-desc">Tus chats, lo que recuerdo de ti y tus recordatorios. Los ajustes, las claves y las sesiones de WhatsApp siempre se quedan en este equipo.</p>
+							<div id="storage-form"></div>
+						</div>
+					</section>
+
+					<!-- Conexiones -->
+					<section data-panel="connections">
+						<div class="set-group">
+							<h3>WhatsApp</h3>
+							<p class="set-desc">Habla con Shiro desde tu móvil. Escanea el código desde WhatsApp → Dispositivos vinculados.</p>
+							<div id="wa-status" class="notice">Consultando…</div>
+							<div class="qr-box" id="wa-qr" hidden></div>
+							<div class="actions-row">
+								<button class="btn primary" id="wa-start">Conectar</button>
+								<button class="btn danger" id="wa-stop">Desconectar</button>
+							</div>
+						</div>
+						<div class="set-group">
+							<h3>Telegram</h3>
+							<p class="set-desc">Habla con Shiro desde Telegram. En Telegram busca <b>@BotFather</b>, escríbele <code>/newbot</code>, elige un nombre y copia el token que te da. Por seguridad, Shiro solo responde a los chats que autorices aquí.</p>
+							<div id="tg-status" class="notice">Consultando…</div>
+							<label class="field"><span>Token del bot</span><input class="input mono" id="tg-token" type="password" autocomplete="off" placeholder="123456789:AAH…" /><small id="tg-token-hint"></small></label>
+							<div class="actions-row">
+								<button class="btn primary" id="tg-start">Conectar</button>
+								<button class="btn danger" id="tg-stop">Desconectar</button>
+							</div>
+							<div class="ext-list" id="tg-chats" style="margin-top: 12px"></div>
+						</div>
+						<div class="set-group">
+							<h3>Instalar como aplicación</h3>
+							<p class="set-desc">Para abrir Shiro en su propia ventana usa <code>npm run app</code>. Con <code>npm run app -- --acceso-directo</code> se crea un icono en el escritorio. En Edge o Chrome también puedes usar el menú ⋯ → Aplicaciones → Instalar Shiro.</p>
+						</div>
+					</section>
 				</div>
 			</div>
-		</div>
-	</div>
+		</dialog>
 
-	<!-- ===== VIEW: DASHBOARD ===== -->
-	<div class="workspace" id="view-dashboard" data-view="dashboard">
-		<div class="page-header">
-			<h2 class="page-title">📊 Dashboard</h2>
-			<p class="page-subtitle">Estado general del sistema</p>
-		</div>
-
-		<div class="stat-grid">
-			<div class="stat-card">
-				<div class="stat-icon">🤖</div>
-				<div class="stat-label">Modelo LLM</div>
-				<div class="stat-value" id="dash-model" style="font-size: 0.9rem;">—</div>
+		<!-- ============ Recordatorios ============ -->
+		<dialog class="reminders-dialog" id="reminders-dialog" aria-labelledby="reminders-title">
+			<div class="dialog-head">
+				<h2 id="reminders-title">Recordatorios</h2>
+				<button class="icon-btn" data-close title="Cerrar" aria-label="Cerrar" data-icon="x"></button>
 			</div>
-			<div class="stat-card">
-				<div class="stat-icon">🧠</div>
-				<div class="stat-label">Sesiones</div>
-				<div class="stat-value" id="dash-sessions">0</div>
+			<div class="reminders-body">
+				<form class="rem-form" id="rem-form">
+					<label class="field" style="margin: 0"><span>Qué</span><input class="input" id="rem-title" required maxlength="200" placeholder="Llamar a mamá" /></label>
+					<label class="field" style="margin: 0"><span>Cuándo</span><input class="input" id="rem-when" type="datetime-local" required /></label>
+					<label class="field" style="margin: 0"><span>Repetir</span>
+						<select class="select" id="rem-repeat">
+							<option value="none">No</option>
+							<option value="daily">Cada día</option>
+							<option value="weekly">Cada semana</option>
+							<option value="monthly">Cada mes</option>
+						</select>
+					</label>
+					<button class="btn primary" type="submit">Añadir</button>
+				</form>
+				<p class="set-desc">También puedes pedírselo en el chat: "recuérdame mañana a las 9 pagar la luz".</p>
+				<div class="rem-list" id="rem-list"></div>
 			</div>
-			<div class="stat-card">
-				<div class="stat-icon">💬</div>
-				<div class="stat-label">Mensajes</div>
-				<div class="stat-value" id="dash-messages">0</div>
-			</div>
-			<div class="stat-card">
-				<div class="stat-icon">🔧</div>
-				<div class="stat-label">Herramientas</div>
-				<div class="stat-value">15</div>
-			</div>
-			<div class="stat-card">
-				<div class="stat-icon">💚</div>
-				<div class="stat-label">Health</div>
-				<div class="stat-value" id="dash-health" style="font-size: 1rem;">OK</div>
-			</div>
-			<div class="stat-card">
-				<div class="stat-icon">🌐</div>
-				<div class="stat-label">Gateway</div>
-				<div class="stat-value" id="dash-gateway" style="font-size: 1rem;">—</div>
-			</div>
-		</div>
-
-		<div class="card">
-			<div class="card-header">
-				<div>
-					<div class="card-title">Sesiones de Chat</div>
-					<div class="card-subtitle">Historial de conversaciones</div>
-				</div>
-				<button class="btn btn-secondary" id="dash-new-session">➕ Nueva</button>
-			</div>
-			<div class="session-list" id="dash-session-list"></div>
-		</div>
-
-		<div class="card">
-			<div class="card-header">
-				<div>
-					<div class="card-title">Logs en tiempo real</div>
-					<div class="card-subtitle">Últimas actividad del sistema</div>
-				</div>
-			</div>
-			<div class="log-view" id="dash-logs">
-				<div class="log-line info"><span class="log-time">—</span><span class="log-msg">Esperando actividad...</span></div>
-			</div>
-		</div>
-	</div>
-
-	<!-- ===== VIEW: TOOLS ===== -->
-	<div class="workspace" id="view-tools" data-view="tools">
-		<div class="page-header">
-			<h2 class="page-title">🔧 Herramientas</h2>
-			<p class="page-subtitle">Activa o desactiva herramientas del sistema</p>
-		</div>
-
-		<div class="card">
-			<div class="toolbar-row">
-				<input class="form-input" id="tools-search" placeholder="Buscar herramienta por nombre, id o categoría..." style="max-width:360px;">
-				<select class="form-input" id="tools-category-filter" style="max-width:220px;">
-					<option value="all">Todas las categorías</option>
-				</select>
-				<button class="btn btn-secondary" id="tools-enable-all-btn">Activar todo</button>
-				<button class="btn btn-secondary" id="tools-disable-all-btn">Desactivar todo</button>
-			</div>
-			<div class="stat-grid" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 1rem;">
-				<div class="stat-card">
-					<div class="stat-icon">🔧</div>
-					<div class="stat-label">Total</div>
-					<div class="stat-value" id="tools-total">15</div>
-				</div>
-				<div class="stat-card">
-					<div class="stat-icon">✅</div>
-					<div class="stat-label">Activas</div>
-					<div class="stat-value" id="tools-active" style="color: var(--success)">15</div>
-				</div>
-				<div class="stat-card">
-					<div class="stat-icon">🚫</div>
-					<div class="stat-label">Inactivas</div>
-					<div class="stat-value" id="tools-inactive" style="color: var(--text-dim)">0</div>
-				</div>
-			</div>
-		</div>
-
-		<div class="table-wrap">
-			<table>
-				<thead>
-					<tr>
-						<th style="width: 50px;">Estado</th>
-						<th>Nombre</th>
-						<th>Descripción</th>
-						<th>Categoría</th>
-					</tr>
-				</thead>
-				<tbody id="tools-table-body"></tbody>
-			</table>
-		</div>
-		<div id="tools-category-chips" class="toolbar-row" style="margin-top:0.75rem;"></div>
-	</div>
-
-	<!-- ===== VIEW: MEMORY ===== -->
-	<div class="workspace" id="view-memory" data-view="memory">
-		<div class="page-header">
-			<h2 class="page-title">🧠 Memoria</h2>
-			<p class="page-subtitle">Memoria a largo plazo con embeddings vectoriales</p>
-		</div>
-
-		<div class="card">
-			<div class="card-header">
-				<div>
-					<div class="card-title">Búsqueda en memoria</div>
-					<div class="card-subtitle">Busca información en la memoria a largo plazo</div>
-				</div>
-			</div>
-			<div class="toolbar-row">
-				<input class="form-input" id="mem-search-input" placeholder="Buscar en memoria...">
-				<button class="btn btn-primary" id="mem-search-btn">Buscar</button>
-				<button class="btn btn-secondary" id="mem-refresh-btn">Actualizar</button>
-			</div>
-			<div id="mem-results" class="memory-list"></div>
-		</div>
-
-		<div class="card">
-			<div class="card-header">
-				<div>
-					<div class="card-title">Estadísticas de memoria</div>
-				</div>
-			</div>
-			<div class="kpi-strip">
-				<div class="kpi-item">
-					<div class="kpi-label">Última sesión activa</div>
-					<div class="kpi-value" id="mem-last-session">—</div>
-				</div>
-				<div class="kpi-item">
-					<div class="kpi-label">Mensajes recientes</div>
-					<div class="kpi-value" id="mem-recent-messages">—</div>
-				</div>
-				<div class="kpi-item">
-					<div class="kpi-label">Última actividad</div>
-					<div class="kpi-value" id="mem-last-activity">—</div>
-				</div>
-			</div>
-			<div class="stat-grid" style="grid-template-columns: repeat(3, 1fr);">
-				<div class="stat-card">
-					<div class="stat-icon">📝</div>
-					<div class="stat-label">Memories</div>
-					<div class="stat-value" id="mem-count">—</div>
-				</div>
-				<div class="stat-card">
-					<div class="stat-icon">🔗</div>
-					<div class="stat-label">Embeddings</div>
-					<div class="stat-value" id="mem-embeddings">—</div>
-				</div>
-				<div class="stat-card">
-					<div class="stat-icon">💾</div>
-					<div class="stat-label">Vectores</div>
-					<div class="stat-value" id="mem-vectors">—</div>
-				</div>
-			</div>
-		</div>
-	</div>
-
-	<!-- ===== VIEW: REMINDERS ===== -->
-	<div class="workspace" id="view-reminders" data-view="reminders">
-		<div class="page-header">
-			<h2 class="page-title">🔔 Recordatorios</h2>
-			<p class="page-subtitle">Gestiona tus recordatorios y alarmas</p>
-		</div>
-
-		<div class="card">
-			<div class="card-header">
-				<div>
-					<div class="card-title">Crear recordatorio</div>
-				</div>
-			</div>
-			<div class="form-group">
-				<label class="form-label">Título</label>
-				<input class="form-input" id="rem-title" placeholder="Recordatorio...">
-			</div>
-			<div class="form-row">
-				<div class="form-group">
-					<label class="form-label">Fecha y hora</label>
-					<input class="form-input" type="datetime-local" id="rem-datetime">
-				</div>
-				<div class="form-group">
-					<label class="form-label">Repetir</label>
-					<select class="form-input" id="rem-repeat">
-						<option value="none">No repetir</option>
-						<option value="daily">Diario</option>
-						<option value="weekly">Semanal</option>
-						<option value="monthly">Mensual</option>
-					</select>
-				</div>
-			</div>
-			<div class="form-group">
-				<label class="form-label">Descripción (opcional)</label>
-				<textarea class="form-input form-textarea" id="rem-desc" placeholder="Descripción..."></textarea>
-			</div>
-			<div class="btn-group">
-				<button class="btn btn-primary" id="rem-create-btn">Crear recordatorio</button>
-			</div>
-		</div>
-
-		<div class="card">
-			<div class="card-header">
-				<div class="card-title">Recordatorios activos</div>
-			</div>
-			<div class="table-wrap">
-				<table>
-					<thead>
-						<tr>
-							<th>Estado</th>
-							<th>Título</th>
-							<th>Fecha</th>
-							<th>Repetir</th>
-							<th>Acciones</th>
-						</tr>
-					</thead>
-					<tbody id="reminders-table-body"></tbody>
-				</table>
-			</div>
-		</div>
-	</div>
-
-	<!-- ===== VIEW: GATEWAY ===== -->
-	<div class="workspace" id="view-gateway" data-view="gateway">
-		<div class="page-header">
-			<h2 class="page-title">🌐 Gateway</h2>
-			<p class="page-subtitle">Control plane vía WebSocket</p>
-		</div>
-
-		<div class="status-pills">
-			<div class="status-pill" id="gw-status-pill">
-				<span id="gw-status-dot"></span>
-				<span id="gw-status-text">Conectando...</span>
-			</div>
-		</div>
-
-		<div class="card">
-			<div class="card-header">
-				<div class="card-title">Clientes conectados</div>
-			</div>
-			<div class="table-wrap">
-				<table>
-					<thead>
-						<tr>
-							<th>ID</th>
-							<th>Estado</th>
-							<th>Último ping</th>
-						</tr>
-					</thead>
-					<tbody id="gw-clients-body"></tbody>
-				</table>
-			</div>
-		</div>
-
-		<div class="card">
-			<div class="card-header">
-				<div class="card-title">Logs del Gateway</div>
-			</div>
-			<div class="log-view" id="gw-logs"></div>
-		</div>
-	</div>
-
-	<!-- ===== VIEW: HEALTH ===== -->
-	<div class="workspace" id="view-health" data-view="health">
-		<div class="page-header">
-			<h2 class="page-title">💚 Health</h2>
-			<p class="page-subtitle">Estado de salud del sistema</p>
-		</div>
-
-		<div class="stat-grid">
-			<div class="stat-card">
-				<div class="stat-icon">🔗</div>
-				<div class="stat-label">LLM</div>
-				<div class="stat-value" id="health-llm" style="font-size: 1rem;">—</div>
-			</div>
-			<div class="stat-card">
-				<div class="stat-icon">🛠️</div>
-				<div class="stat-label">Herramientas</div>
-				<div class="stat-value" id="health-tools" style="font-size: 1rem;">—</div>
-			</div>
-			<div class="stat-card">
-				<div class="stat-icon">🔄</div>
-				<div class="stat-label">Loops</div>
-				<div class="stat-value" id="health-loops" style="font-size: 1rem;">—</div>
-			</div>
-		</div>
-
-		<div class="card">
-			<div class="card-header">
-				<div class="card-title">Detalles de Health</div>
-			</div>
-			<div class="log-view" id="health-details"></div>
-		</div>
-	</div>
-
-	<!-- ===== VIEW: CONFIG ===== -->
-	<div class="workspace" id="view-config" data-view="config">
-		<div class="page-header">
-			<h2 class="page-title">⚙️ Configuración</h2>
-			<p class="page-subtitle">Configuración general del sistema</p>
-		</div>
-
-		<div class="card">
-			<div class="card-header">
-				<div class="card-title">Proveedor LLM</div>
-				<div class="status-pill success" id="cfg-provider-badge">—</div>
-			</div>
-			<div class="form-row">
-				<div class="form-group">
-					<label class="form-label">Provider</label>
-					<select class="form-input" id="cfg-provider">
-						<option value="openrouter">OpenRouter</option>
-						<option value="opencode">OpenCode</option>
-						<option value="ollama">Ollama</option>
-						<option value="vllm">vLLM</option>
-					</select>
-				</div>
-				<div class="form-group">
-					<label class="form-label">Modelo</label>
-					<input class="form-input mono" id="cfg-model" placeholder="gpt-4o-mini">
-				</div>
-			</div>
-			<div class="form-group">
-				<label class="form-label">Base URL</label>
-				<input class="form-input mono" id="cfg-baseurl" placeholder="https://openrouter.ai/api/v1">
-			</div>
-			<div class="form-group">
-				<label class="form-label">API Key</label>
-				<input class="form-input mono" type="password" id="cfg-apikey" placeholder="sk-or-v1-...">
-			</div>
-			<div class="btn-group">
-				<button class="btn btn-primary" id="cfg-save-btn">Guardar</button>
-				<button class="btn btn-secondary" id="cfg-test-btn">Probar conexión</button>
-			</div>
-		</div>
-
-		<div class="card">
-			<div class="card-header">
-				<div class="card-title">Configuración general</div>
-			</div>
-			<div class="form-row">
-				<div class="form-group">
-					<label class="form-label">Nombre del asistente</label>
-					<input class="form-input" id="cfg-assistant-name" placeholder="Shiro">
-				</div>
-				<div class="form-group">
-					<label class="form-label">Puerto</label>
-					<input class="form-input" type="number" id="cfg-port" placeholder="1406">
-				</div>
-			</div>
-			<div class="form-group">
-				<label class="form-label">Auto-restart</label>
-				<select class="form-input" id="cfg-restart">
-					<option value="true">Habilitado</option>
-					<option value="false">Deshabilitado</option>
-				</select>
-			</div>
-		</div>
-	</div>
-
-	<!-- ===== VIEW: PROFILE ===== -->
-	<div class="workspace" id="view-profile" data-view="profile">
-		<div class="page-header">
-			<h2 class="page-title">👤 Perfil</h2>
-			<p class="page-subtitle">Personaliza cómo Shiro te conoce</p>
-		</div>
-
-		<div class="card">
-			<div class="card-header">
-				<div class="card-title">Información personal</div>
-			</div>
-			<div class="form-row">
-				<div class="form-group">
-					<label class="form-label">Tu nombre</label>
-					<input class="form-input" id="profile-name" placeholder="Tu nombre">
-				</div>
-				<div class="form-group">
-					<label class="form-label">Idioma</label>
-					<input class="form-input" id="profile-lang" placeholder="Español">
-				</div>
-			</div>
-			<div class="form-group">
-				<label class="form-label">Sobre ti</label>
-				<textarea class="form-input form-textarea" id="profile-about" placeholder="Trabajo, aficiones..."></textarea>
-			</div>
-			<div class="form-group">
-				<label class="form-label">Notas extra</label>
-				<textarea class="form-input form-textarea" id="profile-extra" placeholder="Cualquier cosa que Shiro deba saber..."></textarea>
-			</div>
-			<div class="btn-group">
-				<button class="btn btn-primary" id="profile-save-btn">Guardar perfil</button>
-			</div>
-		</div>
-	</div>
-
-	</div>
-
-</main>
-
-<script>
-// ===== STATE =====
-const state = {
-	model: "—",
-	sessions: [],
-	activeSessionId: null,
-	messages: [],
-	busy: false,
-	pendingImage: null,
-	wsConnected: false,
-	ws: null,
-	enabledTools: new Set(),
-	sessionFilter: "",
-	toolsFilterText: "",
-	toolsCategory: "all",
-};
-
-// ===== TOOLS STATE =====
-function loadEnabledTools() {
-	try {
-		const saved = localStorage.getItem("shiro-enabled-tools");
-		if (saved) {
-			const arr = JSON.parse(saved);
-			state.enabledTools = new Set(arr);
-		} else {
-			state.enabledTools = new Set(TOOLS.map(t => t.id));
-		}
-	} catch {
-		state.enabledTools = new Set(TOOLS.map(t => t.id));
-	}
-}
-
-function saveEnabledTools() {
-	localStorage.setItem("shiro-enabled-tools", JSON.stringify([...state.enabledTools]));
-}
-
-function toggleTool(id) {
-	if (state.enabledTools.has(id)) {
-		state.enabledTools.delete(id);
-	} else {
-		state.enabledTools.add(id);
-	}
-	saveEnabledTools();
-	renderToolsTable();
-}
-
-function setAllToolsEnabled(enabled) {
-	if (enabled) {
-		state.enabledTools = new Set(TOOLS.map(t => t.id));
-	} else {
-		state.enabledTools = new Set();
-	}
-	saveEnabledTools();
-	renderToolsTable();
-}
-
-// ===== TOOLS DATA =====
-const TOOLS = [
-	{ id: "read_file", name: "Leer archivos", desc: "Lee archivos del workspace", cat: "Archivos" },
-	{ id: "write_file", name: "Escribir archivos", desc: "Crea o modifica archivos", cat: "Archivos" },
-	{ id: "list_dir", name: "Listar directorio", desc: "Lista archivos y carpetas", cat: "Archivos" },
-	{ id: "read_file_system", name: "Leer PC", desc: "Lee archivos de tu sistema", cat: "Sistema" },
-	{ id: "write_file_system", name: "Escribir PC", desc: "Escribe archivos en tu sistema", cat: "Sistema" },
-	{ id: "list_dir_system", name: "Listar PC", desc: "Lista archivos de tu sistema", cat: "Sistema" },
-	{ id: "fetch_url", name: "Fetch URL", desc: "Obtiene contenido de una URL", cat: "Web" },
-	{ id: "describe_image", name: "Describir imagen", desc: "Analiza una imagen", cat: "Web" },
-	{ id: "search_web", name: "Buscar web", desc: "Busca en internet", cat: "Web" },
-	{ id: "calculator", name: "Calculadora", desc: "Calcula operaciones matemáticas", cat: "Utilidades" },
-	{ id: "get_time", name: "Hora actual", desc: "Obtiene fecha y hora", cat: "Utilidades" },
-	{ id: "create_reminder", name: "Crear recordatorio", desc: "Crea una alarma", cat: "Utilidades" },
-	{ id: "list_reminders", name: "Listar recordatorios", desc: "Lista tus recordatorios", cat: "Utilidades" },
-	{ id: "complete_reminder", name: "Completar recordatorio", desc: "Marca como hecho", cat: "Utilidades" },
-	{ id: "get_weather", name: "Clima", desc: "Consulta el clima", cat: "Utilidades" },
-];
-
-// ===== THEME =====
-const themeBtn = document.getElementById("theme-btn");
-function getTheme() { return localStorage.getItem("shiro-theme") || "dark"; }
-function applyTheme(theme) {
-	document.documentElement.setAttribute("data-theme", theme);
-	localStorage.setItem("shiro-theme", theme);
-	themeBtn.textContent = theme === "dark" ? "🌙" : "☀️";
-}
-themeBtn.addEventListener("click", () => applyTheme(getTheme() === "dark" ? "light" : "dark"));
-applyTheme(getTheme());
-
-// ===== NAVIGATION =====
-const navItems = document.querySelectorAll(".nav-item[data-view]");
-const workspaces = document.querySelectorAll(".workspace");
-const bcSection = document.getElementById("bc-section");
-const bcPage = document.getElementById("bc-page");
-
-const VIEW_TITLES = {
-	chat: "Chat", dashboard: "Dashboard", tools: "Herramientas",
-	memory: "Memoria", reminders: "Recordatorios", gateway: "Gateway",
-	health: "Health", config: "Configuración", profile: "Perfil"
-};
-
-function navigateTo(view) {
-	navItems.forEach(n => n.classList.toggle("active", n.dataset.view === view));
-	workspaces.forEach(w => w.classList.toggle("active", w.dataset.view === view));
-	bcPage.textContent = VIEW_TITLES[view] || view;
-
-	// Load view data
-	if (view === "dashboard") loadDashboard();
-	if (view === "tools") renderToolsTable();
-	if (view === "memory") loadMemoryInsights();
-	if (view === "reminders") loadReminders();
-	if (view === "profile") loadProfile();
-	if (view === "gateway") connectGateway();
-}
-
-navItems.forEach(n => n.addEventListener("click", () => navigateTo(n.dataset.view)));
-
-// ===== SIDEBAR TOGGLE (mobile) =====
-const sidebarOverlay = document.getElementById("sidebar-overlay");
-if (sidebarOverlay) sidebarOverlay.addEventListener("click", () => document.body.classList.remove("sidebar-open"));
-
-// ===== API HELPERS =====
-// Si el servidor exige contraseña (SHIRO_AUTH_TOKEN), se pide una vez y se recuerda en este navegador.
-function getAuthToken() {
-	try { return localStorage.getItem("shiroToken") || ""; } catch { return ""; }
-}
-async function authFetch(url, opts = {}) {
-	const send = () => {
-		const headers = { ...(opts.headers || {}) };
-		const t = getAuthToken();
-		if (t) headers.Authorization = "Bearer " + t;
-		return fetch(url, { ...opts, headers });
-	};
-	let r = await send();
-	if (r.status === 401) {
-		const t = prompt("Shiro pide contraseña (se muestra en la terminal donde iniciaste el servidor):");
-		if (t && t.trim()) {
-			try { localStorage.setItem("shiroToken", t.trim()); } catch {}
-			r = await send();
-		}
-	}
-	return r;
-}
-
-async function api(url, opts = {}) {
-	const r = await authFetch(url, opts);
-	const d = await r.json().catch(() => ({}));
-	if (!r.ok) throw new Error(d.error || "Error " + r.status);
-	return d;
-}
-
-// ===== LOGGING =====
-const logs = [];
-function addLog(msg, type = "info") {
-	const time = new Date().toLocaleTimeString();
-	logs.unshift({ time, msg, type });
-	if (logs.length > 50) logs.pop();
-	const dashLogs = document.getElementById("dash-logs");
-	if (dashLogs) {
-		dashLogs.innerHTML = logs.map(l =>
-			`<div class="log-line ${l.type}"><span class="log-time">${l.time}</span><span class="log-msg">${l.msg}</span></div>`
-		).join("");
-	}
-}
-
-// ===== ERROR =====
-function showError(msg) {
-	const el = document.getElementById("chat-error");
-	if (el) { el.textContent = msg; el.classList.add("show"); }
-}
-function hideError() {
-	const el = document.getElementById("chat-error");
-	if (el) el.classList.remove("show");
-}
-
-// ===== BUSY =====
-function setBusy(b) {
-	state.busy = b;
-	document.getElementById("send-btn").disabled = b;
-	document.getElementById("chat-input").disabled = b;
-}
-
-// ===== LOAD STATE =====
-async function loadState() {
-	try {
-		const d = await api("/api/state");
-		state.model = d.vllm?.model || "—";
-		document.getElementById("hc-model").textContent = state.model;
-		document.getElementById("dash-model").textContent = state.model;
-		addLog(`Modelo: ${state.model}`);
-	} catch { addLog("Error cargando estado", "error"); }
-}
-
-async function loadHealth() {
-	try {
-		const d = await api("/api/health");
-		const ok = !!d.lastActive;
-		document.getElementById("hc-health-dot").className = "hc-dot " + (ok ? "green" : "yellow");
-		document.getElementById("dash-health").textContent = ok ? "OK" : "IDLE";
-		document.getElementById("health-loops").textContent = ok ? "0" : "—";
-		document.getElementById("health-llm").textContent = ok ? "OK" : "—";
-		document.getElementById("health-tools").textContent = "OK";
-		addLog(`Health: ${ok ? "OK" : "IDLE"}`);
-	} catch { addLog("Error health", "error"); }
-}
-
-// ===== SESSIONS =====
-async function loadSessions() {
-	try {
-		const d = await api("/api/chat-sessions");
-		state.sessions = Array.isArray(d.sessions) ? d.sessions : [];
-	} catch {
-		state.sessions = [];
-	}
-	renderSessionList();
-}
-
-async function createSession() {
-	try {
-		const d = await api("/api/chat-sessions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
-		state.sessions.unshift(d.session);
-		state.activeSessionId = d.session.id;
-		state.messages = [];
-		renderSessionList();
-		renderMessages();
-		document.getElementById("sidebar-session-id").textContent = state.activeSessionId.slice(0, 8) + "...";
-		addLog("Nueva sesión creada");
-		return d.session;
-	} catch (e) { showError(e.message); }
-}
-
-async function switchSession(id) {
-	try {
-		const d = await api("/api/chat-sessions/" + encodeURIComponent(id));
-		state.activeSessionId = d.session.id;
-		state.messages = d.session.messages.map(m => ({ role: m.role, content: m.content }));
-		renderSessionList();
-		renderMessages();
-		document.getElementById("sidebar-session-id").textContent = state.activeSessionId.slice(0, 8) + "...";
-		addLog(`Sesión: ${d.session.title}`);
-	} catch (e) { showError(e.message); }
-}
-
-async function deleteSession(id) {
-	try {
-		await api("/api/chat-sessions/" + encodeURIComponent(id), { method: "DELETE" });
-		state.sessions = state.sessions.filter(s => s.id !== id);
-		if (state.activeSessionId === id) {
-			if (state.sessions.length > 0) await switchSession(state.sessions[0].id);
-			else await createSession();
-		}
-		renderSessionList();
-		addLog("Sesión eliminada");
-	} catch (e) { showError(e.message); }
-}
-
-function startOfLocalDay(ms) {
-	const d = new Date(ms);
-	d.setHours(0, 0, 0, 0);
-	return d.getTime();
-}
-
-function sessionGroupLabel(updatedAt) {
-	const now = Date.now();
-	const today = startOfLocalDay(now);
-	const y = new Date(now);
-	y.setDate(y.getDate() - 1);
-	const yesterday = startOfLocalDay(y.getTime());
-	const u = startOfLocalDay(updatedAt);
-	if (u >= today) return "Hoy";
-	if (u >= yesterday) return "Ayer";
-	return "Anteriores";
-}
-
-function renderSessionList() {
-	const dashEl = document.getElementById("dash-session-list");
-	const chatEl = document.getElementById("chat-session-list");
-
-	function makeHtml() {
-		if (state.sessions.length === 0) {
-			return '<div style="color:var(--text-dim);font-size:0.78rem;padding:0.5rem;">No hay historial todavía</div>';
-		}
-		const q = (state.sessionFilter || "").trim().toLowerCase();
-		const filtered = !q
-			? state.sessions.slice()
-			: state.sessions.filter((s) =>
-				(s.title || "").toLowerCase().includes(q) || (s.lastPreview || "").toLowerCase().includes(q));
-		filtered.sort((a, b) => b.updatedAt - a.updatedAt);
-		if (filtered.length === 0) {
-			return '<div style="color:var(--text-dim);font-size:0.78rem;padding:0.5rem;">No hay conversaciones que coincidan</div>';
-		}
-		let lastLabel = null;
-		const blocks = [];
-		for (const s of filtered) {
-			const label = sessionGroupLabel(s.updatedAt);
-			if (label !== lastLabel) {
-				lastLabel = label;
-				blocks.push(`<div class="session-group-label" role="presentation">${label}</div>`);
-			}
-			const escTitle = String(s.title || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
-			const escPrev = s.lastPreview
-				? String(s.lastPreview).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;")
-				: "";
-			blocks.push(`
-			<div class="session-item ${s.id === state.activeSessionId ? "active" : ""}" data-id="${s.id}" role="listitem" tabindex="0">
-				<span class="session-icon" aria-hidden="true">💬</span>
-				<div class="session-info">
-					<div class="session-title">${escTitle}</div>
-					<div class="session-time">${new Date(s.updatedAt).toLocaleString()}</div>
-					${escPrev ? `<div class="session-preview">${escPrev}</div>` : ""}
-				</div>
-				<button type="button" class="session-del" data-id="${s.id}" title="Eliminar" aria-label="Eliminar conversación">×</button>
-			</div>`);
-		}
-		return blocks.join("");
-	}
-
-	if (dashEl) {
-		dashEl.innerHTML = makeHtml();
-		dashEl.querySelectorAll(".session-item").forEach(item => {
-			item.addEventListener("click", (e) => {
-				if (!e.target.closest(".session-del")) {
-					switchSession(item.dataset.id);
-				}
-			});
-			item.addEventListener("keydown", (e) => {
-				if (e.key !== "Enter") return;
-				if (e.target.closest(".session-del")) return;
-				switchSession(item.dataset.id);
-			});
-		});
-		dashEl.querySelectorAll(".session-del").forEach(btn => {
-			btn.addEventListener("click", (e) => { e.stopPropagation(); deleteSession(btn.dataset.id); });
-		});
-		bindSessionRenameTitles(dashEl);
-	}
-
-	if (chatEl) {
-		chatEl.innerHTML = makeHtml();
-		chatEl.querySelectorAll(".session-item").forEach(item => {
-			item.addEventListener("click", (e) => {
-				if (!e.target.closest(".session-del")) {
-					switchSession(item.dataset.id);
-				}
-			});
-			item.addEventListener("keydown", (e) => {
-				if (e.key !== "Enter") return;
-				if (e.target.closest(".session-del")) return;
-				switchSession(item.dataset.id);
-			});
-		});
-		chatEl.querySelectorAll(".session-del").forEach(btn => {
-			btn.addEventListener("click", (e) => { e.stopPropagation(); deleteSession(btn.dataset.id); });
-		});
-		bindSessionRenameTitles(chatEl);
-	}
-
-	document.getElementById("dash-sessions").textContent = String(state.sessions.length);
-	document.getElementById("dash-messages").textContent = String(state.messages.length);
-	const countLabel = document.getElementById("session-count-label");
-	if (countLabel) {
-		countLabel.textContent = `${state.sessions.length} conversación${state.sessions.length === 1 ? "" : "es"}`;
-	}
-}
-
-function bindSessionRenameTitles(root) {
-	if (!root) return;
-	root.querySelectorAll(".session-title").forEach((el) => {
-		el.addEventListener("dblclick", async (e) => {
-			e.stopPropagation();
-			e.preventDefault();
-			const item = el.closest(".session-item");
-			const id = item?.dataset.id;
-			if (!id || state.busy) return;
-			const session = state.sessions.find((x) => x.id === id);
-			const next = window.prompt("Nombre de la conversación", session?.title || "");
-			if (next === null) return;
-			const t = next.trim();
-			if (!t) return;
-			try {
-				await api("/api/chat-sessions/" + encodeURIComponent(id), {
-					method: "PATCH",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ title: t }),
-				});
-				await loadSessions();
-				addLog("Sesión renombrada");
-			} catch (err) {
-				showError(err.message);
-			}
-		});
-	});
-}
-
-// ===== MESSAGES =====
-function formatMessageTime(m) {
-	if (m.ts == null) return "";
-	try {
-		return new Date(m.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-	} catch {
-		return "";
-	}
-}
-
-function renderMessages() {
-	const container = document.getElementById("chat-messages");
-	const empty = document.getElementById("chat-empty");
-	if (!container) return;
-
-	if (state.messages.length === 0) {
-		container.innerHTML = "";
-		container.innerHTML = `
-			<div class="chat-empty" id="chat-empty">
-				<div class="chat-empty-icon">✨</div>
-				<h3>Shiro está listo</h3>
-				<p>Escribe un mensaje para comenzar</p>
-			</div>`;
-		return;
-	}
-
-	container.innerHTML = state.messages.map(m => {
-		const timePart = formatMessageTime(m);
-		const who = m.role === "user" ? "Tú" : "Shiro";
-		const sub = timePart ? `${who} · ${timePart}` : who;
-		return `
-		<div class="msg-row ${m.role}">
-			<div class="msg-avatar ${m.role === "user" ? "user-emoji" : ""}">${m.role === "user" ? "👤" : `<img src="/Shiro.PNG?t=2" alt="Shiro" onerror="this.style.display='none'">`}</div>
-			<div class="msg-body">
-				<div class="msg-bubble">${typeof m.content === "string" ? m.content : JSON.stringify(m.content)}</div>
-				<div class="msg-time">${sub}</div>
-			</div>
-		</div>`;
-	}).join("");
-
-	container.scrollTop = container.scrollHeight;
-}
-
-function addThinking() {
-	const container = document.getElementById("chat-messages");
-	if (!container) return;
-	const div = document.createElement("div");
-	div.className = "msg-row assistant";
-	div.id = "thinking-msg";
-	div.innerHTML = `
-		<div class="msg-avatar"><img src="/Shiro.PNG?t=3" alt="Shiro" onerror="this.style.display='none'"></div>
-		<div class="msg-body">
-			<div class="msg-bubble"><div class="typing-dots"><span></span><span></span><span></span></div></div>
-			<div class="msg-time">Shiro escribiendo...</div>
-		</div>`;
-	container.appendChild(div);
-	container.scrollTop = container.scrollHeight;
-}
-
-function clearThinking() {
-	document.getElementById("thinking-msg")?.remove();
-}
-
-let streamRenderRaf = null;
-
-async function postChatStream(body, onDelta) {
-	const r = await authFetch("/api/chat/stream", {
-		method: "POST",
-		headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-		body: JSON.stringify(body),
-	});
-	const ct = (r.headers.get("content-type") || "").toLowerCase();
-	if (!r.ok) {
-		let msg = "Error " + r.status;
-		try {
-			const j = await r.json();
-			if (j.error) msg = j.error;
-		} catch {
-			try {
-				msg = (await r.text()) || msg;
-			} catch {
-				/* ignore */
-			}
-		}
-		throw new Error(msg);
-	}
-	if (!ct.includes("text/event-stream")) {
-		const j = await r.json();
-		if (j.error) throw new Error(j.error);
-		if (onDelta && j.content) onDelta(j.content);
-		return { content: j.content || "", whatsapp: j.whatsapp };
-	}
-	const reader = r.body.getReader();
-	const dec = new TextDecoder();
-	let buf = "";
-	let full = "";
-	let whatsapp = null;
-	while (true) {
-		const { done, value } = await reader.read();
-		if (done) break;
-		buf += dec.decode(value, { stream: true });
-		let sep;
-		while ((sep = buf.indexOf("\n\n")) >= 0) {
-			const block = buf.slice(0, sep);
-			buf = buf.slice(sep + 2);
-			for (const line of block.split("\n")) {
-				if (!line.startsWith("data: ")) continue;
-				let evt;
-				try {
-					evt = JSON.parse(line.slice(6));
-				} catch {
-					continue;
-				}
-				if (evt.type === "delta" && evt.text) {
-					full += evt.text;
-					if (onDelta) {
-						if (streamRenderRaf) cancelAnimationFrame(streamRenderRaf);
-						streamRenderRaf = requestAnimationFrame(() => {
-							streamRenderRaf = null;
-							onDelta(full);
-						});
-					}
-				}
-				if (evt.type === "approval" && evt.id) {
-					// Acción peligrosa (comando, escribir archivos...): el usuario decide.
-					const approved = confirm("Shiro quiere hacer esto:\n\n" + (evt.summary || "(acción)") + "\n\n¿Permitir?");
-					addLog((approved ? "Permitido: " : "Rechazado: ") + (evt.summary || "").slice(0, 80), approved ? "info" : "warn");
-					api("/api/approvals/" + encodeURIComponent(evt.id), {
-						method: "POST",
-						headers: { "Content-Type": "application/json" },
-						body: JSON.stringify({ approved }),
-					}).catch(() => {});
-				}
-				if (evt.type === "done") {
-					if (evt.content != null && evt.content !== "") full = evt.content;
-					if (evt.whatsapp) whatsapp = evt.whatsapp;
-					if (onDelta) onDelta(full);
-				}
-				if (evt.type === "error") throw new Error(evt.message || "Error en stream");
-			}
-		}
-	}
-	return { content: full, whatsapp };
-}
-
-// ===== CHAT FORM =====
-const chatForm = document.getElementById("chat-form");
-const chatInput = document.getElementById("chat-input");
-
-chatForm.addEventListener("submit", async (e) => {
-	e.preventDefault();
-	if (state.busy) return;
-
-	const text = (chatInput.value || "").trim();
-	const hasImage = !!state.pendingImage;
-	if (!text && !hasImage) return;
-
-	hideError();
-
-	let content;
-	if (hasImage) {
-		const parts = [{ type: "text", text: text || "¿Qué hay en esta imagen?" }];
-		parts.push({ type: "image_url", image_url: { url: state.pendingImage } });
-		content = parts;
-	} else {
-		content = text;
-	}
-
-	chatInput.value = "";
-	state.pendingImage = null;
-	document.getElementById("attach-img-btn").style.color = "";
-
-	const payloadMessages = () => {
-		const list = state.messages.slice();
-		const last = list[list.length - 1];
-		if (last && last.role === "assistant") {
-			const c = last.content;
-			const emptyStr = typeof c === "string" && !String(c).trim();
-			if (emptyStr) list.pop();
-		}
-		return [
-			{ role: "system", content: "Eres Shiro, un asistente IA útil." },
-			...list.map(({ role, content: c }) => ({ role, content: c })),
-		];
-	};
-
-	state.messages.push({ role: "user", content, ts: Date.now() });
-	renderMessages();
-	setBusy(true);
-
-	state.messages.push({ role: "assistant", content: "", ts: Date.now() });
-	renderMessages();
-
-	try {
-		const { content: reply, whatsapp } = await postChatStream(
-			{
-				messages: payloadMessages(),
-				sessionId: state.activeSessionId,
-				allowedTools: [...state.enabledTools],
-			},
-			(partial) => {
-				state.messages[state.messages.length - 1].content = partial;
-				renderMessages();
-			},
-		);
-
-		state.messages[state.messages.length - 1].content = reply;
-		renderMessages();
-		addLog(`Chat: mensaje enviado (${text.slice(0, 30)}...)`);
-
-		if (whatsapp?.qrDataUrl) {
-			showWhatsAppModal({ whatsapp });
-		}
-
-		await api("/api/chat-sessions/" + encodeURIComponent(state.activeSessionId), {
-			method: "PUT",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ messages: state.messages.map(({ role, content: c }) => ({ role, content: c })) }),
-		});
-		await loadSessions();
-	} catch (e) {
-		if (state.messages.length && state.messages[state.messages.length - 1].role === "assistant") {
-			state.messages.pop();
-		}
-		showError(e.message);
-		addLog(e.message, "error");
-		renderMessages();
-	}
-
-	setBusy(false);
-	chatInput.focus();
-});
-
-chatInput.addEventListener("keydown", (e) => {
-	if (e.key === "Enter" && !e.shiftKey) {
-		e.preventDefault();
-		chatForm.requestSubmit();
-	}
-});
-
-// Auto-resize
-chatInput.addEventListener("input", () => {
-	chatInput.style.height = "auto";
-	chatInput.style.height = Math.min(chatInput.scrollHeight, 140) + "px";
-});
-
-// Image attachment
-const imageInput = document.getElementById("image-input");
-const attachImgBtn = document.getElementById("attach-img-btn");
-
-if (imageInput && attachImgBtn) {
-	attachImgBtn.addEventListener("click", () => imageInput.click());
-	imageInput.addEventListener("change", (e) => {
-		const file = e.target?.files?.[0];
-		e.target.value = "";
-		if (!file || !file.type.startsWith("image/")) return;
-		const reader = new FileReader();
-		reader.onload = () => {
-			state.pendingImage = reader.result;
-			attachImgBtn.style.color = "var(--accent)";
-			addLog("Imagen adjuntada");
-		};
-		reader.readAsDataURL(file);
-	});
-}
-
-// New chat button
-document.getElementById("new-chat-btn")?.addEventListener("click", async () => {
-	if (state.busy) return;
-	await createSession();
-});
-
-// Clear chat
-document.getElementById("clear-chat-btn")?.addEventListener("click", async () => {
-	if (state.busy) return;
-	state.messages = [];
-	renderMessages();
-	await api("/api/chat-sessions/" + encodeURIComponent(state.activeSessionId), {
-		method: "PUT",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ messages: [] })
-	});
-	addLog("Chat limpiado");
-});
-
-// ===== DASHBOARD =====
-async function loadDashboard() {
-	await loadState();
-	await loadHealth();
-	await loadSessions();
-}
-
-// ===== TOOLS TABLE =====
-function renderToolsTable() {
-	const tbody = document.getElementById("tools-table-body");
-	if (!tbody) return;
-
-	const total = TOOLS.length;
-	const active = state.enabledTools.size;
-	const inactive = total - active;
-
-	const elTotal = document.getElementById("tools-total");
-	const elActive = document.getElementById("tools-active");
-	const elInactive = document.getElementById("tools-inactive");
-	if (elTotal) elTotal.textContent = String(total);
-	if (elActive) elActive.textContent = String(active);
-	if (elInactive) elInactive.textContent = String(inactive);
-	const q = (state.toolsFilterText || "").trim().toLowerCase();
-	const filtered = TOOLS.filter((t) => {
-		const inCategory = state.toolsCategory === "all" || t.cat === state.toolsCategory;
-		if (!inCategory) return false;
-		if (!q) return true;
-		const joined = `${t.name} ${t.id} ${t.desc} ${t.cat}`.toLowerCase();
-		return joined.includes(q);
-	});
-
-	tbody.innerHTML = filtered.map(t => {
-		const enabled = state.enabledTools.has(t.id);
-		return `
-		<tr>
-			<td>
-				<label class="toggle-switch">
-					<input type="checkbox" ${enabled ? "checked" : ""} onchange="toggleTool('${t.id}')">
-					<span class="toggle-slider"></span>
-				</label>
-			</td>
-			<td><span style="font-weight:600;color:${enabled ? "var(--text-primary)" : "var(--text-dim)"}">${t.name}</span><br><code style="font-size:0.68rem;color:var(--text-dim)">${t.id}</code></td>
-			<td style="color:${enabled ? "var(--text-secondary)" : "var(--text-dim)"}">${t.desc}</td>
-			<td><span class="status-pill ${enabled ? "info" : ""}" style="font-size:0.65rem; ${enabled ? "" : "opacity:0.5"}">${t.cat}</span></td>
-		</tr>
-	`;
-	}).join("");
-	if (!filtered.length) {
-		tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-dim)">No hay herramientas para ese filtro</td></tr>';
-	}
-
-	const chips = document.getElementById("tools-category-chips");
-	if (chips) {
-		const counts = TOOLS.reduce((acc, t) => {
-			acc[t.cat] = (acc[t.cat] || 0) + 1;
-			return acc;
-		}, {});
-		chips.innerHTML = Object.keys(counts).map((cat) => {
-			const activeClass = state.toolsCategory === cat ? "is-active" : "";
-			return `<button class="tool-chip ${activeClass}" data-tool-cat="${cat}">${cat} · ${counts[cat]}</button>`;
-		}).join("");
-		chips.querySelectorAll("[data-tool-cat]").forEach((el) => {
-			el.addEventListener("click", () => {
-				state.toolsCategory = el.dataset.toolCat || "all";
-				const select = document.getElementById("tools-category-filter");
-				if (select) select.value = state.toolsCategory;
-				renderToolsTable();
-			});
-		});
-	}
-}
-
-async function loadMemoryInsights() {
-	const memCount = document.getElementById("mem-count");
-	const memEmb = document.getElementById("mem-embeddings");
-	const memVectors = document.getElementById("mem-vectors");
-	const memLastSession = document.getElementById("mem-last-session");
-	const memRecentMessages = document.getElementById("mem-recent-messages");
-	const memLastActivity = document.getElementById("mem-last-activity");
-	const memResults = document.getElementById("mem-results");
-
-	const sessions = [...state.sessions].sort((a, b) => b.updatedAt - a.updatedAt);
-	const totalMessages = sessions.reduce((acc, s) => acc + (Array.isArray(s.messages) ? s.messages.length : 0), 0);
-	const latest = sessions[0];
-
-	if (memCount) memCount.textContent = String(totalMessages);
-	if (memEmb) memEmb.textContent = latest ? "Activo" : "—";
-	if (memVectors) memVectors.textContent = String(sessions.length);
-	if (memLastSession) memLastSession.textContent = latest ? (latest.title || "Sesión") : "—";
-	if (memRecentMessages) memRecentMessages.textContent = String((state.messages || []).length);
-	if (memLastActivity) {
-		memLastActivity.textContent = latest?.updatedAt ? new Date(latest.updatedAt).toLocaleString() : "—";
-	}
-
-	if (memResults && !memResults.dataset.userSearched) {
-		const previews = sessions.slice(0, 5).map((s) => ({
-			title: s.title || "Sesión sin título",
-			preview: s.lastPreview || "Sin preview",
-			time: new Date(s.updatedAt).toLocaleString(),
-		}));
-		memResults.innerHTML = previews.length
-			? previews.map((p) => `
-				<div class="memory-item">
-					<h4>${p.title}</h4>
-					<p>${p.preview}</p>
-					<p style="margin-top:0.3rem;color:var(--text-dim);font-size:0.68rem;">${p.time}</p>
-				</div>
-			`).join("")
-			: '<div class="memory-item"><h4>Sin memoria todavía</h4><p>Crea conversaciones para empezar a construir contexto.</p></div>';
-	}
-}
-
-function runMemorySearch() {
-	const input = document.getElementById("mem-search-input");
-	const memResults = document.getElementById("mem-results");
-	if (!input || !memResults) return;
-	const q = (input.value || "").trim().toLowerCase();
-	memResults.dataset.userSearched = "1";
-	if (!q) {
-		memResults.innerHTML = '<div class="memory-item"><h4>Consulta vacía</h4><p>Escribe un término para buscar en sesiones y mensajes.</p></div>';
-		return;
-	}
-
-	const matches = [];
-	for (const s of state.sessions) {
-		const title = (s.title || "").toLowerCase();
-		const preview = (s.lastPreview || "").toLowerCase();
-		if (title.includes(q) || preview.includes(q)) {
-			matches.push({
-				title: s.title || "Sesión",
-				preview: s.lastPreview || "Sin preview",
-				time: new Date(s.updatedAt).toLocaleString(),
-			});
-		}
-		if (matches.length >= 8) break;
-	}
-	memResults.innerHTML = matches.length
-		? matches.map((m) => `
-			<div class="memory-item">
-				<h4>${m.title}</h4>
-				<p>${m.preview}</p>
-				<p style="margin-top:0.3rem;color:var(--text-dim);font-size:0.68rem;">Coincidencia · ${m.time}</p>
-			</div>
-		`).join("")
-		: '<div class="memory-item"><h4>Sin resultados</h4><p>No encontré coincidencias con esa búsqueda.</p></div>';
-}
-
-// ===== REMINDERS =====
-async function loadReminders() {
-	try {
-		const d = await api("/api/reminders");
-		const tbody = document.getElementById("reminders-table-body");
-		if (!tbody) return;
-		if (!d.reminders || d.reminders.length === 0) {
-			tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-dim)">Sin recordatorios</td></tr>';
-			return;
-		}
-		tbody.innerHTML = d.reminders.map(r => `
-			<tr>
-				<td>${r.completed ? '<span class="status-pill success">✓</span>' : '<span class="status-pill warning">○</span>'}</td>
-				<td>${r.title}</td>
-				<td>${r.datetime}</td>
-				<td>${r.repeat}</td>
-				<td>
-					${!r.completed ? `<button class="btn btn-secondary" style="padding:0.2rem 0.5rem;font-size:0.68rem" onclick="completeReminder('${r.id}')">✓</button>` : ""}
-					<button class="btn btn-danger" style="padding:0.2rem 0.5rem;font-size:0.68rem" onclick="deleteReminder('${r.id}')">×</button>
-				</td>
-			</tr>
-		`).join("");
-	} catch { addLog("Error cargando recordatorios", "error"); }
-}
-
-window.completeReminder = async function(id) {
-	try {
-		await api("/api/reminders/" + id, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "complete" }) });
-		loadReminders();
-		addLog("Recordatorio completado");
-	} catch {}
-};
-
-window.deleteReminder = async function(id) {
-	try {
-		await api("/api/reminders/" + id, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "delete" }) });
-		loadReminders();
-		addLog("Recordatorio eliminado");
-	} catch {}
-};
-
-document.getElementById("rem-create-btn")?.addEventListener("click", async () => {
-	const title = document.getElementById("rem-title").value.trim();
-	const datetime = document.getElementById("rem-datetime").value;
-	const repeat = document.getElementById("rem-repeat").value;
-	const desc = document.getElementById("rem-desc").value.trim();
-	if (!title || !datetime) return;
-	try {
-		await api("/api/reminders", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title, datetime, repeat, description: desc })
-		});
-		document.getElementById("rem-title").value = "";
-		document.getElementById("rem-datetime").value = "";
-		document.getElementById("rem-desc").value = "";
-		loadReminders();
-		addLog("Recordatorio creado");
-	} catch (e) { showError(e.message); }
-});
-
-// ===== PROFILE =====
-async function loadProfile() {
-	try {
-		const d = await api("/api/user-profile");
-		document.getElementById("profile-name").value = d.userName || "";
-		document.getElementById("profile-lang").value = d.language || "";
-		document.getElementById("profile-about").value = d.about || "";
-		document.getElementById("profile-extra").value = d.extra || "";
-	} catch {}
-}
-
-document.getElementById("profile-save-btn")?.addEventListener("click", async () => {
-	const payload = {
-		userName: (document.getElementById("profile-name").value || "").trim() || undefined,
-		language: (document.getElementById("profile-lang").value || "").trim() || undefined,
-		about: (document.getElementById("profile-about").value || "").trim() || undefined,
-		extra: (document.getElementById("profile-extra").value || "").trim() || undefined,
-	};
-	try {
-		await api("/api/user-profile", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-		addLog("Perfil guardado");
-	} catch (e) { showError(e.message); }
-});
-
-// ===== GATEWAY WEBSOCKET =====
-function connectGateway() {
-	if (state.ws) { state.ws.close(); state.ws = null; }
-	const proto = location.protocol === "https:" ? "wss:" : "ws:";
-	const ws = new WebSocket(`${proto}//${location.host}/ws`);
-	state.ws = ws;
-
-	ws.onopen = () => {
-		state.wsConnected = true;
-		updateGatewayUI(true);
-		addLog("Gateway conectado", "success");
-	};
-	ws.onclose = () => {
-		state.wsConnected = false;
-		updateGatewayUI(false);
-		addLog("Gateway desconectado", "warning");
-		setTimeout(connectGateway, 3000);
-	};
-	ws.onerror = () => ws.close();
-	ws.onmessage = (e) => {
-		try {
-			const d = JSON.parse(e.data);
-			addLog(`WS: ${JSON.stringify(d).slice(0, 60)}...`);
-		} catch {}
-	};
-}
-
-function updateGatewayUI(connected) {
-	const dot = document.getElementById("hc-gateway-dot");
-	const navDot = document.getElementById("nav-gateway-dot");
-	const pill = document.getElementById("gw-status-pill");
-	const pillDot = document.getElementById("gw-status-dot");
-	const pillText = document.getElementById("gw-status-text");
-	const dashGw = document.getElementById("dash-gateway");
-
-	const cls = connected ? "green" : "red";
-	if (dot) dot.className = "hc-dot " + cls;
-	if (navDot) navDot.className = "nav-dot " + (connected ? "" : "error");
-	if (dashGw) dashGw.textContent = connected ? "ON" : "OFF";
-	if (pill) pill.className = "status-pill " + (connected ? "success" : "error");
-	if (pillDot) pillDot.textContent = connected ? "●" : "○";
-	if (pillText) pillText.textContent = connected ? "Conectado" : "Desconectado";
-}
-
-// ===== INIT =====
-async function init() {
-	loadEnabledTools();
-	await loadState();
-	await loadHealth();
-
-	// Load or create session
-	await loadSessions();
-	renderSessionList();
-	if (state.sessions.length === 0) {
-		await createSession();
-	} else {
-		state.activeSessionId = state.sessions[0].id;
-		try {
-			const d = await api("/api/chat-sessions/" + encodeURIComponent(state.activeSessionId));
-			state.messages = d.session.messages.map(m => ({ role: m.role, content: m.content }));
-		} catch {}
-	}
-
-	renderMessages();
-	document.getElementById("sidebar-session-id").textContent = state.activeSessionId ? state.activeSessionId.slice(0, 8) + "..." : "—";
-
-	document.getElementById("session-search")?.addEventListener("input", (e) => {
-		state.sessionFilter = e.target.value || "";
-		renderSessionList();
-	});
-
-	const toolsSearch = document.getElementById("tools-search");
-	toolsSearch?.addEventListener("input", (e) => {
-		state.toolsFilterText = e.target.value || "";
-		renderToolsTable();
-	});
-	const toolsCat = document.getElementById("tools-category-filter");
-	if (toolsCat) {
-		const categories = ["all", ...new Set(TOOLS.map((t) => t.cat))];
-		toolsCat.innerHTML = categories.map((c) => `<option value="${c}">${c === "all" ? "Todas las categorías" : c}</option>`).join("");
-		toolsCat.addEventListener("change", (e) => {
-			state.toolsCategory = e.target.value || "all";
-			renderToolsTable();
-		});
-	}
-	document.getElementById("tools-enable-all-btn")?.addEventListener("click", () => setAllToolsEnabled(true));
-	document.getElementById("tools-disable-all-btn")?.addEventListener("click", () => setAllToolsEnabled(false));
-
-	document.getElementById("mem-search-btn")?.addEventListener("click", runMemorySearch);
-	document.getElementById("mem-refresh-btn")?.addEventListener("click", () => {
-		const memResults = document.getElementById("mem-results");
-		if (memResults) delete memResults.dataset.userSearched;
-		loadMemoryInsights();
-	});
-	document.getElementById("mem-search-input")?.addEventListener("keydown", (e) => {
-		if (e.key === "Enter") runMemorySearch();
-	});
-
-	connectGateway();
-	initLlmConfigCard();
-
-	setInterval(loadHealth, 15000);
-	setInterval(loadState, 15000);
-
-	addLog("Sistema iniciado");
-}
-
-// ===== CONFIG DEL MODELO =====
-async function initLlmConfigCard() {
-	const sel = document.getElementById("cfg-provider");
-	const model = document.getElementById("cfg-model");
-	const baseUrl = document.getElementById("cfg-baseurl");
-	const apiKey = document.getElementById("cfg-apikey");
-	const badge = document.getElementById("cfg-provider-badge");
-	const saveBtn = document.getElementById("cfg-save-btn");
-	const testBtn = document.getElementById("cfg-test-btn");
-	if (!sel || !model || !baseUrl || !apiKey) return;
-
-	let providers = [];
-	const applyPreset = (p, keepValues) => {
-		const preset = providers.find((x) => x.value === p);
-		if (!preset) return;
-		model.placeholder = preset.model;
-		baseUrl.placeholder = preset.baseUrl;
-		apiKey.placeholder = preset.needsApiKey ? "API key (obligatoria)" : "No necesaria";
-		if (!keepValues) { model.value = preset.model; baseUrl.value = preset.baseUrl; }
-	};
-	try {
-		const d = await api("/api/llm-config");
-		providers = d.providers || [];
-		sel.innerHTML = providers.map((p) => `<option value="${p.value}">${p.label}</option>`).join("");
-		sel.value = d.provider;
-		model.value = d.model;
-		baseUrl.value = d.baseUrl;
-		applyPreset(d.provider, true);
-		if (d.hasApiKey) apiKey.placeholder = "•••• guardada (vacío = mantener)";
-		if (badge) badge.textContent = d.provider;
-	} catch (e) {
-		addLog("No se pudo cargar la config del modelo: " + e.message, "error");
-		return;
-	}
-	sel.addEventListener("change", () => applyPreset(sel.value, false));
-	saveBtn?.addEventListener("click", async () => {
-		try {
-			await api("/api/llm-config", {
-				method: "PUT",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ provider: sel.value, model: model.value, baseUrl: baseUrl.value, apiKey: apiKey.value }),
-			});
-			apiKey.value = "";
-			if (badge) badge.textContent = sel.value;
-			addLog("Modelo guardado: " + model.value);
-			loadState();
-		} catch (e) {
-			alert("Error al guardar: " + e.message);
-		}
-	});
-	testBtn?.addEventListener("click", async () => {
-		testBtn.disabled = true;
-		const label = testBtn.textContent;
-		testBtn.textContent = "Probando...";
-		try {
-			const r = await api("/api/llm-test", { method: "POST" });
-			alert(r.ok ? `✓ El modelo responde (${(r.ms / 1000).toFixed(1)}s): ${r.reply}` : "✗ " + r.error);
-		} catch (e) {
-			alert("✗ " + e.message);
-		} finally {
-			testBtn.disabled = false;
-			testBtn.textContent = label;
-		}
-	});
-}
-
-// ===== WHATSAPP =====
-const whatsappBtn = document.getElementById("whatsapp-btn");
-let waModal = null;
-
-function showWhatsAppModal(data) {
-	if (!waModal) {
-		waModal = document.createElement("div");
-		waModal.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.8);display:flex;align-items:center;justify-content:center;z-index:9999;";
-		waModal.innerHTML = `
-			<div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:1.5rem;max-width:400px;width:90%;text-align:center;">
-				<h3 style="margin:0 0 1rem;color:var(--text-primary)">WhatsApp</h3>
-				<div id="wa-modal-content"></div>
-				<button id="wa-modal-close" style="margin-top:1rem;padding:0.5rem 1rem;background:var(--accent);color:#fff;border:none;border-radius:var(--radius-sm);cursor:pointer;">Cerrar</button>
-			</div>`;
-		waModal.querySelector("#wa-modal-close").addEventListener("click", () => waModal?.remove());
-		document.body.appendChild(waModal);
-	}
-	
-	const content = data.whatsapp;
-	const state = content?.state || "unknown";
-	let html = `<div style="margin-bottom:1rem;color:var(--text-secondary)">Estado: <strong>${state}</strong></div>`;
-	
-	if (content?.qrDataUrl) {
-		html += `<img src="${content.qrDataUrl}" style="max-width:250px;border-radius:var(--radius-sm);margin:1rem 0;">`;
-		html += `<p style="color:var(--text-muted);font-size:0.8rem">Escanea este QR desde WhatsApp → Dispositivos vinculados</p>`;
-	} else if (state === "ready") {
-		html += `<p style="color:var(--success)">✅ WhatsApp conectado y funcionando</p>`;
-	} else {
-		html += `<p style="color:var(--text-muted)">${content?.lastError || "Esperando..."}</p>`;
-		html += `<button id="wa-connect-btn" style="margin-top:0.5rem;padding:0.5rem 1rem;background:var(--accent);color:#fff;border:none;border-radius:var(--radius-sm);cursor:pointer;">Conectar WhatsApp</button>`;
-	}
-	
-	waModal.querySelector("#wa-modal-content").innerHTML = html;
-	
-	const connectBtn = waModal.querySelector("#wa-connect-btn");
-	if (connectBtn) {
-		connectBtn.addEventListener("click", async () => {
-			connectBtn.textContent = "Conectando...";
-			connectBtn.disabled = true;
-			await api("/api/chat", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ messages: [{ role: "user", content: "configurar whatsapp" }] })
-			});
-			setTimeout(async () => {
-				const stateData = await api("/api/state");
-				showWhatsAppModal(stateData);
-			}, 3000);
-		});
-	}
-}
-
-whatsappBtn.addEventListener("click", async () => {
-	try {
-		const d = await api("/api/state");
-		console.log("WhatsApp state:", d.whatsapp);
-		showWhatsAppModal(d);
-	} catch (e) {
-		console.error("Error getting WhatsApp state:", e);
-		alert("Error: " + e.message);
-	}
-});
-
-init().catch(console.error);
-</script>
-</body>
+		</dialog>
+
+		<div class="drop-overlay" id="drop-overlay"><span data-icon="paperclip"></span>Suelta aquí para adjuntar</div>
+		<div class="toasts" id="toasts" aria-live="assertive"></div>
+		<input type="file" id="file-input" multiple hidden accept="image/*,.txt,.md,.csv,.json,.log,.xml,.yml,.yaml,.ini,.js,.ts,.py,.html,.css,.java,.c,.cpp,.cs,.go,.rs,.php,.rb,.sh,.ps1,.sql" />
+	</body>
 </html>

@@ -1,4 +1,5 @@
-export type ToolExecutor = (args: Record<string, unknown>) => Promise<{ ok: boolean; content: string }>;
+/** `image`: ruta de una imagen generada por la tool (p. ej. una captura de pantalla). */
+export type ToolExecutor = (args: Record<string, unknown>) => Promise<{ ok: boolean; content: string; image?: string }>;
 
 const executors: Map<string, ToolExecutor> = new Map();
 

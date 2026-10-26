@@ -1,11 +1,6 @@
 import { getConfig } from "../../config/config.js";
 import { resolveLLMSettings } from "../llm/providers.js";
 
-export interface EmbeddingResult {
-	embedding: number[];
-	model: string;
-}
-
 export interface EmbeddingsProvider {
 	embed(text: string): Promise<number[]>;
 	getModel(): string;

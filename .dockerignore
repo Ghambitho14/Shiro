@@ -8,8 +8,4 @@ data
 *.md
 .env
 .env.*
-openclaw-main
-CONCEPTOS.md
-AGENTS.MD
-AGENDS.md
 CLAUDE.md

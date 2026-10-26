@@ -1,11 +1,34 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { DATA_DIR } from "./config/config.js";
+import { obsidianRoot } from "./storage/obsidian.js";
+import { currentStorage, type StorageSettings } from "./storage/storage.js";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = join(__dirname, "..", "data");
-export const WORKSPACE_DIR = join(DATA_DIR, "workspace");
-const MEMORY_DIR = join(WORKSPACE_DIR, "memory");
+/** Workspace en este equipo. Las habilidades propias (skills/) viven siempre aquí. */
+export const LOCAL_WORKSPACE_DIR = join(DATA_DIR, "workspace");
+
+/** Carpeta de las notas de memoria (SOUL.md, MEMORY.md, memory/) y de write_file para unos ajustes. */
+export function workspaceDirFor(s: StorageSettings): string {
+	return s.kind === "obsidian" && s.obsidianVault ? obsidianRoot(s.obsidianVault) : LOCAL_WORKSPACE_DIR;
+}
+
+let warnedMissingVault = "";
+
+/**
+ * Workspace activo: con Obsidian, la carpeta "Shiro" de la bóveda. Si la bóveda no está
+ * (disco desconectado…), se usa el de este equipo y se avisa una vez en el registro.
+ */
+export function getWorkspaceDir(): string {
+	const s = currentStorage();
+	if (s.kind === "obsidian" && s.obsidianVault) {
+		if (existsSync(s.obsidianVault)) return obsidianRoot(s.obsidianVault);
+		if (warnedMissingVault !== s.obsidianVault) {
+			console.error(`[Obsidian] No encuentro la bóveda ${s.obsidianVault}: uso las notas de este equipo hasta que vuelva.`);
+			warnedMissingVault = s.obsidianVault;
+		}
+	}
+	return LOCAL_WORKSPACE_DIR;
+}
 
 const SOUL_TEMPLATE = `# SOUL.md — Quién eres
 
@@ -73,15 +96,44 @@ function writeIfMissing(filePath: string, content: string): void {
 	writeFileSync(filePath, content, "utf-8");
 }
 
+const MEMORY_TEMPLATE = "# MEMORY.md — Memoria a largo plazo\n\nHechos, decisiones y contexto que quieres recordar.\n";
+
+/** Notas del workspace que van en el system prompt y se editan en Ajustes → Personalización. */
+export const EDITABLE_NOTES = {
+	soul: { file: "SOUL.md", template: SOUL_TEMPLATE },
+	tools: { file: "TOOLS.md", template: TOOLS_TEMPLATE },
+	memory: { file: "MEMORY.md", template: MEMORY_TEMPLATE },
+} as const;
+
+export type EditableNote = keyof typeof EDITABLE_NOTES;
+
+/** Contenido de una nota editable (se crea con el texto por defecto si falta). */
+export function readNote(note: EditableNote): string {
+	ensureWorkspace();
+	try {
+		return readFileSync(join(getWorkspaceDir(), EDITABLE_NOTES[note].file), "utf-8");
+	} catch {
+		return EDITABLE_NOTES[note].template;
+	}
+}
+
+/** Guarda una nota editable; sin contenido, vuelve al texto por defecto. */
+export function writeNote(note: EditableNote, content?: string): string {
+	ensureWorkspace();
+	const value = content?.trim() ? content.replace(/\r\n/g, "\n").trimEnd() + "\n" : EDITABLE_NOTES[note].template;
+	writeFileSync(join(getWorkspaceDir(), EDITABLE_NOTES[note].file), value, "utf-8");
+	return value;
+}
+
 /** Crea el workspace y archivos por defecto si no existen. */
 export function ensureWorkspace(): void {
-	ensureDir(WORKSPACE_DIR);
-	ensureDir(MEMORY_DIR);
-	writeIfMissing(join(WORKSPACE_DIR, "SOUL.md"), SOUL_TEMPLATE);
-	writeIfMissing(join(WORKSPACE_DIR, "HEARTBEAT.md"), HEARTBEAT_TEMPLATE);
-	writeIfMissing(join(WORKSPACE_DIR, "MEMORY.md"), "# MEMORY.md — Memoria a largo plazo\n\nHechos, decisiones y contexto que quieres recordar.\n");
-	writeIfMissing(join(WORKSPACE_DIR, "TOOLS.md"), TOOLS_TEMPLATE);
-	ensureDir(join(WORKSPACE_DIR, "skills"));
+	const dir = getWorkspaceDir();
+	ensureDir(join(dir, "memory"));
+	writeIfMissing(join(dir, "SOUL.md"), SOUL_TEMPLATE);
+	writeIfMissing(join(dir, "HEARTBEAT.md"), HEARTBEAT_TEMPLATE);
+	writeIfMissing(join(dir, "MEMORY.md"), MEMORY_TEMPLATE);
+	writeIfMissing(join(dir, "TOOLS.md"), TOOLS_TEMPLATE);
+	ensureDir(join(LOCAL_WORKSPACE_DIR, "skills"));
 }
 
 function readFileSafe(filePath: string): string | null {
@@ -96,12 +148,12 @@ function readFileSafe(filePath: string): string | null {
 /** Contenido de SOUL.md (persona, límites, tono). */
 export function readSoul(): string | null {
 	ensureWorkspace();
-	return readFileSafe(join(WORKSPACE_DIR, "SOUL.md"));
+	return readFileSafe(join(getWorkspaceDir(), "SOUL.md"));
 }
 
 /** Contenido de MEMORY.md (memoria a largo plazo). */
 export function readMemoryLongTerm(): string | null {
-	return readFileSafe(join(WORKSPACE_DIR, "MEMORY.md"));
+	return readFileSafe(join(getWorkspaceDir(), "MEMORY.md"));
 }
 
 /** Fecha en YYYY-MM-DD (local). */
@@ -121,7 +173,7 @@ export function readMemoryRecent(maxCharsPerFile = 4000): string {
 	})();
 	let out = "";
 	for (const date of [today, yesterday]) {
-		const content = readFileSafe(join(MEMORY_DIR, `${date}.md`));
+		const content = readFileSafe(join(getWorkspaceDir(), "memory", `${date}.md`));
 		if (content) {
 			const slice = content.length > maxCharsPerFile ? content.slice(0, maxCharsPerFile) + "\n…" : content;
 			out += `## memory/${date}.md\n${slice}\n\n`;
@@ -131,14 +183,10 @@ export function readMemoryRecent(maxCharsPerFile = 4000): string {
 }
 
 /** Contenido de HEARTBEAT.md (checklist para tareas periódicas). */
-export function readHeartbeat(): string | null {
-	return readFileSafe(join(WORKSPACE_DIR, "HEARTBEAT.md"));
-}
-
 /** Contenido de TOOLS.md (heurísticas de uso de herramientas). */
 export function readToolsGuide(): string | null {
 	ensureWorkspace();
-	return readFileSafe(join(WORKSPACE_DIR, "TOOLS.md"));
+	return readFileSafe(join(getWorkspaceDir(), "TOOLS.md"));
 }
 
 /** Construye el bloque de contexto (soul + memory) para inyectar en el system prompt. */

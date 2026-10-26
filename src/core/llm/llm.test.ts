@@ -61,7 +61,7 @@ type Handler = (path: string, body: Record<string, unknown>) => { status?: numbe
 let server: Server;
 let baseUrl = "";
 let handler: Handler = () => ({ json: {} });
-const requests: { path: string; body: Record<string, unknown> }[] = [];
+const requests: { path: string; body: Record<string, unknown>; headers: Record<string, unknown> }[] = [];
 
 before(async () => {
 	server = createServer((req, res) => {
@@ -69,7 +69,7 @@ before(async () => {
 		req.on("data", (c) => (raw += c));
 		req.on("end", () => {
 			const body = raw ? JSON.parse(raw) : {};
-			requests.push({ path: req.url ?? "", body });
+			requests.push({ path: req.url ?? "", body, headers: req.headers });
 			const r = handler(req.url ?? "", body);
 			res.writeHead(r.status ?? 200, { "Content-Type": "application/json" });
 			if (r.ndjson) res.end(r.ndjson.map((l) => JSON.stringify(l)).join("\n") + "\n");
@@ -183,4 +183,44 @@ test("Errores de conexión dan un mensaje claro", async () => {
 		() => ok(false, "debió fallar"),
 		(err: Error) => ok(err.message.includes("No se pudo conectar"), err.message),
 	);
+});
+
+test("OpenCode: envía x-opencode-session estable por chat, sin revelar el id", async () => {
+	requests.length = 0;
+	handler = () => ({ json: { choices: [{ message: { content: "ok" } }] } });
+	const client = createLLMClient(settings("openai", { provider: "opencode-go", apiKey: "k", local: false }));
+	await client.chat([{ role: "user", content: "a" }], { sessionId: "chat-1" });
+	await client.chat([{ role: "user", content: "b" }], { sessionId: "chat-1" });
+	await client.chat([{ role: "user", content: "c" }], { sessionId: "chat-2" });
+	await client.chat([{ role: "user", content: "d" }]);
+	const ids = requests.map((r) => String(r.headers["x-opencode-session"] ?? ""));
+	ok(ids.every((id) => /^shiro-[0-9a-f]{32}$/.test(id)), ids.join(", "));
+	strictEqual(ids[0], ids[1]);
+	ok(ids[0] !== ids[2] && ids[2] !== ids[3]);
+	ok(!ids[0].includes("chat-1"));
+});
+
+test("Otros proveedores no envían x-opencode-session", async () => {
+	requests.length = 0;
+	handler = () => ({ json: { choices: [{ message: { content: "ok" } }] } });
+	await createLLMClient(settings("openai")).chat([{ role: "user", content: "a" }], { sessionId: "chat-1" });
+	strictEqual(requests[0].headers["x-opencode-session"], undefined);
+});
+
+test("Ajustes del modelo: pensar y largo máximo llegan en el formato de cada servidor", async () => {
+	requests.length = 0;
+	handler = (path) => (path.includes("/api/chat") ? { json: { message: { content: "ok" }, done: true } } : { json: { choices: [{ message: { content: "ok" } }] } });
+	await createLLMClient(settings("openai", { thinking: "off", maxTokens: 300 })).chat([{ role: "user", content: "a" }]);
+	await createLLMClient(settings("ollama", { thinking: "off", maxTokens: 300 })).chat([{ role: "user", content: "a" }]);
+	await createLLMClient(settings("openai")).chat([{ role: "user", content: "a" }]);
+	await createLLMClient(settings("openai", { thinking: "off", local: false, provider: "openrouter", apiKey: "k" })).chat([{ role: "user", content: "a" }]);
+	const [openai, ollama, plain, cloud] = requests.map((r) => r.body);
+	deepStrictEqual(openai.chat_template_kwargs, { enable_thinking: false });
+	strictEqual(openai.max_tokens, 300);
+	strictEqual(ollama.think, false);
+	strictEqual((ollama.options as Record<string, unknown>).num_predict, 300);
+	// Sin ajustes no se manda nada nuevo, y a la nube no se le pide "pensar".
+	strictEqual(plain.chat_template_kwargs, undefined);
+	strictEqual(plain.max_tokens, undefined);
+	strictEqual(cloud.chat_template_kwargs, undefined);
 });
