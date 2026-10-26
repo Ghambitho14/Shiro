@@ -23,8 +23,10 @@ export type AppSettings = {
 	model: string;
 	/** Vacío = el nombre que tenga Shiro en el PC. */
 	assistantName: string;
+	/** Tema: el del teléfono o uno fijo (botón de luna, como en la web). */
+	theme: "system" | "light" | "dark";
 };
 
-export const DEFAULT_SETTINGS: AppSettings = { supabaseUrl: "", supabaseKey: "", ollamaKey: "", model: "gpt-oss:120b", assistantName: "" };
+export const DEFAULT_SETTINGS: AppSettings = { supabaseUrl: "", supabaseKey: "", ollamaKey: "", model: "gpt-oss:120b", assistantName: "", theme: "system" };
 
 export type FetchFn = typeof fetch;

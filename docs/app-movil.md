@@ -20,6 +20,13 @@
 4. Abre la app y rellena: la dirección y la clave secreta de Supabase (las mismas del PC), tu API key de
    Ollama Cloud y el modelo («Ver modelos» enseña la lista). «Probar y empezar» comprueba todo.
 
+## Cómo se ve
+
+Igual que Shiro de escritorio en una pantalla estrecha:
+- Barra de arriba: botón de la barra lateral, el nombre con el modelo (tócalo para cambiar de modelo de Ollama Cloud), luna/sol para el tema y nuevo chat.
+- Barra lateral, que se desliza desde la izquierda: «Nuevo chat», «Buscar chats», los chats agrupados por fecha (Hoy, Ayer…) y abajo tu nombre con Ajustes.
+- Portada «¿En qué puedo ayudarte?» con la capibara y sugerencias. Los mensajes, los pasos («1 acción») y el cuadro de texto son como en la web.
+
 ## Cómo funciona
 
 - **Chats:** los del PC salen en la lista y los del móvil salen en el PC (misma tabla `shiro_chats`).
@@ -56,6 +63,6 @@ npm test           # pruebas de la lógica (Supabase y Ollama falsos)
 - `mobile/src/core/`: la lógica sin pantallas, probada con `node:test`:
   `supabase.ts` (chats, recuerdos y notas con el mismo formato que el PC), `ollama.ts` (Ollama Cloud: chat por
   líneas JSON, modelos, búsqueda web), `prompt.ts` (el system prompt con tus notas), `agent.ts` (herramientas y bucle).
-- `mobile/src/screens/`: Ajustes, lista de chats y chat. `expo/fetch` deja leer la respuesta mientras llega.
+- `mobile/src/screens/`: `MainScreen.tsx` (barra de arriba, portada, mensajes y cuadro de texto) y `SettingsScreen.tsx`; las piezas en `mobile/src/ui/` (`Sidebar`, `Message`, `Composer`, `Markdown`, `Icon`). Colores en `src/theme.ts`, copiados de `public/css/app.css`. `expo/fetch` deja leer la respuesta mientras llega.
 - En el PC: `src/storage/notesSync.ts` (notas ↔ `shiro_notes`) y el proveedor `ollama-cloud` en `src/core/llm/providers.ts`.
 - `.github/workflows/android-apk.yml`: `npm ci`, tipos, pruebas, `expo prebuild` y `gradlew assembleRelease` (solo arm64).

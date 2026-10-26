@@ -1,31 +1,46 @@
 import type { ReactNode } from "react";
 import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from "react-native";
-import type { Theme } from "../theme";
+import { radius, type Theme } from "../theme";
+import Svg, { Circle, Defs, LinearGradient, Stop } from "react-native-svg";
+import { Icon, type IconName } from "./Icon";
 
-export function Header({ theme, title, left, right }: { theme: Theme; title: string; left?: ReactNode; right?: ReactNode }) {
+/** Botón de icono de la web (.icon-btn: 36 px, color --text-2). */
+export function IconButton({
+	theme,
+	icon,
+	onPress,
+	label,
+	size = 20,
+	color,
+}: {
+	theme: Theme;
+	icon: IconName;
+	onPress: () => void;
+	label: string;
+	size?: number;
+	color?: string;
+}) {
 	return (
-		<View style={[styles.header, { borderColor: theme.border, backgroundColor: theme.bg }]}>
-			<View style={styles.side}>{left}</View>
-			<Text numberOfLines={1} style={[styles.title, { color: theme.text }]}>{title}</Text>
-			<View style={[styles.side, { alignItems: "flex-end" }]}>{right}</View>
-		</View>
-	);
-}
-
-export function IconButton({ theme, label, onPress, accessibilityLabel }: { theme: Theme; label: string; onPress: () => void; accessibilityLabel: string }) {
-	return (
-		<Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={accessibilityLabel} hitSlop={8} style={({ pressed }) => [styles.icon, pressed && { backgroundColor: theme.soft }]}>
-			<Text style={{ color: theme.text, fontSize: 22 }}>{label}</Text>
+		<Pressable
+			onPress={onPress}
+			accessibilityRole="button"
+			accessibilityLabel={label}
+			hitSlop={6}
+			style={({ pressed }) => [styles.icon, pressed && { backgroundColor: theme.hover }]}
+		>
+			<Icon name={icon} size={size} color={color ?? theme.text2} />
 		</Pressable>
 	);
 }
 
+/** Botón de la web (.btn): negro (o blanco en oscuro) o con borde. */
 export function Button({
 	theme,
 	title,
 	onPress,
 	busy,
 	kind = "primary",
+	icon,
 	style,
 }: {
 	theme: Theme;
@@ -33,6 +48,7 @@ export function Button({
 	onPress: () => void;
 	busy?: boolean;
 	kind?: "primary" | "secondary" | "danger";
+	icon?: IconName;
 	style?: StyleProp<ViewStyle>;
 }) {
 	const bg = kind === "primary" ? theme.btn : "transparent";
@@ -41,11 +57,51 @@ export function Button({
 		<Pressable
 			onPress={busy ? undefined : onPress}
 			accessibilityRole="button"
-			style={({ pressed }) => [styles.button, { backgroundColor: bg, borderColor: kind === "primary" ? bg : theme.border, opacity: pressed || busy ? 0.7 : 1 }, style]}
+			style={({ pressed }) => [
+				styles.button,
+				{ backgroundColor: pressed && kind !== "primary" ? theme.hover : bg, borderColor: kind === "primary" ? bg : theme.border, opacity: busy ? 0.7 : 1 },
+				style,
+			]}
 		>
-			{busy ? <ActivityIndicator color={fg} /> : <Text style={{ color: fg, fontWeight: "600", fontSize: 15 }}>{title}</Text>}
+			{busy ? (
+				<ActivityIndicator color={fg} />
+			) : (
+				<View style={styles.buttonRow}>
+					{icon ? <Icon name={icon} size={16} color={fg} /> : null}
+					<Text style={{ color: fg, fontWeight: "500", fontSize: 14 }}>{title}</Text>
+				</View>
+			)}
 		</Pressable>
 	);
+}
+
+/** Iniciales sobre el degradado morado de la web (.avatar-initials). */
+export function Initials({ name, size = 32 }: { name: string; size?: number }) {
+	const letters =
+		name
+			.trim()
+			.split(/\s+/)
+			.slice(0, 2)
+			.map((w) => w[0]?.toUpperCase() ?? "")
+			.join("") || "?";
+	return (
+		<View style={[styles.initials, { width: size, height: size, borderRadius: size / 2 }]}>
+			<Svg width={size} height={size} style={StyleSheet.absoluteFill}>
+				<Defs>
+					<LinearGradient id="ini" x1="0" y1="0" x2="1" y2="1">
+						<Stop offset="0" stopColor="#8b7dff" />
+						<Stop offset="1" stopColor="#c084fc" />
+					</LinearGradient>
+				</Defs>
+				<Circle cx={size / 2} cy={size / 2} r={size / 2} fill="url(#ini)" />
+			</Svg>
+			<Text style={{ color: "#fff", fontWeight: "600", fontSize: 13 }}>{letters}</Text>
+		</View>
+	);
+}
+
+export function Row({ children, style }: { children: ReactNode; style?: StyleProp<ViewStyle> }) {
+	return <View style={[{ flexDirection: "row", alignItems: "center" }, style]}>{children}</View>;
 }
 
 /** Pregunta Sí/No (en el navegador, Alert de React Native no hace nada: se usa confirm). */
@@ -60,9 +116,8 @@ export function confirm(title: string, message: string, ok: string): Promise<boo
 }
 
 const styles = StyleSheet.create({
-	header: { height: 52, flexDirection: "row", alignItems: "center", paddingHorizontal: 8, borderBottomWidth: StyleSheet.hairlineWidth },
-	side: { width: 88, flexDirection: "row", gap: 4 },
-	title: { flex: 1, textAlign: "center", fontSize: 17, fontWeight: "600" },
-	icon: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
-	button: { height: 46, borderRadius: 23, borderWidth: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 20 },
+	icon: { width: 40, height: 40, borderRadius: radius.sm, alignItems: "center", justifyContent: "center" },
+	button: { minHeight: 40, borderRadius: radius.sm + 2, borderWidth: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 16 },
+	buttonRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+	initials: { alignItems: "center", justifyContent: "center", overflow: "hidden" },
 });

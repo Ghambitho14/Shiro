@@ -1,74 +1,98 @@
-import { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, BackHandler, View } from "react-native";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, BackHandler, useColorScheme, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
-import { assistantNameFrom } from "./src/core/prompt";
+import { assistantNameFrom, profileBlock } from "./src/core/prompt";
 import { getNotes } from "./src/core/supabase";
-import type { AppSettings, ChatMeta } from "./src/core/types";
-import { ChatScreen } from "./src/screens/ChatScreen";
-import { ChatsScreen } from "./src/screens/ChatsScreen";
+import type { AppSettings } from "./src/core/types";
+import { MainScreen } from "./src/screens/MainScreen";
 import { SettingsScreen } from "./src/screens/SettingsScreen";
-import { isConfigured, loadSettings } from "./src/settings";
-import { useTheme } from "./src/theme";
-
-type Screen = { name: "chats" } | { name: "chat"; chat: ChatMeta | null } | { name: "settings" };
+import { isConfigured, loadSettings, saveSettings } from "./src/settings";
+import { themeFor } from "./src/theme";
 
 export default function App() {
-	const theme = useTheme();
+	const system = useColorScheme();
 	const [settings, setSettings] = useState<AppSettings | null>(null);
-	const [screen, setScreen] = useState<Screen>({ name: "chats" });
-	const [name, setName] = useState("Shiro");
+	const [showSettings, setShowSettings] = useState(false);
+	const [names, setNames] = useState({ assistant: "Shiro", user: "" });
+	const back = useRef<(() => boolean) | null>(null);
+	const theme = themeFor(settings?.theme ?? "system", system);
 
 	useEffect(() => {
 		void loadSettings().then(setSettings);
 	}, []);
 
-	const sb = useMemo(() => (settings ? { url: settings.supabaseUrl, key: settings.supabaseKey } : null), [settings]);
+	const sb = useMemo(() => (settings ? { url: settings.supabaseUrl, key: settings.supabaseKey } : null), [settings?.supabaseUrl, settings?.supabaseKey]);
 
-	// El nombre del asistente: el de Ajustes o el que tiene Shiro en el PC.
+	// Nombres del asistente y del usuario: los de Shiro en el PC (notas de Supabase).
 	useEffect(() => {
 		if (!sb || !settings || !isConfigured(settings)) return;
 		getNotes(sb)
-			.then((notes) => setName(assistantNameFrom(notes, settings.assistantName)))
-			.catch(() => setName(settings.assistantName || "Shiro"));
-	}, [sb, settings]);
+			.then((notes) => setNames({ assistant: assistantNameFrom(notes, settings.assistantName), user: profileBlock(notes["Sobre mí.md"]).userName }))
+			.catch(() => setNames((n) => ({ ...n, assistant: settings.assistantName || n.assistant })));
+	}, [sb, settings?.assistantName]);
 
-	// Botón «atrás» de Android: vuelve a la lista en vez de cerrar la app.
+	const changeSettings = useCallback(
+		(patch: Partial<AppSettings>) => {
+			if (!settings) return;
+			const next = { ...settings, ...patch };
+			setSettings(next);
+			void saveSettings(next);
+		},
+		[settings],
+	);
+
+	const registerBack = useCallback((fn: (() => boolean) | null) => {
+		back.current = fn;
+	}, []);
+
+	// Botón «atrás» de Android: cierra la barra lateral o vuelve de Ajustes antes de salir de la app.
 	useEffect(() => {
 		const sub = BackHandler.addEventListener("hardwareBackPress", () => {
-			if (screen.name === "chats" || !settings || !isConfigured(settings)) return false;
-			setScreen({ name: "chats" });
-			return true;
+			if (showSettings && settings && isConfigured(settings)) {
+				setShowSettings(false);
+				return true;
+			}
+			return back.current?.() ?? false;
 		});
 		return () => sub.remove();
-	}, [screen, settings]);
+	}, [showSettings, settings]);
 
 	let body;
-	if (!settings) body = <ActivityIndicator style={{ marginTop: 80 }} color={theme.muted} />;
-	else if (!isConfigured(settings) || screen.name === "settings") {
+	if (!settings) body = <ActivityIndicator style={{ marginTop: 80 }} color={theme.text3} />;
+	else if (!isConfigured(settings) || showSettings) {
 		const firstRun = !isConfigured(settings);
 		body = (
 			<SettingsScreen
 				theme={theme}
 				initial={settings}
 				firstRun={firstRun}
-				onBack={firstRun ? undefined : () => setScreen({ name: "chats" })}
+				onBack={firstRun ? undefined : () => setShowSettings(false)}
 				onSaved={(s) => {
 					setSettings(s);
-					setScreen({ name: "chats" });
+					setShowSettings(false);
 				}}
 			/>
 		);
-	} else if (screen.name === "chat" && sb) {
-		body = <ChatScreen theme={theme} sb={sb} settings={settings} chat={screen.chat} onBack={() => setScreen({ name: "chats" })} />;
 	} else if (sb) {
-		body = <ChatsScreen theme={theme} sb={sb} title={name} onOpen={(chat) => setScreen({ name: "chat", chat })} onSettings={() => setScreen({ name: "settings" })} />;
+		body = (
+			<MainScreen
+				theme={theme}
+				sb={sb}
+				settings={settings}
+				assistantName={names.assistant}
+				userName={names.user}
+				onSettings={() => setShowSettings(true)}
+				onChangeSettings={changeSettings}
+				registerBack={registerBack}
+			/>
+		);
 	}
 
 	return (
 		<SafeAreaProvider>
 			<SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }} edges={["top", "bottom", "left", "right"]}>
-				<StatusBar style="auto" />
+				<StatusBar style={theme.dark ? "light" : "dark"} />
 				<View style={{ flex: 1 }}>{body}</View>
 			</SafeAreaView>
 		</SafeAreaProvider>
