@@ -59,7 +59,7 @@ function findShell(): Shell {
 }
 
 /** Entorno para la terminal sin las claves de Shiro (API keys, tokens): el modelo puede leer la terminal. */
-function cleanEnv(): NodeJS.ProcessEnv {
+export function cleanEnv(): NodeJS.ProcessEnv {
 	const env: NodeJS.ProcessEnv = {};
 	for (const [k, v] of Object.entries(process.env)) {
 		if (/KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL/i.test(k) || k.startsWith("SHIRO_")) continue;
@@ -103,6 +103,8 @@ class TerminalSession {
 	private seq = 0;
 	private listeners = new Set<(e: TermEvent) => void>();
 	private waiters = new Map<number, () => void>();
+	/** Cómo detener lo que se muestra con external() (Claude Code), por bloque. */
+	private externalStops = new Map<number, () => void>();
 	cwd = homedir();
 
 	constructor() {
@@ -232,8 +234,8 @@ class TerminalSession {
 		}
 	}
 
-	private addBlock(by: TermBlock["by"], command: string, running: boolean): TermBlock {
-		const block: TermBlock = { id: ++this.seq, by, command, cwd: this.cwd, chunks: [], running };
+	private addBlock(by: TermBlock["by"], command: string, running: boolean, cwd = this.cwd): TermBlock {
+		const block: TermBlock = { id: ++this.seq, by, command, cwd, chunks: [], running };
 		this.blocks.push(block);
 		while (this.blocks.length > MAX_BLOCKS) {
 			const idx = this.blocks.findIndex((b) => !b.running);
@@ -256,6 +258,33 @@ class TerminalSession {
 		this.emit({ type: "end", id: block.id, exitCode, cwd: this.cwd });
 		this.waiters.get(block.id)?.();
 		this.waiters.delete(block.id);
+	}
+
+	/**
+	 * Un bloque para mostrar lo que hace otro programa (Claude Code) sin pasar por la PowerShell:
+	 * se escribe con write() y se cierra con end().
+	 */
+	external(title: string, cwd: string, onStop?: () => void): { write: (text: string, err?: boolean) => void; end: (exitCode: number | null) => void } {
+		const block = this.addBlock("shiro", title, true, cwd);
+		if (onStop) this.externalStops.set(block.id, onStop);
+		return {
+			write: (raw, err = false) => {
+				const text = normalizeNewlines(stripAnsi(raw));
+				if (!text || !block.running) return;
+				const last = block.chunks[block.chunks.length - 1];
+				if (last && last.err === err) last.text += text;
+				else block.chunks.push({ text, err });
+				this.trimBlock(block);
+				this.emit({ type: "out", id: block.id, text, err });
+			},
+			end: (exitCode) => {
+				this.externalStops.delete(block.id);
+				if (!block.running) return;
+				block.running = false;
+				block.exitCode = exitCode;
+				this.emit({ type: "end", id: block.id, exitCode, cwd: this.cwd });
+			},
+		};
 	}
 
 	/** Ejecuta un comando a la vista (se encola si hay otro en marcha). */
@@ -293,8 +322,13 @@ class TerminalSession {
 
 	/** Detiene lo que se esté ejecutando: cierra la terminal (la carpeta actual se conserva). */
 	stop(): boolean {
+		// Lo que se muestra con external() (Claude Code) también se detiene.
+		const externals = [...this.externalStops.values()];
+		this.externalStops.clear();
+		for (const fn of externals) fn();
 		const proc = this.proc;
-		if (!proc) return false;
+		// Si solo se paraba Claude Code, la PowerShell sigue como estaba.
+		if (!proc || (externals.length && !this.queue.length)) return externals.length > 0;
 		const busy = this.queue.length > 0;
 		this.proc = null;
 		this.flushPending();

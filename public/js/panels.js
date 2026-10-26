@@ -457,7 +457,8 @@ export function initPanels({ toast }) {
 		show,
 		/** Eventos de herramientas del chat: abre el panel que Shiro está usando y lo indica. */
 		onTool(evt) {
-			const name = evt.name === "browser" || evt.name === "terminal" ? evt.name : null;
+			// Claude Code enseña su progreso en el panel Terminal.
+			const name = evt.name === "browser" || evt.name === "terminal" ? evt.name : evt.name === "claude_code" ? "terminal" : null;
 			if (!name) return;
 			if (evt.phase === "start") {
 				show(name, true);

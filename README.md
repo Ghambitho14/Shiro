@@ -197,7 +197,7 @@ Notion, bases de datos…). En **Ajustes → Conectores MCP**:
 | `npm run dev` | Solo el servidor web (en el navegador). Se reinicia solo cuando cambia el código |
 | `npm run wa` | Puente de WhatsApp |
 | `npm run doctor` | Diagnóstico del modelo (`-- --fix` aplica lo recomendado) |
-| `npm run mcp` | Shiro como servidor MCP (para OpenCode, Claude Code, Cursor...) |
+| `npm run mcp` | Shiro como servidor MCP (para OpenCode, Claude Code, Cursor...): en Claude Code, `claude mcp add shiro -- node <ruta>/bin/shiro-mcp.mjs` |
 | `npm run ayuda` | Lista de comandos |
 | `npm test` / `npm run check` | Pruebas / revisión de tipos |
 
@@ -216,6 +216,19 @@ Notion, bases de datos…). En **Ajustes → Conectores MCP**:
 | `/herramientas on\|off` | Activar o desactivar las herramientas |
 | `/explica off\|breve\|on` | Que diga qué herramientas usó |
 | `/<habilidad> texto` | Responder usando esa habilidad |
+
+## Claude Code (con tu suscripción de Claude)
+
+En un **Proyecto** con la carpeta de tu código vinculada, Shiro puede encargarle tareas de
+programación a [Claude Code](https://docs.claude.com/claude-code): «pídele a Claude Code que arregle
+el error del login». Usa tu plan de Claude (Pro incluye Claude Code), no la API.
+
+1. Instala Claude Code y entra una vez: `claude` → `/login`.
+2. Vincula la carpeta del código a un proyecto de Shiro y habla en un chat de ese proyecto.
+
+Pide permiso antes de cada encargo, enseña su progreso en el panel Terminal (el botón de parar lo
+detiene), puede cambiar archivos de esa carpeta y solo ejecuta los comandos que hayas permitido en
+Claude Code. `npm run doctor` dice si lo encuentra. Más en `docs/claude-code.md`.
 
 ## Usar Shiro con OpenCode
 

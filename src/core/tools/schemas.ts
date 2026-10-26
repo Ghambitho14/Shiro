@@ -183,6 +183,13 @@ export const terminalSchema = z
 	})
 	.refine((a) => a.action !== "run" || Boolean(a.command), { message: "indica 'command' con el comando a ejecutar" });
 
+export const claudeCodeSchema = z.object({
+	task: z.string().trim().min(1, "indica la tarea (task)").max(20000, "tarea demasiado larga"),
+	folder: z.string().trim().max(1000).optional(),
+	continue: optionalBool,
+	timeout_minutes: optionalNumber(1, 60),
+});
+
 export const projectSchema = z
 	.object({
 		action: z.enum(["list", "read", "search", "write"]).default("list"),
@@ -235,6 +242,7 @@ export const toolSchemas: Record<string, z.ZodType<Record<string, unknown>>> = {
 	pc_power: pcPowerSchema,
 	browser: browserSchema,
 	terminal: terminalSchema,
+	claude_code: claudeCodeSchema,
 	use_skill: useSkillSchema,
 	project: projectSchema,
 };

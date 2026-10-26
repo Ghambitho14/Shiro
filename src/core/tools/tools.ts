@@ -26,6 +26,7 @@ import {
 import { executeUseSkill } from "./modules/skills.js";
 import { executeBrowser, executeTerminal } from "./modules/workbench.js";
 import { executeProject } from "./modules/project.js";
+import { executeClaudeCode } from "./modules/claudeCode.js";
 import { isWithinRoot } from "./paths.js";
 import { splitCommandLine } from "../mcp/mcpConfig.js";
 import { isPotentiallyDangerousCommand } from "../sanitizeResponse.js";
@@ -50,6 +51,7 @@ registerToolExecutor("calculator", executeCalculator);
 registerToolExecutor("get_time", executeGetTime);
 registerToolExecutor("use_skill", executeUseSkill);
 registerToolExecutor("project", executeProject);
+registerToolExecutor("claude_code", executeClaudeCode);
 
 /** Raíz de read_file/write_file/list_dir: data/workspace, o la carpeta "Shiro" de la bóveda con Obsidian. */
 export function getWorkspaceDir(): string {
