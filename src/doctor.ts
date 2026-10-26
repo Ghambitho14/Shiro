@@ -8,6 +8,7 @@ import { listProviderModels } from "./core/llm/modelList.js";
 import { sendTurn } from "./core/llm/transports.js";
 import { LLMError, type ToolDef } from "./core/llm/LLMClient.js";
 import { parseTextToolCalls, buildTextToolInstructions } from "./core/llm/textTools.js";
+import { findClaudeCode } from "./core/claudeCode/claudeCode.js";
 
 const ok = (m: string) => console.log(`  ✓ ${m}`);
 const bad = (m: string) => console.log(`  ✗ ${m}`);
@@ -126,6 +127,11 @@ export async function runDoctor(opts: { fix?: boolean } = {}): Promise<boolean> 
 	if (s.local && s.dialect !== "ollama" && !preset.managed) {
 		info("Recuerda: el tamaño de contexto se configura en el propio servidor (LM Studio / llama.cpp). Usa 8192 o más.");
 	}
+
+	// Claude Code (opcional): Aku le pasa tareas de programación en los proyectos.
+	const claude = findClaudeCode();
+	if (claude) ok(`Claude Code encontrado (${claude.label}). Si no has entrado: claude → /login`);
+	else info("Claude Code no está instalado (opcional: para que Aku le pase tareas de programación en tus proyectos).");
 	console.log("");
 	return true;
 }

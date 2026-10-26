@@ -21,6 +21,7 @@ import { runWithApprover, type Approver } from "../tools/approval.js";
 import { mcpManager } from "../mcp/McpManager.js";
 import { getEnabledSkills, getSkillInstructions } from "../skills/SkillLoader.js";
 import { getProject, inlineProjectText, projectIndex, runWithProject } from "../projects/projects.js";
+import { claudeCodeLauncher } from "../claudeCode/claudeCode.js";
 
 export type UserProfileForAgent = {
 	userName?: string;
@@ -152,6 +153,11 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 		if (effectiveTools && !effectiveTools.includes("project")) effectiveTools = [...effectiveTools, "project"];
 	} else if ((effectiveTools ?? getAllToolNames()).includes("project")) {
 		effectiveTools = (effectiveTools ?? getAllToolNames()).filter((t) => t !== "project");
+	}
+	// Claude Code solo en un proyecto con carpeta vinculada y si está instalado en este equipo.
+	const canUseClaudeCode = Boolean(project?.folders.length) && claudeCodeLauncher() !== null;
+	if (!canUseClaudeCode && (effectiveTools ?? getAllToolNames()).includes("claude_code")) {
+		effectiveTools = (effectiveTools ?? getAllToolNames()).filter((t) => t !== "claude_code");
 	}
 	// Una lista vacía significa "ninguna tool": se responde solo con texto.
 	const textOnly = opts.textOnly === true || (effectiveTools !== undefined && effectiveTools.length === 0);

@@ -584,6 +584,28 @@ export const TOOLS: ToolDefinition[] = [
 		],
 	},
 
+	{
+		label: "Claude Code",
+		name: "claude_code",
+		description:
+			"Encarga una tarea de programación a Claude Code (el programa de Anthropic, con la suscripción del usuario) en una carpeta del proyecto: lee el código, lo cambia y responde qué hizo. Úsalo para arreglar errores, añadir funciones, refactorizar o explicar código grande. task: la tarea completa y concreta (qué, dónde y cómo comprobarlo), escrita para otro programador. folder: carpeta del proyecto (si hay una sola, no hace falta). continue: true para seguir la última conversación de Claude Code en esa carpeta. Tarda minutos y pide permiso al usuario.",
+		category: "pc",
+		parameters: {
+			type: "object",
+			properties: {
+				task: { type: "string", description: "La tarea para Claude Code, completa y concreta" },
+				folder: { type: "string", description: "Carpeta del proyecto (opcional si solo hay una)" },
+				continue: { type: "boolean", description: "Seguir la conversación anterior de Claude Code en esa carpeta" },
+				timeout_minutes: { type: "number", description: "Minutos máximos (por defecto 20, máximo 60)" },
+			},
+			required: ["task"],
+		},
+		examples: [
+			'"que Claude Code arregle el error del login" → claude_code({task: "Arregla el error al iniciar sesión: ... Comprueba con npm test."})',
+			'"sigue con lo de antes" → claude_code({task: "Sigue con la tarea anterior", continue: true})',
+		],
+	},
+
 	// ============ PROYECTOS ============
 	{
 		label: "Archivos del proyecto",
@@ -637,6 +659,7 @@ export const LITE_TOOLS = [
 	"browser",
 	"terminal",
 	"project",
+	"claude_code",
 ];
 
 /** Herramientas que controlan el PC (se pueden desactivar todas con `pcControl: false`). */
@@ -768,6 +791,8 @@ export function describeToolUse(name: string, args: Record<string, unknown> = {}
 			};
 			return labels[String(a.action)] ?? "Usando el navegador";
 		}
+		case "claude_code":
+			return `Claude Code está trabajando${a.continue === true ? " (sigue)" : ""}: ${short(a.task)}`;
 		case "terminal":
 			return a.action === "run" ? `Ejecutando en la terminal: ${short(a.command)}` : a.action === "stop" ? "Deteniendo la terminal" : "Mirando la terminal";
 		default: {

@@ -76,6 +76,11 @@ export function describeRiskyAction(tool: string, args: Record<string, unknown>)
 			const project = currentProject();
 			return `Escribir el archivo ${str(args.path)}${project ? ` en el proyecto «${project.name}»` : ""} (${str(args.content).length} caracteres)`;
 		}
+		case "claude_code": {
+			// Siempre se pregunta: Claude Code puede cambiar archivos y usa la suscripción del usuario.
+			const where = str(args.folder).trim() || currentProject()?.name || "la carpeta del proyecto";
+			return `Pedir a Claude Code (tu suscripción) que trabaje en ${where}${args.continue === true ? ", siguiendo lo anterior" : ""}: "${str(args.task).trim().slice(0, 500)}"`;
+		}
 		case "terminal":
 			return args.action === "run" ? describeCommand("Ejecutar en la terminal", str(args.command).trim()) : null;
 		case "browser": {
