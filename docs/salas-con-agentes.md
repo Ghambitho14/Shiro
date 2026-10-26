@@ -2,7 +2,7 @@
 
 - **Fecha:** 26-10-2026
 - **Rama:** `claude/upbeat-faraday-rz1fcm`
-- **Estado de las pruebas:** `npm run check` pasa y `npm test` da **168/168**.
+- **Estado de las pruebas:** `npm run check` pasa y `npm test` da **166/166**.
 
 Una «sala» es un chat donde hablan varios agentes (por ejemplo Viernes y Lunes), cada uno
 con su nombre, color, voz y modelo. Uno es el **principal** (★): responde cuando no nombras a nadie.
@@ -27,10 +27,10 @@ Antes de tocar nada, lee `AGENTS.md` (mapa del código y reglas).
 | Solo un modelo local cargado a la vez (descarga los otros en Ollama/LM Studio) | `src/core/llm/modelGate.ts` (`acquireModel`) | Pruebas unitarias + servidor HTTP falso |
 | Forma de ser del agente y bloque «## Sala» en el system prompt | `src/core/agent/ContextBuilder.ts`, `src/core/agent/Agent.ts` | Pruebas unitarias |
 | API de agentes y salas (`/api/agents*`, `/api/rooms*`) | `src/agentsApi.ts` | Sin probar |
-| Servidor: órdenes de sala, eventos SSE `room` y `agent`, un turno a la vez, borrar la sala al borrar el chat | `src/server.ts` | Sin probar |
-| Voz de cada agente (`voice` en `/api/voice/speak`) | `src/server.ts`, `public/js/voice.js` | Sin probar |
+| Servidor: órdenes de sala, eventos SSE `room` y `agent`, un turno a la vez, borrar la sala al borrar el chat | `src/chatApi.ts` | Sin probar |
+| Voz de cada agente (`voice` en `/api/voice/speak`) | `src/voiceApi.ts`, `public/js/voice.js` | Sin probar |
 | Comando `/agentes` | `src/commands.ts` | Sin probar en uso real |
-| Web: Ajustes → Agentes; barra de la sala con nombre, color y participantes | `public/js/agents.js`, `public/js/app.js` | Sin probar |
+| Web: Ajustes → Agentes; barra de la sala con nombre, color y participantes | `public/js/agents.js`, `public/js/rooms.js` | Sin probar |
 | Ajustes de la palabra de activación (`wakeWordEnabled`, `wakeWord`, `wakeSensitivity`, `wakeLanguage`) | `src/config/config.ts` | Solo existen; **todavía no hacen nada** |
 
 ### Lo que hizo el agente anterior (4 commits)
@@ -126,7 +126,7 @@ Depende del informe de la sesión de pruebas: medir si el reconocedor de voz de 
 | `src/core/wake/wakeGrammar.ts` | Puro y con pruebas: frases a partir de la palabra y los nombres de los agentes; umbral según la sensibilidad |
 | `src/core/wake/wakeHelperSource.ts` | C# compilado una sola vez a `data/cache/wake-<hash>.dll` (igual que `src/core/pc/nativeHelper.ts`) |
 | `src/core/wake/wakeListener.ts` | PowerShell de larga duración. Datos por `$env:SHIRO_A_*`, **nunca dentro del script**. Estados: apagado / escuchando / en pausa / no disponible / error (con motivo en español). Se reinicia si se cae. 2 s entre detecciones |
-| `src/appEvents.ts` (nuevo) | `GET /api/events` por SSE. `/api/events` y `/api/wake*` ya están en `isSensitivePath()` de `src/server.ts` (comprobado) |
+| `src/appEvents.ts` (nuevo) | `GET /api/events` por SSE. Toda la API ya pide la contraseña (`isSensitivePath()` de `src/server.ts`); la ruta va en su propio `handleXApi` |
 
 **Al detectar la palabra:**
 
@@ -138,8 +138,8 @@ Depende del informe de la sesión de pruebas: medir si el reconocedor de voz de 
 
 **En la web:**
 
-- `route()` de `public/js/app.js` debe entender `#/voz/<id>` (hoy no lo hace).
-- Saludar con la voz del agente: `voice_.open({ greet, agent })` (ya existe en `app.js`).
+- `route()` de `public/js/sidebar.js` debe entender `#/voz/<id>` (hoy no lo hace).
+- Saludar con la voz del agente: `voice.open({ greet, agent })` (ya existe en `voiceMode.js`).
 - Pausar la escucha mientras el modo voz está abierto y reanudarla al cerrarlo
   (reanudar sola a los 2 minutos).
 - Ajustes → Voz: interruptor «Escucha siempre la palabra «Aku» sin conexión; nada sale del equipo
@@ -152,7 +152,7 @@ y un modelo pequeño en español con sha256 fijo. **Preguntar al usuario antes d
 ### 2.4 ~~Pruebas que escribían en el `data/` real~~ (arreglado)
 
 `npm test` carga `src/test-setup.ts`, que da a cada archivo de prueba una carpeta temporal si no eligió
-la suya, y `DecisionLogger.ts` ya no crea su carpeta al importarse. Ninguna prueba toca el `data/` real.
+la suya, y el registro de decisiones (`DecisionLogger.ts`) ya no existe. Ninguna prueba toca el `data/` real.
 
 ---
 
