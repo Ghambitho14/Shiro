@@ -15,6 +15,9 @@ import { setLogLevel } from "./core/logger.js";
 import type { Approver } from "./core/tools/approval.js";
 import { mcpManager } from "./core/mcp/McpManager.js";
 import { matchSkillCommand, parseCommand, plainText } from "./commands.js";
+import type { ChatMessage } from "./chat/ChatStore.js";
+import { pruneRoom, type RoomState } from "./core/rooms/roomStore.js";
+import { currentAgents, planRoomTurn, prepareAgentTurn, publicRoom, type AgentTurn } from "./core/rooms/roomTurn.js";
 
 const C = {
 	reset: "\x1b[0m",
@@ -28,8 +31,24 @@ const C = {
 /** Comandos que solo existen en la terminal; el resto son los mismos que en la web (commands.ts). */
 const TERMINAL_HELP = `
   /doctor   Comprueba que el modelo funciona
+  /sala     Quién está en la sala y quién es el principal
   /salir    Cierra el chat
 `;
+
+/** Id de la sala de la terminal: vive solo en memoria (no se guarda en data/rooms). */
+const TERMINAL_ROOM = "terminal";
+
+function roomText(room: RoomState | null): string {
+	const agents = currentAgents();
+	const info = publicRoom(room, agents);
+	if (!info?.participants.length) {
+		if (!agents.length) return "No hay sala. Todavía no hay agentes: créalos en Ajustes → Agentes.";
+		return `No hay sala. Para empezar una: «${getConfig().wakeWord}, activa ${agents[0].name}».`;
+	}
+	const names = info.participants.map((p) => (p.principal ? `${p.name} ★` : p.name)).join(", ");
+	const principal = info.participants.find((p) => p.principal)?.name ?? "";
+	return `En la sala: ${names}.\nPrincipal: ${principal} (responde si no nombras a otro).`;
+}
 
 export async function runChat(): Promise<void> {
 	// Los logs de info ensucian el chat; solo avisos y errores.
@@ -37,7 +56,10 @@ export async function runChat(): Promise<void> {
 	const name = getState().name;
 	const memory = new MemoryManager({ shortWindow: 50, summarizeEvery: 20 });
 	const workspaceContext = buildWorkspaceContext({ includeLongTermMemory: true }) || undefined;
-	const history: { role: "user" | "assistant"; content: string }[] = [];
+	const history: ChatMessage[] = [];
+	let room: RoomState | null = null;
+	// Quién responde ahora (el asistente o el agente de la sala), para el aviso de permiso.
+	let speaker = name;
 	const rl = createInterface({ input: stdin, output: stdout });
 
 	// Cola de líneas: no se pierde lo que el usuario escribe mientras Shiro responde.
@@ -61,7 +83,7 @@ export async function runChat(): Promise<void> {
 	};
 
 	const approver: Approver = async ({ summary }) => {
-		stdout.write(`\n${C.yellow}⚠ ${name} quiere: ${summary}${C.reset}\n`);
+		stdout.write(`\n${C.yellow}⚠ ${speaker} quiere: ${summary}${C.reset}\n`);
 		const answer = ((await ask(`${C.yellow}¿Permitir? (s/n) ${C.reset}`)) ?? "").trim().toLowerCase();
 		const approved = answer === "s" || answer === "si" || answer === "sí" || answer === "y" || answer === "yes";
 		stdout.write(approved ? `${C.green}✓ Permitido${C.reset}\n` : `${C.red}✗ Rechazado${C.reset}\n`);
@@ -95,7 +117,12 @@ export async function runChat(): Promise<void> {
 			}
 			if (["nuevo", "new", "limpiar", "clear", "reset"].includes(word)) {
 				history.length = 0;
+				room = null;
 				stdout.write(`${C.dim}Conversación olvidada. Empezamos de nuevo.${C.reset}\n\n`);
+				continue;
+			}
+			if (word === "sala" || word === "room") {
+				stdout.write(`${roomText(room)}\n\n`);
 				continue;
 			}
 			const result = parseCommand(text);
@@ -107,19 +134,57 @@ export async function runChat(): Promise<void> {
 		}
 
 		history.push({ role: "user", content: text });
-		stdout.write(`${C.cyan}${name} ›${C.reset} `);
-		let streamed = false;
 		const cfg = getConfig();
+		const textOnly = cfg.autonomousMode === false;
+
+		// Salas con varios agentes: órdenes ("activa Viernes", "agrega a Lunes"…) y quién responde.
+		const agents = currentAgents();
+		// Sin los agentes que se borraron mientras tanto.
+		if (room) room = pruneRoom(room, agents);
+		const plan = planRoomTurn(text, {
+			sessionId: TERMINAL_ROOM,
+			room,
+			agents,
+			assistantName: name,
+		});
+		if (plan?.changed) room = plan.room;
+		if (plan?.reply) {
+			// Orden de sala sin modelo: respuesta fija a nombre del agente (o del asistente).
+			const who = plan.reply.agent;
+			stdout.write(`${C.cyan}${who?.name ?? name} ›${C.reset} ${plan.reply.text}\n\n`);
+			history.push({ role: "assistant", content: plan.reply.text, ...(who ? { agent: who.id, agentName: who.name } : {}) });
+			continue;
+		}
+		const responder = plan?.responder;
+		let turn: AgentTurn | undefined;
+		if (responder && plan?.room) {
+			turn = prepareAgentTurn(responder, {
+				room: plan.room,
+				agents,
+				messages: history,
+				assistantName: name,
+				baseTools: textOnly ? [] : undefined,
+				autonomous: !textOnly,
+			});
+		}
+		speaker = turn?.agentName ?? name;
+
+		stdout.write(`${C.cyan}${speaker} ›${C.reset} `);
+		let streamed = false;
 		const response = await runAgent(
 			text,
 			{
-				llm: getLLM(),
+				llm: turn?.llm ?? getLLM(),
 				memory,
-				agentName: name,
-				textOnly: cfg.autonomousMode === false,
+				agentName: speaker,
+				textOnly,
 				explainMode: cfg.explainMode,
 				userProfile: getUserProfile(),
-				conversation: history.slice(-20),
+				conversation: turn?.conversation ?? history.slice(-20),
+				allowedTools: turn?.allowedTools,
+				mcp: turn?.mcp,
+				persona: turn?.persona,
+				room: turn?.room,
 				approver,
 				skill: matchSkillCommand(text)?.skill,
 				onStreamDelta: (chunk) => {
@@ -132,7 +197,7 @@ export async function runChat(): Promise<void> {
 		// Si no hubo streaming (o terminó en error), mostrar la respuesta completa.
 		if (!streamed || response.startsWith("⚠️")) stdout.write(streamed ? `\n${response}` : response);
 		stdout.write("\n\n");
-		history.push({ role: "assistant", content: response });
+		history.push({ role: "assistant", content: response, ...(responder ? { agent: responder.id, agentName: responder.name } : {}) });
 	}
 
 	rl.close();

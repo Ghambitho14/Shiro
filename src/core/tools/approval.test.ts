@@ -1,6 +1,17 @@
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { strictEqual, ok } from "node:assert";
-import { describeRiskyAction, requestApproval, runWithApprover } from "./approval.js";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+// Carpeta temporal y config controlada: el approvalMode o la lista "sin preguntar" del usuario no cuentan aquí.
+const TMP = mkdtempSync(join(tmpdir(), "shiro-approval-"));
+process.env.SHIRO_DATA_DIR = join(TMP, "data");
+after(() => rmSync(TMP, { recursive: true, force: true }));
+
+const { setConfig } = await import("../../config/config.js");
+const { describeRiskyAction, requestApproval, runWithApprover } = await import("./approval.js");
+setConfig({ approvalMode: "ask", execAllowlist: [] });
 
 test("acciones de solo lectura no piden aprobación", () => {
 	strictEqual(describeRiskyAction("read_file", { path: "a.txt" }), null);
