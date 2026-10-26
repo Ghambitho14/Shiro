@@ -5,7 +5,6 @@ import { getUserProfile } from "./user-profile.js";
 import { getConfig, DATA_DIR } from "./config/config.js";
 import { join } from "node:path";
 import { buildWorkspaceContext } from "./workspace.js";
-import { createSessionMemoryStore } from "./core/memory/SessionMemoryStore.js";
 import { runAgent } from "./core/agent/Agent.js";
 import { getLLM } from "./core/llm/getLLM.js";
 import { setHealthActive } from "./core/health/HealthManager.js";
@@ -21,7 +20,6 @@ const WA_ONLY_PRIVATE = process.env.WA_ONLY_PRIVATE !== "0";
 const DEFAULT_WIN_CHROME = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 const WA_CHROME_PATH = process.env.WA_CHROME_PATH?.trim() || (process.platform === "win32" ? DEFAULT_WIN_CHROME : undefined);
 
-const chatMemoryStore = createSessionMemoryStore();
 const LocalAuth = WhatsAppWebJs.LocalAuth;
 let client: Client | null = null;
 let starting = false;
@@ -145,20 +143,20 @@ async function processIncomingMessage(message: Message): Promise<void> {
 	// memoria ni historial, solo a herramientas públicas.
 	const publicTools = [...webTools, "get_time", "calculator"];
 	const effectiveAllowedTools = !autonomous ? webTools : WA_ALLOWED_CHAT ? undefined : publicTools;
-	const workspaceContext = buildWorkspaceContext({ includeLongTermMemory: true });
+	// Tu memoria (MEMORY.md, SOUL…) y «Sobre ti» solo van al chat permitido: un desconocido podría pedírsela.
+	const workspaceContext = WA_ALLOWED_CHAT ? buildWorkspaceContext({ includeLongTermMemory: true }) : "";
 	setHealthActive();
 	const response = await runAgent(
 		goal,
 		{
 			llm: getLLM(),
-			memory: chatMemoryStore.getMemory(message.from),
 			agentName: state.name,
 			tokenBudget: 8000,
 			textOnly: false,
 			allowedTools: effectiveAllowedTools,
 			explainMode: config.explainMode,
 			conversation: withUser,
-			userProfile: getUserProfile(),
+			userProfile: WA_ALLOWED_CHAT ? getUserProfile() : undefined,
 		},
 		workspaceContext || undefined,
 	);

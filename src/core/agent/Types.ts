@@ -31,21 +31,5 @@ export type ToolCallSpec = {
 	function: { name: string; arguments: string };
 };
 
-export type EventType = "plan" | "step_status" | "tool_call" | "observation" | "error" | "summary" | "decision";
-
-export type AgentEvent = {
-	type: EventType;
-	timestamp: string;
-	runId: string;
-	stepId?: string;
-	payload: Record<string, unknown>;
-};
-
 /** `image`: ruta en disco de una imagen producida por la tool (captura de pantalla…). */
 export type ToolResult = { ok: true; content: string; image?: string } | { ok: false; error: string };
-
-export type LongTermSummary = {
-	summary: string;
-	keyFacts: string[];
-	openTasks: string[];
-};

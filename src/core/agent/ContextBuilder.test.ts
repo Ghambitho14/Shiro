@@ -10,7 +10,6 @@ process.env.SHIRO_DATA_DIR = join(TMP, "data");
 after(() => rmSync(TMP, { recursive: true, force: true }));
 
 const { buildContext, buildRoomBlock } = await import("./ContextBuilder.js");
-const { MemoryManager } = await import("../memory/MemoryManager.js");
 const { getSoul } = await import("../soul/soul.js");
 
 /** Las instrucciones base llevan la hora: se calculan antes y después por si cambia el minuto. */
@@ -21,11 +20,9 @@ function withSoul(agentName: string, build: () => string): { out: string; souls:
 }
 
 test("buildContext respects token budget and includes soul", () => {
-	const memory = new MemoryManager();
 	const out = buildContext({
 		goal: "List files",
 		agentName: "TestAgent",
-		shortMemory: memory,
 		tokenBudget: 2000,
 	});
 	strictEqual(typeof out.system, "string");
@@ -37,24 +34,15 @@ test("buildContext respects token budget and includes soul", () => {
 	strictEqual(out.messages[0].content, "List files");
 });
 
-test("buildContext with long memory includes summary", () => {
-	const memory = new MemoryManager();
-	memory.setLongTerm({ summary: "Previous session summary.", keyFacts: [], openTasks: [] });
-	const out = buildContext({
-		goal: "Continue",
-		agentName: "A",
-		shortMemory: memory,
-		tokenBudget: 4000,
-	});
-	strictEqual(out.system.includes("Previous session summary"), true);
+test("el system prompt no repite la conversación (va aparte, como mensajes)", () => {
+	const { system } = buildContext({ goal: "Continue", agentName: "A", tokenBudget: 4000 });
+	strictEqual(/Eventos recientes|Memoria a largo plazo/.test(system), false);
 });
 
 test("buildContext no duplica el manifiesto de tools (van por la API)", () => {
-	const memory = new MemoryManager();
 	const out = buildContext({
 		goal: "List files",
 		agentName: "TestAgent",
-		shortMemory: memory,
 		tokenBudget: 2000,
 	});
 
@@ -62,8 +50,7 @@ test("buildContext no duplica el manifiesto de tools (van por la API)", () => {
 });
 
 test("buildContext añade las reglas de control del PC y del modo voz solo cuando tocan", () => {
-	const memory = new MemoryManager();
-	const base = { goal: "hola", agentName: "A", shortMemory: memory, tokenBudget: 4000 };
+	const base = { goal: "hola", agentName: "A", tokenBudget: 4000 };
 	const plain = buildContext(base).system;
 	strictEqual(plain.includes("## Control del PC"), false);
 	strictEqual(plain.includes("## Modo voz"), false);
@@ -79,12 +66,10 @@ test("buildContext añade las reglas de control del PC y del modo voz solo cuand
 });
 
 test("forma de ser «añadir»: las instrucciones base siguen y se suma «Tu papel»", () => {
-	const memory = new MemoryManager();
 	const { out, souls } = withSoul("Viernes", () =>
 		buildContext({
 			goal: "hola",
 			agentName: "Viernes",
-			shortMemory: memory,
 			tokenBudget: 8000,
 			persona: { prompt: "Eres {{nombre}}, la del calendario.", replace: false },
 		}).system,
@@ -94,11 +79,9 @@ test("forma de ser «añadir»: las instrucciones base siguen y se suma «Tu pap
 });
 
 test("forma de ser «reemplazar»: va en lugar de las instrucciones base", () => {
-	const memory = new MemoryManager();
 	const out = buildContext({
 		goal: "hola",
 		agentName: "Lunes",
-		shortMemory: memory,
 		tokenBudget: 8000,
 		persona: { prompt: "Eres {{nombre}} y solo hablas en rimas.", replace: true },
 	}).system;
@@ -107,7 +90,7 @@ test("forma de ser «reemplazar»: va en lugar de las instrucciones base", () =>
 	strictEqual(out.includes("## Tu papel"), false);
 	// Una forma de ser vacía no cambia nada.
 	const empty = withSoul("Lunes", () =>
-		buildContext({ goal: "hola", agentName: "Lunes", shortMemory: memory, tokenBudget: 8000, persona: { prompt: "  ", replace: true } }).system,
+		buildContext({ goal: "hola", agentName: "Lunes", tokenBudget: 8000, persona: { prompt: "  ", replace: true } }).system,
 	);
 	strictEqual(empty.souls.some((soul) => empty.out.startsWith(soul)), true);
 });
@@ -128,8 +111,7 @@ test("bloque «## Sala»: participantes, principal y mensajes omitidos", () => {
 	strictEqual(block.includes("Se omitieron"), false);
 	strictEqual(buildRoomBlock({ ...room, omitted: 12 }).includes("(Se omitieron 12 mensajes anteriores"), true);
 
-	const memory = new MemoryManager();
-	const base = { goal: "hola", agentName: "Lunes", shortMemory: memory, tokenBudget: 8000 };
+	const base = { goal: "hola", agentName: "Lunes", tokenBudget: 8000 };
 	strictEqual(buildContext(base).system.includes("## Sala"), false);
 	strictEqual(buildContext({ ...base, room }).system.includes(block), true);
 });

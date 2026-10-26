@@ -21,6 +21,11 @@ test("la web de Shiro no se abre en su propio navegador", () => {
 	ok(isShiroUrl(`http://localhost:${port}/`));
 	strictEqual(isShiroUrl("http://localhost:5173/"), false);
 	strictEqual(isShiroUrl("https://example.com/"), false);
+	// Otras formas de escribir «este equipo».
+	for (const host of ["127.1", "127.0.0.2", "0.0.0.0", "[::1]", "[::ffff:127.0.0.1]", "LOCALHOST", "x.localhost"]) {
+		ok(isShiroUrl(`http://${host}:${port}/api/chat-sessions`), host);
+	}
+	strictEqual(isShiroUrl(`http://192.168.1.10:${port}/`), false);
 	throws(() => normalizeUrl(`127.0.0.1:${port}/api/state`), /Shiro/);
 });
 

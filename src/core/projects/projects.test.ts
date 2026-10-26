@@ -15,7 +15,6 @@ const { extractText } = await import("./documents.js");
 const { executeTool } = await import("../tools/tools.js");
 const { describeRiskyAction } = await import("../tools/approval.js");
 const { buildContext } = await import("../agent/ContextBuilder.js");
-const { MemoryManager } = await import("../memory/MemoryManager.js");
 
 /** Texto de un resultado de tool, haya ido bien o mal. */
 const out = (r: { ok: true; content: string } | { ok: false; error: string }) => (r.ok ? r.content : r.error);
@@ -247,7 +246,6 @@ test("el system prompt incluye el proyecto con sus instrucciones", async () => {
 	const { system } = buildContext({
 		goal: "¿Qué hago el primer día?",
 		agentName: "Shiro",
-		shortMemory: new MemoryManager(),
 		tokenBudget: 8000,
 		project: { name: p.name, description: p.description, instructions: p.instructions, index: projects.projectIndex(p), inline, hasTool: true },
 	});

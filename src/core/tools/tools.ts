@@ -27,6 +27,7 @@ import { executeUseSkill } from "./modules/skills.js";
 import { executeBrowser, executeTerminal } from "./modules/workbench.js";
 import { executeProject } from "./modules/project.js";
 import { isWithinRoot } from "./paths.js";
+import { splitCommandLine } from "../mcp/mcpConfig.js";
 import { isPotentiallyDangerousCommand } from "../sanitizeResponse.js";
 
 // Registrar ejecutores
@@ -56,7 +57,8 @@ export function getWorkspaceDir(): string {
 }
 
 function getSystemRoot(): string {
-	const envRoot = process.env.PICLAW_SYSTEM_ROOT?.trim();
+	// PICLAW_SYSTEM_ROOT es el nombre viejo: se sigue aceptando.
+	const envRoot = (process.env.SHIRO_SYSTEM_ROOT || process.env.PICLAW_SYSTEM_ROOT)?.trim();
 	if (envRoot) return resolve(envRoot);
 	const home = process.env.USERPROFILE || process.env.HOME;
 	if (home) return resolve(home);
@@ -108,7 +110,13 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 	// Primero verificar si hay un ejecutor registrado para esta tool
 	if (hasToolExecutor(name)) {
 		const executor = getToolExecutor(name)!;
-		const result = await executor(validatedData ?? args);
+		let result: Awaited<ReturnType<typeof executor>>;
+		try {
+			result = await executor(validatedData ?? args);
+		} catch (err) {
+			// Un fallo inesperado se le cuenta al modelo como error de la tool, sin cortar la respuesta entera.
+			return { ok: false, error: err instanceof Error ? err.message : String(err) };
+		}
 		if (result.ok) {
 			return result.image ? { ok: true, content: result.content, image: result.image } : { ok: true, content: result.content };
 		}
@@ -533,42 +541,26 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 				return { ok: false, error: "Tarea no encontrada" };
 			}
 			case "git": {
-				const command = args_.command ? String(args_.command).trim() : "";
+				// «git status» o «status»: se quita el «git» del principio si el modelo lo escribe.
+				const command = args_.command ? String(args_.command).trim().replace(/^git\s+/i, "") : "";
 				const repoPath = args_.repoPath ? String(args_.repoPath).trim() : ".";
-				
 				if (!command) return { ok: false, error: "El comando git es requerido" };
-				
-				const { exec } = await import("node:child_process");
-				const { resolve } = await import("node:path");
-				
-				const workspace = getWorkspaceDir();
-				const cwd = resolve(workspace, repoPath);
-				
-				return new Promise((resolve) => {
-					exec("git " + command, { cwd, timeout: 30000 }, (error, stdout, stderr) => {
+
+				const { execFile } = await import("node:child_process");
+				const cwd = resolve(getWorkspaceDir(), repoPath);
+				if (!existsSync(cwd) || !statSync(cwd).isDirectory()) return { ok: false, error: `La carpeta ${repoPath} no existe.` };
+				// Sin intérprete de comandos: &, | o > llegan a git como texto y no encadenan otro programa.
+				const argv = splitCommandLine(command);
+				return new Promise((done) => {
+					execFile("git", argv, { cwd, timeout: 30000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) => {
 						if (error) {
-							resolve({ 
-								ok: false, 
-								error: `Git error: ${error.message}${stderr ? "\n" + stderr : ""}` 
-							});
+							const missing = (error as NodeJS.ErrnoException).code === "ENOENT";
+							done({ ok: false, error: missing ? "git no está instalado (o no está en el PATH)." : `Git error: ${error.message}${stderr ? "\n" + stderr : ""}` });
 							return;
 						}
-						resolve({ 
-							ok: true, 
-							content: stdout || "(sin salida)" + (stderr ? "\n⚠️ " + stderr : "") 
-						});
+						done({ ok: true, content: (stdout || "(sin salida)") + (stderr ? "\n⚠️ " + stderr : "") });
 					});
 				});
-			}
-			case "ask_user": {
-				const question = args_.question ? String(args_.question).trim() : "";
-				
-				if (!question) return { ok: false, error: "La pregunta es requerida" };
-				
-				return { 
-					ok: true, 
-					content: `🤔 PREGUNTA: ${question}\n\n(Responde a esta pregunta para que pueda ayudarte mejor)` 
-				};
 			}
 			default:
 				return { ok: false, error: "Herramienta desconocida: " + name };

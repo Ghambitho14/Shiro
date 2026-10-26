@@ -75,7 +75,8 @@ export async function migrateStorage(from: StorageSettings, to: StorageSettings)
 				if (mergeNote(entry, join(fromDir, entry), join(toDir, entry))) result.files++;
 				continue;
 			}
-			cpSync(join(fromDir, entry), join(toDir, entry), { recursive: true, force: true });
+			// Las notas de agentes que ya estén en el destino no se pisan.
+			cpSync(join(fromDir, entry), join(toDir, entry), { recursive: true, force: entry !== "Agentes", errorOnExist: false });
 			result.files++;
 		}
 	}

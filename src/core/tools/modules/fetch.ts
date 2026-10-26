@@ -1,11 +1,26 @@
+import { isShiroUrl } from "../../browser/pageModel.js";
+
+/**
+ * Así se presenta fetch_url. El servidor de Shiro rechaza su API con este agente: una página
+ * (o alguien por WhatsApp) no puede hacer que el modelo lea tus chats o claves de 127.0.0.1,
+ * ni siquiera con una redirección.
+ */
+export const FETCH_USER_AGENT = "Shiro/1.0 (AI agent)";
+
 export async function executeFetchUrl(args: Record<string, unknown>): Promise<{ ok: boolean; content: string }> {
 	const url = String(args.url ?? "").trim();
 	if (!url) return { ok: false, content: "URL requerida" };
 
-	const parsed = new URL(url);
+	let parsed: URL;
+	try {
+		parsed = new URL(url);
+	} catch {
+		return { ok: false, content: `URL inválida: ${url}` };
+	}
 	if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
 		return { ok: false, content: "Solo se permiten URLs http o https" };
 	}
+	if (isShiroUrl(parsed.href)) return { ok: false, content: "La web de Shiro no se lee con fetch_url." };
 
 	const FETCH_TIMEOUT_MS = 15000;
 	const FETCH_MAX_BYTES = 150 * 1024;
@@ -15,7 +30,7 @@ export async function executeFetchUrl(args: Record<string, unknown>): Promise<{ 
 	try {
 		const res = await fetch(url, {
 			signal: controller.signal,
-			headers: { "User-Agent": "Shiro/1.0 (AI agent)" },
+			headers: { "User-Agent": FETCH_USER_AGENT },
 			redirect: "follow",
 		});
 		clearTimeout(timeoutId);

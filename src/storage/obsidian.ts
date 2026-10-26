@@ -1,7 +1,8 @@
 /**
  * Obsidian como almacén: todo va a la carpeta "Shiro" de la bóveda, en notas Markdown. Es la memoria
  * del asistente: no lee ni busca fuera de esa carpeta.
- * - Shiro/            → SOUL.md, TOOLS.md, MEMORY.md y lo que escriba write_file
+ * - Shiro/            → SOUL.md, TOOLS.md, MEMORY.md, Instrucciones.md, Sobre mí.md y lo que escriba write_file
+ * - Shiro/Agentes/    → una nota por agente de las salas
  * - Shiro/Recuerdos/  → una nota por recuerdo (memory_add); las que escribas tú también cuentan
  * - Shiro/Chats/      → copia legible de cada chat (el chat en sí sigue en el índice de este equipo)
  * - Shiro/Recordatorios.md → lista de recordatorios (copia legible)
@@ -92,6 +93,48 @@ export function parseFrontmatter(text: string): { meta: Record<string, string>; 
 	return { meta, body: text.slice(m[0].length) };
 }
 
+/**
+ * Valor de una propiedad para el bloque ---: texto y listas entre comillas (como JSON, que también es
+ * YAML válido para Obsidian), números y sí/no tal cual.
+ */
+export function yamlValue(v: string | number | boolean | string[]): string {
+	return typeof v === "number" || typeof v === "boolean" ? String(v) : JSON.stringify(v);
+}
+
+/** Lee lo que escribió yamlValue, o lo que alguien escribió a mano en Obsidian (sin comillas, «a, b»…). */
+export function frontValue(raw: string | undefined): string | number | boolean | string[] | undefined {
+	const v = raw?.trim();
+	if (!v) return undefined;
+	if (v.startsWith('"') || v.startsWith("[")) {
+		try {
+			return JSON.parse(v) as string | string[];
+		} catch {
+			if (v.startsWith("[") && v.endsWith("]")) {
+				return v
+					.slice(1, -1)
+					.split(",")
+					.map((x) => x.trim().replace(/^["']|["']$/g, ""))
+					.filter(Boolean);
+			}
+		}
+	}
+	if (v.length >= 2 && v.startsWith("'") && v.endsWith("'")) return v.slice(1, -1).replace(/''/g, "'");
+	if (/^(true|sí|si|yes)$/i.test(v)) return true;
+	if (/^(false|no)$/i.test(v)) return false;
+	if (/^-?\d+(\.\d+)?$/.test(v)) return Number(v);
+	return v;
+}
+
+/** Título comparable: sin tildes, mayúsculas ni signos («¿Qué debería…?» = «que deberia…»). */
+export function normalizeHeading(text: string): string {
+	return text
+		.normalize("NFD")
+		.replace(/\p{Mn}/gu, "")
+		.toLowerCase()
+		.replace(/[^\p{L}\p{N}]+/gu, " ")
+		.trim();
+}
+
 // ───────────────────────────── chats ─────────────────────────────
 
 type NoteMessage = {
@@ -123,13 +166,20 @@ export function chatToMarkdown(chat: NoteChat, names: { user: string; assistant:
 		"",
 	];
 	for (const m of chat.messages) {
-		const who = m.role === "user" ? names.user : (m.agentName ?? names.assistant);
+		// En una sala, el nombre enlaza a la nota del agente (Agentes/Viernes.md).
+		const who = m.role === "user" ? names.user : m.agentName ? `[[Agentes/${safeFileName(m.agentName)}|${m.agentName}]]` : names.assistant;
 		lines.push(`**${who}**${m.ts ? ` · ${localDateTime(new Date(m.ts))}` : ""}`, "");
 		lines.push(messageText(m.content).trim(), "");
 		for (const t of m.tools ?? []) lines.push(`> 🔧 ${t.label}${t.ok ? "" : " (falló)"}`);
 		if (m.tools?.length) lines.push("");
 	}
 	return lines.join("\n");
+}
+
+/** ¿Ya hay nota para este chat? */
+export function hasChatNote(vault: string, id: string): boolean {
+	const dir = chatsDir(vault);
+	return existsSync(dir) && readdirSync(dir).some((f) => f.endsWith(chatTag(id)));
 }
 
 /** Borra la nota de un chat (se busca por el trozo de id del nombre, por si cambió el título). */

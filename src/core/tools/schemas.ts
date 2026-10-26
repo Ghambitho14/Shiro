@@ -67,10 +67,6 @@ export const gitSchema = z.object({
 	repoPath: z.string().optional().default("."),
 });
 
-export const askUserSchema = z.object({
-	question: z.string().min(1, "pregunta requerida"),
-});
-
 export const createReminderSchema = z.object({
 	title: z.string().min(1, "título requerido"),
 	datetime: z.string().min(1, "fecha y hora requerida"),
@@ -219,7 +215,6 @@ export const toolSchemas: Record<string, z.ZodType<Record<string, unknown>>> = {
 	cron_delete: cronDeleteSchema,
 	cron_toggle: cronToggleSchema,
 	git: gitSchema,
-	ask_user: askUserSchema,
 	create_reminder: createReminderSchema,
 	list_reminders: listRemindersSchema,
 	complete_reminder: completeReminderSchema,

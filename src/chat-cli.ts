@@ -9,7 +9,6 @@ import { getConfig } from "./config/config.js";
 import { buildWorkspaceContext } from "./workspace.js";
 import { getLLM } from "./core/llm/getLLM.js";
 import { PROVIDER_PRESETS } from "./core/llm/providers.js";
-import { MemoryManager } from "./core/memory/MemoryManager.js";
 import { runAgent } from "./core/agent/Agent.js";
 import { setLogLevel } from "./core/logger.js";
 import type { Approver } from "./core/tools/approval.js";
@@ -54,8 +53,6 @@ export async function runChat(): Promise<void> {
 	// Los logs de info ensucian el chat; solo avisos y errores.
 	setLogLevel("warn");
 	const name = getState().name;
-	const memory = new MemoryManager({ shortWindow: 50, summarizeEvery: 20 });
-	const workspaceContext = buildWorkspaceContext({ includeLongTermMemory: true }) || undefined;
 	const history: ChatMessage[] = [];
 	let room: RoomState | null = null;
 	// Quién responde ahora (el asistente o el agente de la sala), para el aviso de permiso.
@@ -175,7 +172,6 @@ export async function runChat(): Promise<void> {
 			text,
 			{
 				llm: turn?.llm ?? getLLM(),
-				memory,
 				agentName: speaker,
 				textOnly,
 				explainMode: cfg.explainMode,
@@ -192,7 +188,8 @@ export async function runChat(): Promise<void> {
 					stdout.write(chunk);
 				},
 			},
-			workspaceContext,
+			// Se relee en cada mensaje: lo que cambies en las notas (Obsidian) vale al momento.
+			buildWorkspaceContext({ includeLongTermMemory: true }) || undefined,
 		);
 		// Si no hubo streaming (o terminó en error), mostrar la respuesta completa.
 		if (!streamed || response.startsWith("⚠️")) stdout.write(streamed ? `\n${response}` : response);

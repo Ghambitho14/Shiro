@@ -1,5 +1,5 @@
 /**
- * API de Ajustes → Agentes (perfiles de data/agents.json) y de las salas (data/rooms/):
+ * API de Ajustes → Agentes (notas de Agentes/ en la memoria) y de las salas (data/rooms/):
  * los botones de la barra de participantes y "Abrir sala".
  * server.ts la llama antes de sus propias rutas; devuelve true si atendió la petición.
  */

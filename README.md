@@ -249,7 +249,9 @@ Para no escribir la ruta de `bin/shiro-mcp.mjs` a mano, cópiala de Ajustes → 
 - "Permitir siempre en este chat" solo existe para abrir cosas, teclado, ratón y
   portapapeles; se olvida al reiniciar Shiro. Comandos y apagar se preguntan siempre.
 - Por WhatsApp no se puede aprobar nada: esas acciones se bloquean. Sin
-  `WA_ALLOWED_CHAT`, Shiro solo usa herramientas públicas (web, hora, calculadora).
+  `WA_ALLOWED_CHAT`, Shiro solo usa herramientas públicas (web, hora, calculadora) y no
+  ve tu memoria ni «Sobre ti»: cualquiera que te escriba podría pedírsela.
+- Las herramientas del modelo (`fetch_url`, el navegador) no pueden leer la propia web de Shiro.
 - La web solo escucha en tu PC. Si la abres a la red (`BIND_HOST=0.0.0.0`) exige
   contraseña (`SHIRO_AUTH_TOKEN`, o se genera una y se muestra en la terminal).
 

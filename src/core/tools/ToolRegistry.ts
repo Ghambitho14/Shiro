@@ -386,31 +386,14 @@ export const TOOLS: ToolDefinition[] = [
 		parameters: {
 			type: "object",
 			properties: {
-				command: { type: "string", description: "Comando git (sin 'git', ej: 'status', 'add .', 'commit -m \"msg\"')" },
+				command: { type: "string", description: "Un solo comando git (sin 'git', ej: 'status', 'add .', 'commit -m \"msg\"'). Sin &&, | ni >: haz otra llamada para el siguiente" },
 				repoPath: { type: "string", description: "Ruta al repo (default: workspace)" },
 			},
 			required: ["command"],
 		},
 		examples: [
 			'"qué cambios hay" → git({command: "status"})',
-			'"guarda los cambios" → git({command: "add . && commit -m \"mejora\""})',
-		],
-	},
-	{
-		label: "Preguntar al Usuario",
-		name: "ask_user",
-		description: "Haz una pregunta al usuario para entender mejor qué necesita. Úsalo cuando no tengas claro el propósito de su solicitud. Retorna la respuesta del usuario.",
-		category: "utilidades",
-		parameters: {
-			type: "object",
-			properties: {
-				question: { type: "string", description: "La pregunta para el usuario" },
-			},
-			required: ["question"],
-		},
-		examples: [
-			'"no entiendo qué necesitas" → ask_user({question: "¿Para qué necesitas este archivo?"})',
-			'"necesito más contexto" → ask_user({question: "¿Qué esperas que haga este código?"})',
+			'"guarda los cambios" → git({command: "add ."}) y luego git({command: "commit -m \"mejora\""})',
 		],
 	},
 

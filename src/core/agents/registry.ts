@@ -1,17 +1,27 @@
 /**
- * Perfiles de agentes (data/agents.json): Viernes, Lunes… Cada uno con su nombre, su modelo,
- * su forma de ser, sus herramientas y su voz. Se juntan en salas (src/core/rooms/).
+ * Perfiles de agentes: Viernes, Lunes… Cada uno con su nombre, su modelo, su forma de ser, sus
+ * herramientas y su voz. Se juntan en salas (src/core/rooms/).
  *
- * Siempre se guarda en este equipo, como mcp.json, sea cual sea Ajustes → Datos.
- * El asistente de siempre no es un perfil: los chats sin sala no usan este archivo.
+ * Una nota por agente en Agentes/ de la memoria (con Obsidian, <bóveda>/Shiro/Agentes/Viernes.md):
+ * arriba las propiedades (modelo, voz, color…) y debajo su forma de ser. Se leen cada vez, así que
+ * lo que se cambie en Obsidian vale al momento. No llevan claves de API.
+ * El asistente de siempre no es un perfil: los chats sin sala no usan estas notas.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { DATA_DIR, LLM_PROVIDERS } from "../../config/config.js";
+import { frontValue, parseFrontmatter, safeFileName, yamlValue } from "../../storage/obsidian.js";
+import { getWorkspaceDir } from "../../workspace.js";
 import { normalizeName, slugify } from "./text.js";
 
+/** Donde se guardaban antes; se pasa a notas la primera vez y se borra. */
 export const AGENTS_FILE = join(DATA_DIR, "agents.json");
+export const AGENTS_FOLDER = "Agentes";
+
+export function agentsDir(): string {
+	return join(getWorkspaceDir(), AGENTS_FOLDER);
+}
 
 export const AGENT_ID_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
 export const DEFAULT_GREETING = "Hola, soy {{nombre}}. ¿En qué te ayudo?";
@@ -93,7 +103,7 @@ function issuesText(err: z.ZodError): string {
 	return err.issues.map((i) => `${labels[String(i.path[0])] ?? i.path.join(".")}: ${i.message}`).join("; ");
 }
 
-/** Valida el contenido completo de agents.json. Lanza un Error legible si algo está mal. */
+/** Valida el contenido completo del viejo agents.json. Lanza un Error legible si algo está mal. */
 export function parseAgentsJson(text: string): AgentProfile[] {
 	let data: unknown;
 	try {
@@ -111,18 +121,146 @@ export function parseAgentsJson(text: string): AgentProfile[] {
 	});
 }
 
-export function loadAgents(): { agents: AgentProfile[]; error?: string } {
-	if (!existsSync(AGENTS_FILE)) return { agents: [] };
+// ───────────────────────────── notas ─────────────────────────────
+
+/** La nota de un agente: propiedades en el bloque --- y la forma de ser debajo. */
+export function agentToMarkdown(a: AgentProfile): string {
+	const tools = a.tools === "inherit" ? "todas" : a.tools === "none" ? "ninguna" : a.tools;
+	const line = (key: string, value: string | number | boolean | string[]) => `${key}: ${yamlValue(value)}`;
+	return [
+		"---",
+		`id: ${a.id}`,
+		line("nombre", a.name),
+		line("alias", a.aliases),
+		line("descripcion", a.description.replace(/\s+/g, " ")),
+		line("proveedor", a.provider ?? ""),
+		line("modelo", a.model ?? ""),
+		line("direccion", a.baseUrl ?? ""),
+		line("herramientas", tools),
+		line("mcp", a.mcp),
+		line("modo", a.mode === "voice" ? "voz" : "texto"),
+		line("forma-de-ser", a.personaMode === "replace" ? "reemplazar" : "añadir"),
+		line("saludo", a.greeting.replace(/\s+/g, " ")),
+		line("color", a.color ?? ""),
+		line("voz-navegador", a.voice.browserVoiceURI ?? ""),
+		line("voz-servidor", a.voice.serverVoice ?? ""),
+		line("velocidad", a.voice.rate ?? ""),
+		"---",
+		a.persona.trim(),
+		"",
+	].join("\n");
+}
+
+/** Lee la nota de un agente (también escrita o cambiada a mano). Lanza un Error legible si no vale. */
+export function parseAgentNote(text: string, fileName: string): AgentProfile {
+	const { meta, body } = parseFrontmatter(text.replace(/\r\n/g, "\n"));
+	const raw = (key: string) => frontValue(meta[key]);
+	const str = (key: string) => {
+		const v = raw(key);
+		const out = v === undefined ? "" : Array.isArray(v) ? v.join(", ") : String(v);
+		return out.trim() || undefined;
+	};
+	const list = (key: string) => {
+		const v = raw(key);
+		if (Array.isArray(v)) return v.map((x) => String(x).trim()).filter(Boolean);
+		return (str(key) ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+	};
+	const name = str("nombre") ?? fileName.replace(/\.md$/i, "");
+	const tools = str("herramientas");
+	const mcp = raw("mcp");
+	const rate = raw("velocidad");
+	const parsed = agentProfileSchema.safeParse({
+		id: str("id") ?? slugify(name),
+		name,
+		aliases: list("alias"),
+		description: str("descripcion") ?? "",
+		provider: str("proveedor"),
+		model: str("modelo"),
+		baseUrl: str("direccion"),
+		persona: body.trim(),
+		personaMode: /^(reemplazar|replace)$/i.test(str("forma-de-ser") ?? "") ? "replace" : "add",
+		tools: !tools || /^(todas|inherit)$/i.test(tools) ? "inherit" : /^(ninguna|none)$/i.test(tools) ? "none" : list("herramientas"),
+		mcp: mcp === undefined ? true : mcp === true,
+		mode: /^(voz|voice)$/i.test(str("modo") ?? "") ? "voice" : "text",
+		voice: { browserVoiceURI: str("voz-navegador"), serverVoice: str("voz-servidor"), rate: typeof rate === "number" ? rate : undefined },
+		greeting: str("saludo") ?? DEFAULT_GREETING,
+		color: str("color"),
+	});
+	if (!parsed.success) throw new Error(issuesText(parsed.error));
+	return parsed.data;
+}
+
+/** Los agentes del viejo data/agents.json pasan a notas (sin pisar los que ya tengan nota) y se borra. */
+function adoptLegacyFile(): string | undefined {
+	if (!existsSync(AGENTS_FILE)) return undefined;
+	let old: AgentProfile[];
 	try {
-		return { agents: parseAgentsJson(readFileSync(AGENTS_FILE, "utf-8")) };
+		old = parseAgentsJson(readFileSync(AGENTS_FILE, "utf-8"));
 	} catch (err) {
-		return { agents: [], error: `data/agents.json tiene un error: ${err instanceof Error ? err.message : String(err)}` };
+		return `data/agents.json tiene un error y no pude pasarlo a notas: ${err instanceof Error ? err.message : String(err)}`;
 	}
+	const current = readAgentNotes().agents;
+	const ids = new Set(current.map((a) => a.id));
+	writeAgentNotes(old.filter((a) => !ids.has(a.id)), false);
+	rmSync(AGENTS_FILE, { force: true });
+	return undefined;
+}
+
+function noteFiles(): string[] {
+	const dir = agentsDir();
+	if (!existsSync(dir)) return [];
+	return readdirSync(dir)
+		.filter((f) => f.toLowerCase().endsWith(".md"))
+		.sort((a, b) => a.localeCompare(b, "es"));
+}
+
+function readAgentNotes(): { agents: AgentProfile[]; errors: string[] } {
+	const agents: AgentProfile[] = [];
+	const errors: string[] = [];
+	for (const f of noteFiles()) {
+		try {
+			const agent = parseAgentNote(readFileSync(join(agentsDir(), f), "utf-8"), f);
+			if (agents.some((a) => a.id === agent.id)) throw new Error(`el id «${agent.id}» ya lo usa otra nota; cámbialo o bórralo`);
+			agents.push(agent);
+		} catch (err) {
+			errors.push(`${AGENTS_FOLDER}/${f}: ${err instanceof Error ? err.message : String(err)}.`);
+		}
+	}
+	return { agents, errors };
+}
+
+/** Escribe una nota por agente; renombrar cambia el archivo y (con prune) quitar un agente borra su nota. */
+function writeAgentNotes(agents: AgentProfile[], prune = true): void {
+	const dir = agentsDir();
+	mkdirSync(dir, { recursive: true });
+	const fileOf = new Map<string, string>();
+	for (const f of noteFiles()) {
+		const id = frontValue(parseFrontmatter(readFileSync(join(dir, f), "utf-8")).meta.id);
+		if (typeof id === "string") fileOf.set(id, f);
+	}
+	const keep = new Set<string>();
+	for (const a of agents) {
+		const file = `${safeFileName(a.name, 40)}.md`;
+		const old = fileOf.get(a.id);
+		if (old && old !== file) rmSync(join(dir, old), { force: true });
+		const text = agentToMarkdown(a);
+		const path = join(dir, file);
+		if (!existsSync(path) || readFileSync(path, "utf-8") !== text) writeFileSync(path, text, "utf-8");
+		keep.add(a.id);
+	}
+	if (prune) for (const [id, f] of fileOf) if (!keep.has(id)) rmSync(join(dir, f), { force: true });
+}
+
+/** Los agentes de las notas. Si alguna nota está mal, se usan las demás y error dice cuál y por qué. */
+export function loadAgents(): { agents: AgentProfile[]; error?: string } {
+	const legacy = adoptLegacyFile();
+	const { agents, errors } = readAgentNotes();
+	if (legacy) errors.unshift(legacy);
+	return errors.length ? { agents, error: errors.join(" ") } : { agents };
 }
 
 export function saveAgents(agents: AgentProfile[]): void {
-	mkdirSync(DATA_DIR, { recursive: true });
-	writeFileSync(AGENTS_FILE, JSON.stringify({ version: 1, agents }, null, 2) + "\n", "utf-8");
+	writeAgentNotes(agents);
 }
 
 export function getAgent(id: string): AgentProfile | undefined {
@@ -192,7 +330,7 @@ function commit(agents: AgentProfile[], ctx: ValidationContext): string[] {
 
 function loadForEdit(): AgentProfile[] {
 	const { agents, error } = loadAgents();
-	if (error) throw new Error(`${error} Arréglalo o bórralo antes de editar los agentes.`);
+	if (error) throw new Error(`${error} Arréglalo (o borra esa nota) antes de editar los agentes.`);
 	return agents;
 }
 
