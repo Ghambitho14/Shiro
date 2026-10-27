@@ -2,7 +2,7 @@
   "expo": {
     "name": "Shiro",
     "slug": "shiro",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -20,6 +20,32 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Shiro usa el micrófono para que le hables (dictado y modo voz).",
+          "speechRecognitionPermission": "Shiro convierte tu voz en texto para que puedas hablarle.",
+          "androidSpeechServicePackages": [
+            "com.google.android.googlequicksearchbox"
+          ]
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Shiro abre tus fotos para que puedas mandárselas.",
+          "cameraPermission": "Shiro usa la cámara para que le mandes una foto."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#8071F2"
+        }
+      ],
+      "@react-native-community/datetimepicker"
+    ]
   }
 }

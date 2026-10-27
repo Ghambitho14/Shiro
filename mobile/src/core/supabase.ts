@@ -138,13 +138,19 @@ export async function saveChat(conn: SupabaseConn, chat: { id?: string; createdA
 	return meta;
 }
 
+export async function renameChat(conn: SupabaseConn, id: string, title: string): Promise<void> {
+	const clean = title.replace(/\s+/g, " ").trim().slice(0, 120);
+	if (!clean) throw new Error("El nombre no puede quedar vacío.");
+	await sbRequest(conn, "PATCH", `shiro_chats?id=${eq(id)}`, { body: { title: clean } });
+}
+
 export async function deleteChat(conn: SupabaseConn, id: string): Promise<void> {
 	await sbRequest(conn, "DELETE", `shiro_chats?id=${eq(id)}`);
 }
 
 // ───────────────────────────── notas de memoria ─────────────────────────────
 
-export const NOTE_FILES = ["SOUL.md", "MEMORY.md", "Instrucciones.md", "Sobre mí.md", "_shiro.json"] as const;
+export const NOTE_FILES = ["SOUL.md", "MEMORY.md", "TOOLS.md", "Instrucciones.md", "Sobre mí.md", "_shiro.json"] as const;
 export type Notes = Partial<Record<(typeof NOTE_FILES)[number], string>>;
 
 /** Las notas que Shiro del PC sube a shiro_notes (SOUL.md, MEMORY.md, «Sobre mí»…). */
@@ -153,6 +159,14 @@ export async function getNotes(conn: SupabaseConn): Promise<Notes> {
 	const out: Notes = {};
 	for (const r of rows) out[r.path as keyof Notes] = r.content;
 	return out;
+}
+
+/** Guarda una nota (Personalización). El PC la recibe en su próxima sincronización (cada 20 s). */
+export async function saveNote(conn: SupabaseConn, path: (typeof NOTE_FILES)[number], content: string): Promise<void> {
+	await sbRequest(conn, "POST", "shiro_notes?on_conflict=path", {
+		body: { path, content: content.replace(/\r\n/g, "\n").trimEnd() + "\n", updated_at: Date.now() },
+		prefer: "resolution=merge-duplicates,return=minimal",
+	});
 }
 
 const MEMORY_TEMPLATE = "# MEMORY.md — Memoria a largo plazo\n\nHechos, decisiones y contexto que quieres recordar.\n";

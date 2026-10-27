@@ -6,7 +6,14 @@ import { Fragment, useState } from "react";
 import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { mono, radius, type Theme } from "../theme";
+import { parseTable, tokenize, type TokenKind } from "../core/highlight";
 import { Icon } from "./Icon";
+
+/** Colores de código como el tema de highlight.js de la web (GitHub claro y oscuro). */
+const CODE_COLORS: Record<"light" | "dark", Record<Exclude<TokenKind, "plain">, string>> = {
+	light: { keyword: "#d73a49", string: "#032f62", comment: "#6a737d", number: "#005cc5" },
+	dark: { keyword: "#ff7b72", string: "#a5d6ff", comment: "#8b949e", number: "#79c0ff" },
+};
 
 const INLINE = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\((?:https?:\/\/)[^)\s]+\)|https?:\/\/[^\s)]+|\*[^*\s][^*]*\*)/g;
 
@@ -55,9 +62,41 @@ function CodeBlock({ code, lang, theme }: { code: string; lang: string; theme: T
 				</Pressable>
 			</View>
 			<ScrollView horizontal contentContainerStyle={{ padding: 14 }}>
-				<Text selectable style={{ fontFamily: mono, color: theme.text, fontSize: 13, lineHeight: 20 }}>{code}</Text>
+				<Text selectable style={{ fontFamily: mono, color: theme.text, fontSize: 13, lineHeight: 20 }}>
+					{tokenize(code, lang).map((t, i) =>
+						t.kind === "plain" ? (
+							t.text
+						) : (
+							<Text key={i} style={{ color: CODE_COLORS[theme.dark ? "dark" : "light"][t.kind], fontStyle: t.kind === "comment" ? "italic" : "normal" }}>
+								{t.text}
+							</Text>
+						),
+					)}
+				</Text>
 			</ScrollView>
 		</View>
+	);
+}
+
+function Table({ head, rows, theme }: { head: string[]; rows: string[][]; theme: Theme }) {
+	const cell = (t: string, i: number, bold: boolean) => (
+		<View key={i} style={[styles.cell, { borderColor: theme.border }]}>
+			<Text selectable style={{ color: theme.text, fontSize: 14, lineHeight: 20, fontWeight: bold ? "600" : "400" }}>
+				<Inline text={t} theme={theme} />
+			</Text>
+		</View>
+	);
+	return (
+		<ScrollView horizontal>
+			<View style={[styles.table, { borderColor: theme.border }]}>
+				<View style={[styles.row, { backgroundColor: theme.soft }]}>{head.map((h, i) => cell(h, i, true))}</View>
+				{rows.map((r, j) => (
+					<View key={j} style={styles.row}>
+						{r.map((c, i) => cell(c, i, false))}
+					</View>
+				))}
+			</View>
+		</ScrollView>
 	);
 }
 
@@ -75,8 +114,20 @@ export function Markdown({ text, theme }: { text: string; theme: Theme }) {
 			);
 			para = [];
 		};
-		lines.forEach((line, j) => {
+		for (let j = 0; j < lines.length; j++) {
+			const line = lines[j];
 			const k = `${key}-${j}`;
+			if (line.trim().startsWith("|")) {
+				let end = j;
+				while (end < lines.length && lines[end].trim().startsWith("|")) end++;
+				const table = parseTable(lines.slice(j, end));
+				if (table) {
+					flush(`${k}p`);
+					out.push(<Table key={k} head={table.head} rows={table.rows} theme={theme} />);
+					j = end - 1;
+					continue;
+				}
+			}
 			const h = /^(#{1,6})\s+(.*)$/.exec(line);
 			const li = /^(\s*)([-*•]|\d+[.)])\s+(.*)$/.exec(line);
 			const quote = /^>\s?(.*)$/.exec(line);
@@ -115,7 +166,7 @@ export function Markdown({ text, theme }: { text: string; theme: Theme }) {
 			} else {
 				para.push(line);
 			}
-		});
+		}
 		flush(`${key}-end`);
 	};
 	// Bloques de código entre ```; si la respuesta aún llega, el último puede no estar cerrado.
@@ -151,4 +202,7 @@ const styles = StyleSheet.create({
 	code: { borderRadius: radius.md, borderWidth: StyleSheet.hairlineWidth, overflow: "hidden" },
 	codeHead: { height: 36, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingLeft: 14, paddingRight: 10 },
 	codeCopy: { flexDirection: "row", alignItems: "center", gap: 6 },
+	table: { borderWidth: StyleSheet.hairlineWidth, borderRadius: radius.sm, overflow: "hidden" },
+	row: { flexDirection: "row" },
+	cell: { minWidth: 90, maxWidth: 240, paddingHorizontal: 10, paddingVertical: 7, borderRightWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth },
 });

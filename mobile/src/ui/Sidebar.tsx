@@ -36,10 +36,12 @@ type Props = {
 	onNew: () => void;
 	onOpen: (chat: ChatMeta) => void;
 	onDelete: (chat: ChatMeta) => void;
+	onVoice: () => void;
+	onReminders: () => void;
 	onSettings: () => void;
 };
 
-export function Sidebar({ theme, open, onClose, assistantName, userName, chats, activeId, onNew, onOpen, onDelete, onSettings }: Props) {
+export function Sidebar({ theme, open, onClose, assistantName, userName, chats, activeId, onNew, onOpen, onDelete, onVoice, onReminders, onSettings }: Props) {
 	const { width } = useWindowDimensions();
 	const w = Math.min(304, Math.round(width * 0.84));
 	const x = useRef(new Animated.Value(open ? 0 : -w)).current;
@@ -98,6 +100,8 @@ export function Sidebar({ theme, open, onClose, assistantName, userName, chats, 
 						setSearching((s) => !s);
 						setQuery("");
 					})}
+					{item("voice", "Modo voz", onVoice)}
+					{item("bell", "Recordatorios", onReminders)}
 				</View>
 				{searching ? (
 					<View style={[styles.search, { backgroundColor: theme.hover }]}>

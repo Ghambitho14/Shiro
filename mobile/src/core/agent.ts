@@ -4,6 +4,8 @@
  * y SOUL.md sirven igual.
  */
 import { chatTurn, webFetch, webSearch, type OllamaConn, type OllamaMessage, type ToolSpec } from "./ollama";
+import { base64Of, splitContent } from "./content";
+import { completeReminder, createReminder, isPending, listReminders, REPEAT_LABELS } from "./reminders";
 import { addMemory, searchMemories, type SupabaseConn } from "./supabase";
 import { messageText } from "./text";
 import type { ChatMessage, ToolUse } from "./types";
@@ -53,6 +55,39 @@ export const MOBILE_TOOLS: ToolSpec[] = [
 	{
 		type: "function",
 		function: {
+			name: "create_reminder",
+			description: "Crea un recordatorio (el teléfono y el PC avisan cuando toca).",
+			parameters: {
+				type: "object",
+				properties: {
+					title: { type: "string", description: "Qué recordar" },
+					datetime: { type: "string", description: "Fecha y hora en ISO con la hora local (2026-10-27T18:00) o relativa: «en 30 minutos»" },
+					repeat: { type: "string", enum: ["none", "daily", "weekly", "monthly"] },
+					description: { type: "string" },
+				},
+				required: ["title", "datetime"],
+			},
+		},
+	},
+	{
+		type: "function",
+		function: {
+			name: "list_reminders",
+			description: "Lista los recordatorios pendientes (con include_completed, también los hechos).",
+			parameters: { type: "object", properties: { include_completed: { type: "boolean" } } },
+		},
+	},
+	{
+		type: "function",
+		function: {
+			name: "complete_reminder",
+			description: "Marca un recordatorio como hecho (usa el id de list_reminders).",
+			parameters: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
+		},
+	},
+	{
+		type: "function",
+		function: {
 			name: "fetch_url",
 			description: "Lee el texto de una página web (por ejemplo, un resultado de search_web).",
 			parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
@@ -70,6 +105,12 @@ export function toolLabel(name: string, args: Record<string, unknown>): string {
 			return "Guardando en tu memoria";
 		case "search_web":
 			return `Buscando en internet${q}`;
+		case "create_reminder":
+			return `Creando recordatorio${typeof args.title === "string" ? `: ${args.title}` : ""}`;
+		case "list_reminders":
+			return "Mirando tus recordatorios";
+		case "complete_reminder":
+			return "Marcando un recordatorio como hecho";
 		case "fetch_url":
 			return `Leyendo ${typeof args.url === "string" ? args.url.replace(/^https?:\/\//, "").slice(0, 60) : "una página"}`;
 		default:
@@ -96,6 +137,23 @@ export async function runTool(name: string, args: Record<string, unknown>, ctx: 
 			if (!results.length) return "La búsqueda no devolvió resultados.";
 			return results.map((r, i) => `[${i + 1}] ${r.title}\n${r.url}\n${clip(r.content, 1200)}`).join("\n\n");
 		}
+		case "create_reminder": {
+			const r = await createReminder(ctx.sb, { title: str(args.title), datetime: str(args.datetime), description: str(args.description), repeat: str(args.repeat) });
+			const when = new Date(r.datetime).toLocaleString("es", { dateStyle: "full", timeStyle: "short" });
+			return `Recordatorio creado: «${r.title}» para el ${when}${r.repeat && r.repeat !== "none" ? ` (${REPEAT_LABELS[r.repeat].toLowerCase()})` : ""}. ID: ${r.id}`;
+		}
+		case "list_reminders": {
+			const all = await listReminders(ctx.sb);
+			const list = args.include_completed === true ? all : all.filter(isPending);
+			if (!list.length) return "No tienes recordatorios pendientes.";
+			return list
+				.map((r) => `- ${r.title} — ${new Date(r.datetime).toLocaleString("es", { dateStyle: "medium", timeStyle: "short" })}${r.completed ? " (hecho)" : ""} [id: ${r.id}]`)
+				.join("\n");
+		}
+		case "complete_reminder": {
+			const r = await completeReminder(ctx.sb, str(args.id));
+			return r ? `Hecho: «${r.title}».` : "No encontré ese recordatorio. Mira los ids con list_reminders.";
+		}
 		case "fetch_url": {
 			const url = str(args.url);
 			if (!/^https?:\/\//i.test(url)) return "La dirección tiene que empezar por http:// o https://.";
@@ -107,17 +165,25 @@ export async function runTool(name: string, args: Record<string, unknown>, ctx: 
 	}
 }
 
-/** El historial para el modelo: solo el texto (las imágenes de chats del PC no se mandan) y los últimos mensajes. */
+/**
+ * El historial para el modelo: los últimos mensajes que caben. Las imágenes van solo en los tres
+ * últimos mensajes del usuario (pesan mucho); los archivos de texto van dentro del texto.
+ */
 export function toOllamaHistory(messages: ChatMessage[], maxChars = 24_000): OllamaMessage[] {
 	const out: OllamaMessage[] = [];
 	let used = 0;
+	let withImages = 0;
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const m = messages[i];
 		const text = messageText(m.content).trim();
-		if (!text) continue;
+		const images = m.role === "user" && withImages < 3 ? splitContent(m.content).images.map(base64Of) : [];
+		if (!text && !images.length) continue;
 		used += text.length;
 		if (used > maxChars && out.length) break;
-		out.unshift({ role: m.role, content: m.agentName && m.role === "assistant" ? `[${m.agentName}]: ${text}` : text });
+		if (m.role === "user") {
+			if (images.length) withImages++;
+			out.unshift(images.length ? { role: "user", content: text, images } : { role: "user", content: text });
+		} else out.unshift({ role: "assistant", content: m.agentName ? `[${m.agentName}]: ${text}` : text });
 	}
 	return out;
 }

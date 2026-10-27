@@ -72,3 +72,18 @@ export function newId(): string {
 		return (ch === "x" ? r : (r & 0x3) | 0x8).toString(16);
 	});
 }
+
+/** Texto para leer: sin markdown, enlaces ni bloques de código (como hace la web). */
+export function speakable(text: string): string {
+	return text
+		.replace(/```[\s\S]*?```/g, " (bloque de código) ")
+		.replace(/`([^`]+)`/g, "$1")
+		.replace(/!\[[^\]]*\]\([^)]*\)/g, "")
+		.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+		.replace(/https?:\/\/\S+/g, "")
+		.replace(/^\s*#+\s*/gm, "")
+		.replace(/^\s*[-*•]\s+/gm, "")
+		.replace(/[*_~>|]/g, "")
+		.replace(/\s+/g, " ")
+		.trim();
+}

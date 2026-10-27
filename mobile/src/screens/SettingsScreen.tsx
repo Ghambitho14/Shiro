@@ -6,10 +6,11 @@ import type { AppSettings } from "../core/types";
 import { saveSettings } from "../settings";
 import { radius, type Theme } from "../theme";
 import { Button, IconButton } from "../ui/common";
+import { Icon } from "../ui/Icon";
 
-type Props = { theme: Theme; initial: AppSettings; firstRun: boolean; onSaved: (s: AppSettings) => void; onBack?: () => void };
+type Props = { theme: Theme; initial: AppSettings; firstRun: boolean; onSaved: (s: AppSettings) => void; onBack?: () => void; onPersonalization?: () => void };
 
-export function SettingsScreen({ theme, initial, firstRun, onSaved, onBack }: Props) {
+export function SettingsScreen({ theme, initial, firstRun, onSaved, onBack, onPersonalization }: Props) {
 	const [s, setS] = useState<AppSettings>(initial);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState("");
@@ -89,6 +90,17 @@ export function SettingsScreen({ theme, initial, firstRun, onSaved, onBack }: Pr
 					</Text>
 				) : null}
 
+				{onPersonalization ? (
+					<Pressable onPress={onPersonalization} style={({ pressed }) => [styles.link, { borderColor: theme.border, backgroundColor: pressed ? theme.hover : theme.elevated }]}>
+						<Icon name="user" size={20} color={theme.text2} />
+						<View style={{ flex: 1 }}>
+							<Text style={{ color: theme.text, fontSize: 15, fontWeight: "600" }}>Personalización</Text>
+							<Text style={{ color: theme.text3, fontSize: 13 }}>Sobre ti, instrucciones, personalidad y memoria</Text>
+						</View>
+						<Icon name="chevronRight" size={18} color={theme.text3} />
+					</Pressable>
+				) : null}
+
 				<Text style={[styles.section, { color: theme.text3 }]}>SUPABASE (TU MEMORIA)</Text>
 				{field("Dirección del proyecto", "supabaseUrl", { placeholder: "https://xxxx.supabase.co", help: "La misma que en Shiro del PC: Ajustes → Datos." })}
 				{field("Clave secreta", "supabaseKey", {
@@ -144,6 +156,7 @@ const styles = StyleSheet.create({
 	header: { height: 56, flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 6 },
 	title: { fontSize: 18, fontWeight: "600" },
 	body: { padding: 16, gap: 12, paddingBottom: 48 },
+	link: { flexDirection: "row", alignItems: "center", gap: 12, borderWidth: StyleSheet.hairlineWidth, borderRadius: radius.lg, padding: 14 },
 	segment: { flexDirection: "row", borderRadius: radius.sm + 2, padding: 3 },
 	segItem: { flex: 1, alignItems: "center", paddingVertical: 8, borderRadius: radius.sm },
 	intro: { fontSize: 15, lineHeight: 22 },

@@ -8,7 +8,8 @@ export const OLLAMA_CLOUD = "https://ollama.com";
 
 export type ToolCall = { function: { name: string; arguments: Record<string, unknown> } };
 export type OllamaMessage =
-	| { role: "system" | "user"; content: string }
+	| { role: "system"; content: string }
+	| { role: "user"; content: string; images?: string[] }
 	| { role: "assistant"; content: string; tool_calls?: ToolCall[] }
 	| { role: "tool"; content: string; tool_name: string };
 
