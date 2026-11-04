@@ -276,8 +276,9 @@ export async function runAssistant({ voice = false, hooks = {} } = {}) {
 					if (sessionId === state.activeId) setRoom(evt.room);
 					if (evt.openVoice && !voice) setTimeout(() => voiceMode.open(), 0);
 				},
-				onDone: ({ content, agent }) => {
+				onDone: ({ content, agent, usage }) => {
 					if (typeof content === "string" && content) m.content = content;
+					if (usage?.turns) m.usage = usage;
 					// Las órdenes de sala responden a nombre de un agente (o del asistente: null).
 					if (agent !== undefined) {
 						setMessageAgent(m, agent);

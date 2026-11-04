@@ -827,6 +827,16 @@ a {
 	color: var(--accent);
 }
 
+.msg-usage {
+	align-self: center;
+	margin-left: 8px;
+	font-size: 12px;
+	color: var(--text-3);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+	cursor: default;
+}
+
 .msg-note {
 	font-size: 13px;
 	color: var(--text-3);

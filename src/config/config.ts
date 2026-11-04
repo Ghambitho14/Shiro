@@ -32,11 +32,15 @@ const urlSchema = z
 const optionalString = z.string().trim().min(1).optional().catch(undefined);
 const int = (def: number, min: number, max: number) => z.coerce.number().int().min(min).max(max).default(def).catch(def);
 
-const THINKING = ["auto", "on", "off"] as const;
+/** Cuánto piensa el modelo antes de responder. "on" es el valor viejo (= pensar lo normal). */
+export const THINKING = ["auto", "off", "low", "medium", "high", "on"] as const;
+export type ThinkingLevel = (typeof THINKING)[number];
 const KV_CACHE = ["f16", "q8_0", "q4_0"] as const;
 const FLASH_ATTENTION = ["auto", "on", "off"] as const;
 const TOOL_MODES = ["auto", "native", "text"] as const;
 const TOOL_PROFILES = ["auto", "lite", "full"] as const;
+/** Modo ahorro: auto = encendido en modelos locales y de OpenCode (ver saverOn() en providers.ts). */
+const SAVER = ["auto", "on", "off"] as const;
 const opt = <T extends z.ZodTypeAny>(schema: T) => schema.optional().catch(undefined);
 
 /**
@@ -45,8 +49,10 @@ const opt = <T extends z.ZodTypeAny>(schema: T) => schema.optional().catch(undef
  */
 export const modelTuningSchema = z.object({
 	temperature: opt(z.number().min(0).max(2)),
-	/** Pensar antes de responder (Qwen3 y otros): auto = lo que diga el modelo. */
+	/** Cuánto piensa antes de responder: auto = lo que diga el modelo. */
 	thinking: opt(z.enum(THINKING)),
+	/** Cuánta conversación anterior se manda en cada respuesta (tokens aproximados). 0 = automático. */
+	historyTokens: opt(z.number().int().min(0).max(1_000_000)),
 	/** Largo máximo de la respuesta (tokens). */
 	maxTokens: opt(z.number().int().min(64).max(131_072)),
 	/** llama.cpp integrado: 0 = automático. Ollama: num_ctx. */
@@ -62,6 +68,8 @@ export const modelTuningSchema = z.object({
 	toolProfile: opt(z.enum(TOOL_PROFILES)),
 	maxToolIterations: opt(z.number().int().min(1).max(40)),
 	timeoutMs: opt(z.number().int().min(5_000).max(1_800_000)),
+	/** Modo ahorro: herramientas según el mensaje, resultados cortos y pocos pasos. */
+	saver: opt(z.enum(SAVER)),
 });
 
 export type ModelTuning = z.infer<typeof modelTuningSchema>;
@@ -113,8 +121,10 @@ const configSchema = z.object({
 	llamaKvCache: z.enum(KV_CACHE).default("f16").catch("f16"),
 	llamaThreads: int(0, 0, 256),
 	llamaFlashAttention: z.enum(FLASH_ATTENTION).default("auto").catch("auto"),
-	/** Pensar antes de responder (modelos locales que lo permiten). auto = lo que diga el modelo. */
+	/** Cuánto piensa antes de responder (también en la nube). auto = lo que diga el modelo. */
 	thinking: z.enum(THINKING).default("auto").catch("auto"),
+	/** Cuánta conversación anterior se manda (tokens aproximados). 0 = automático (lo que quepa). */
+	historyTokens: int(0, 0, 1_000_000),
 	/** Largo máximo de la respuesta en tokens (vacío = sin límite). */
 	maxTokens: z.coerce.number().int().min(64).max(131_072).optional().catch(undefined),
 	/** Ajustes propios de cada modelo, por "<proveedor>|<modelo>" (ver modelSettings.ts). */
@@ -134,6 +144,8 @@ const configSchema = z.object({
 	explainMode: z.enum(["off", "brief", "on"]).default("off").catch("off"),
 	/** Número máximo de rondas de tool-calls por respuesta. */
 	maxToolIterations: int(10, 1, 40),
+	/** Modo ahorro (generales). auto = encendido en modelos locales y de OpenCode. */
+	saver: z.enum(SAVER).default("auto").catch("auto"),
 	/** Límite de caracteres por resultado de herramienta enviado al modelo. */
 	maxToolResultChars: int(12000, 500, 200000),
 	/** Carpetas extra con habilidades (absolutas o relativas al CWD). */

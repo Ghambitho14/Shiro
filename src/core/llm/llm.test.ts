@@ -219,8 +219,61 @@ test("Ajustes del modelo: pensar y largo máximo llegan en el formato de cada se
 	strictEqual(openai.max_tokens, 300);
 	strictEqual(ollama.think, false);
 	strictEqual((ollama.options as Record<string, unknown>).num_predict, 300);
-	// Sin ajustes no se manda nada nuevo, y a la nube no se le pide "pensar".
+	// Sin ajustes no se manda nada nuevo; a OpenRouter se le pide en su formato.
 	strictEqual(plain.chat_template_kwargs, undefined);
 	strictEqual(plain.max_tokens, undefined);
 	strictEqual(cloud.chat_template_kwargs, undefined);
+	deepStrictEqual(cloud.reasoning, { effort: "none" });
+});
+
+test("Cuánto piensa: si el servidor rechaza la forma de pedirlo, prueba la siguiente y la recuerda", async () => {
+	requests.length = 0;
+	handler = (_path, body) =>
+		body.reasoning_effort === "none" || body.thinking
+			? { status: 400, json: { error: { message: "Unrecognized request argument supplied: reasoning_effort" } } }
+			: { json: { choices: [{ message: { content: "ok" } }] } };
+	const cloud = settings("openai", { thinking: "off", local: false, provider: "opencode", apiKey: "k", model: "modelo-raro" });
+	strictEqual(await createLLMClient(cloud).chat([{ role: "user", content: "a" }]), "ok");
+	// none+thinking, thinking → rechazados; minimal → aceptado.
+	deepStrictEqual(
+		requests.map((r) => [r.body.reasoning_effort, r.body.thinking]),
+		[["none", { type: "disabled" }], [undefined, { type: "disabled" }], ["minimal", undefined]],
+	);
+	requests.length = 0;
+	await createLLMClient(cloud).chat([{ role: "user", content: "b" }]);
+	strictEqual(requests.length, 1);
+	strictEqual(requests[0].body.reasoning_effort, "minimal");
+});
+
+test("Cuánto piensa: niveles en Ollama y en modelos locales", async () => {
+	requests.length = 0;
+	handler = (path, body) =>
+		path.includes("/api/chat")
+			? body.think === "low"
+				? { status: 400, json: { error: "think value \"low\" is not supported for this model" } }
+				: { json: { message: { content: "ok" }, done: true } }
+			: { json: { choices: [{ message: { content: "ok" } }] } };
+	await createLLMClient(settings("ollama", { thinking: "low", model: "qwen-nivel" })).chat([{ role: "user", content: "a" }]);
+	await createLLMClient(settings("openai", { thinking: "high" })).chat([{ role: "user", content: "a" }]);
+	const [rejected, ollama, local] = requests.map((r) => r.body);
+	strictEqual(rejected.think, "low");
+	strictEqual(ollama.think, true);
+	deepStrictEqual(local.chat_template_kwargs, { enable_thinking: true });
+	strictEqual(local.reasoning_effort, "high");
+});
+
+test("Tokens gastados: se leen en OpenAI (también en streaming) y en Ollama, y se suman por vuelta", async () => {
+	requests.length = 0;
+	handler = (path) =>
+		path.includes("/api/chat")
+			? { json: { message: { content: "ok", thinking: "x".repeat(70) }, done: true, prompt_eval_count: 1200, eval_count: 50 } }
+			: { sse: [{ choices: [{ delta: { content: "ok" } }] }, { choices: [], usage: { prompt_tokens: 900, completion_tokens: 40, completion_tokens_details: { reasoning_tokens: 25 } } }] };
+	const seen: unknown[] = [];
+	await createLLMClient(settings("openai")).chat([{ role: "user", content: "a" }], { onDelta: () => {}, onUsage: (u) => seen.push(u) });
+	await createLLMClient(settings("ollama")).chat([{ role: "user", content: "a" }], { onUsage: (u) => seen.push(u) });
+	deepStrictEqual(requests[0].body.stream_options, { include_usage: true });
+	deepStrictEqual(seen, [
+		{ input: 900, output: 40, reasoning: 25 },
+		{ input: 1200, output: 50, reasoning: 20 },
+	]);
 });

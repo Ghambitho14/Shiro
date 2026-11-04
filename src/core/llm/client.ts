@@ -2,7 +2,7 @@ import type { Message, ToolCallSpec } from "../agent/Types.js";
 import { sanitizeModelResponse } from "../sanitizeResponse.js";
 import { logger } from "../logger.js";
 import { LLMError, type ChatOptions, type ExecuteToolFn, type LLMClient, type ToolDef } from "./LLMClient.js";
-import { prepareLLM, resolveLLMSettings, type LLMSettings, type ModelRef } from "./providers.js";
+import { prepareLLM, resolveLLMSettings, saverOn, type LLMSettings, type ModelRef } from "./providers.js";
 import { acquireModel, gateTarget } from "./modelGate.js";
 import { sendTurn } from "./transports.js";
 import { StreamFilter } from "./streamFilter.js";
@@ -95,6 +95,7 @@ function buildClient(resolve: () => LLMSettings, real: Real | null, ref?: ModelR
 					sessionId: opts.sessionId,
 				});
 				filter?.flush();
+				if (turn.usage) opts.onUsage?.(turn.usage);
 				return finalText(turn.content);
 			} finally {
 				release();
@@ -115,6 +116,7 @@ function buildClient(resolve: () => LLMSettings, real: Real | null, ref?: ModelR
 			let msgs = textMode ? withTextToolInstructions(messages, toolsDef) : [...messages];
 			let emittedText = false;
 			const maxIterations = getMaxToolIterations(ref);
+			const saver = saverOn(ref);
 			const toolImageMsgs = new Set<Message>();
 
 			for (let i = 0; i < maxIterations; i++) {
@@ -157,6 +159,7 @@ function buildClient(resolve: () => LLMSettings, real: Real | null, ref?: ModelR
 					release();
 				}
 				filter?.flush();
+				if (turn.usage) opts.onUsage?.(turn.usage);
 
 				let calls: ToolCallSpec[] = turn.toolCalls;
 				// Algunos modelos locales escriben <tool_call> en el texto aunque haya tools nativas.
@@ -184,7 +187,7 @@ function buildClient(resolve: () => LLMSettings, real: Real | null, ref?: ModelR
 						continue;
 					}
 					const r = await executeTool(call.function.name, args);
-					results.push({ call, content: normalizeToolResult(r.ok ? r.content : `Error: ${r.error ?? "desconocido"}`) });
+					results.push({ call, content: normalizeToolResult(r.ok ? r.content : `Error: ${r.error ?? "desconocido"}`, ref, saver) });
 					if (r.ok && r.image) images.push(r.image);
 				}
 

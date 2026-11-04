@@ -18,8 +18,8 @@ type Helpers = {
 export function tuningFields(provider: LLMProvider) {
 	const p = PROVIDER_PRESETS[provider];
 	return {
-		/** "Pensar antes de responder" solo se puede pedir a modelos locales. */
-		thinking: p.local,
+		/** "Cuánto piensa" se pide a todos (cada uno en su formato; ver reasoningOptions en transports.ts). */
+		thinking: true,
 		/** llama: Automático o tamaño; ollama: num_ctx; note: se elige en la otra app; null: nube. */
 		context: p.managed ? "llama" : p.dialect === "ollama" ? "ollama" : p.local ? "note" : null,
 		performance: Boolean(p.managed),
@@ -54,9 +54,13 @@ async function buildPayload(provider: LLMProvider, model: string) {
 		if (provider === "lmstudio" && s.provider === "lmstudio") contextNow = await lmStudioContext(s.baseUrl, model);
 		contextNote = `El tamaño de contexto se elige en ${p.label.replace(/ \(.*\)$/, "")} al cargar el modelo.`;
 	}
+	// En el formato Anthropic (Claude, MiniMax en OpenCode) Shiro no elige cuánto piensa.
+	const thinkingNote =
+		resolveLLMSettings({ provider, model }).dialect === "anthropic" ? "Con este modelo Shiro no puede elegir cuánto piensa: se queda como venga." : undefined;
 	return {
 		provider,
 		model,
+		thinkingNote,
 		providerLabel: p.label,
 		fields,
 		general: generalTuning(provider),

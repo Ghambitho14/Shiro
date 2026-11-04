@@ -71,7 +71,7 @@ test("claves con / y :, y entradas inválidas no rompen la configuración", () =
 });
 
 test("el modelo activo usa sus ajustes: temperatura, pensar, largo, contexto, herramientas y pasos", () => {
-	setConfig({ llmProvider: "ollama", llmModel: "qwen3:8b", contextWindow: 8192, toolProfile: "auto", maxToolIterations: 10 });
+	setConfig({ llmProvider: "ollama", llmModel: "qwen3:8b", contextWindow: 8192, toolProfile: "auto", maxToolIterations: 10, saver: "off" });
 	ms.setModelTuning("ollama", "qwen3:8b", { temperature: 0.1, thinking: "off", maxTokens: 512, contextSize: 32768, toolProfile: "full", maxToolIterations: 3 });
 	const s = resolveLLMSettings();
 	assert.equal(s.temperature, 0.1);
@@ -101,4 +101,22 @@ test("Ollama Cloud: habla el formato de Ollama con ollama.com y la clave de OLLA
 		delete process.env.OLLAMA_API_KEY;
 		setConfig({ llmProvider: "ollama", llmModel: "qwen3:8b" });
 	}
+});
+
+test("modo ahorro: automático en locales y OpenCode, no en OpenRouter; limita pasos y resultados", async () => {
+	const { saverOn } = await import("./providers.js");
+	const { normalizeToolResult } = await import("./toolRuntime.js");
+	setConfig({ llmProvider: "ollama", llmModel: "qwen3:8b", maxToolIterations: 10, saver: "auto", modelSettings: {} });
+	assert.equal(saverOn(), true);
+	assert.equal(getMaxToolIterations(), 4);
+	assert.ok(normalizeToolResult("x".repeat(10_000)).length < 4100);
+	// En automático, la nube "normal" lo tiene apagado; OpenCode encendido.
+	assert.equal(saverOn({ provider: "openrouter", model: "openai/gpt-4o-mini" }), false);
+	assert.equal(saverOn({ provider: "opencode-go", model: "glm-5.3-flash" }), true);
+	assert.equal(getMaxToolIterations({ provider: "openrouter", model: "openai/gpt-4o-mini" }), 10);
+	// Apagado a mano para un modelo: vuelve a lo normal.
+	ms.setModelTuning("ollama", "qwen3:8b", { saver: "off" });
+	assert.equal(saverOn(), false);
+	assert.equal(normalizeToolResult("x".repeat(10_000)).length, 10_000);
+	ms.setModelTuning("ollama", "qwen3:8b", null);
 });

@@ -1,6 +1,6 @@
 import type { Message, ContentPart } from "./Types.js";
 import { getMessagePreview } from "./contentUtils.js";
-import { LLMError, type LLMClient } from "../llm/LLMClient.js";
+import { LLMError, type LLMClient, type TokenUsage } from "../llm/LLMClient.js";
 import { buildContext } from "./ContextBuilder.js";
 import { readFileSync } from "node:fs";
 import {
@@ -11,7 +11,9 @@ import {
 	LITE_TOOLS,
 	PC_TOOLS,
 } from "../tools/ToolRegistry.js";
-import { activeModelTuning, modelSupportsVision, PROVIDER_PRESETS, type ModelRef } from "../llm/providers.js";
+import { activeModelTuning, modelSupportsVision, PROVIDER_PRESETS, resolveLLMSettings, saverOn, type ModelRef } from "../llm/providers.js";
+import { selectToolsByIntent } from "./toolIntent.js";
+import { historyBudget, trimHistory } from "./historyBudget.js";
 import type { PersonaContext, RoomContext } from "./ContextBuilder.js";
 import { logger } from "../logger.js";
 import { isMeaningfulResponse, FALLBACK_EMPTY_RESPONSE } from "../sanitizeResponse.js";
@@ -52,6 +54,8 @@ export type AgentOptions = {
 	userProfile?: UserProfileForAgent | null;
 	/** Recibe el texto a medida que el modelo lo genera (streaming real). */
 	onStreamDelta?: (chunk: string) => void;
+	/** Tokens que gasta cada vuelta con el modelo (para mostrar cuánto costó la respuesta). */
+	onUsage?: (usage: TokenUsage) => void;
 	/**
 	 * Quién aprueba las acciones peligrosas (exec, escribir archivos…).
 	 * Sin approver, con approvalMode "ask" esas acciones se bloquean.
@@ -117,6 +121,35 @@ export function resolveTools(
 	return tools;
 }
 
+/** Lo que se mira para elegir herramientas: el mensaje nuevo, los dos anteriores del usuario y la última respuesta. */
+function intentTexts(goal: string, conversation?: AgentOptions["conversation"]): string[] {
+	const recent = (conversation ?? []).filter((m) => m.role === "user" || m.role === "assistant").slice(-6);
+	const users = recent.filter((m) => m.role === "user").slice(-3);
+	const lastAssistant = recent.filter((m) => m.role === "assistant").slice(-1);
+	return [goal, ...[...users, ...lastAssistant].map((m) => getMessagePreview(m.content ?? ""))];
+}
+
+/**
+ * Recorta la conversación al presupuesto del modelo. Solo se sabe cuánto contexto hay de verdad
+ * con Ollama (num_ctx) y con el llama.cpp integrado ya abierto; con el resto, "automático" usa el
+ * tope de la nube. `fixedChars`: instrucciones y herramientas, que van siempre.
+ */
+function trimToBudget(history: Message[], fixedChars: number, ref?: ModelRef): Message[] {
+	const s = resolveLLMSettings(ref);
+	const preset = PROVIDER_PRESETS[s.provider];
+	const knownContext = s.local && (preset.dialect === "ollama" || Boolean(preset.managed));
+	const budget = historyBudget({
+		setting: activeModelTuning(ref).historyTokens,
+		local: knownContext,
+		contextWindow: s.contextWindow,
+		fixedChars,
+		reserveTokens: s.maxTokens ?? 1024,
+	});
+	const kept = trimHistory(history, budget);
+	if (kept.length < history.length) logger.info(`✂️ Conversación recortada: se envían ${kept.length} de ${history.length} mensajes (≈${budget} tokens)`);
+	return kept;
+}
+
 export async function runAgent(goal: string, opts: AgentOptions, workspaceContext?: string): Promise<string> {
 	const {
 		llm,
@@ -127,6 +160,7 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 		conversation,
 		userProfile,
 		onStreamDelta,
+		onUsage,
 		approver,
 		onToolEvent,
 		signal,
@@ -158,6 +192,14 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 	const canUseClaudeCode = Boolean(project?.folders.length) && claudeCodeLauncher() !== null;
 	if (!canUseClaudeCode && (effectiveTools ?? getAllToolNames()).includes("claude_code")) {
 		effectiveTools = (effectiveTools ?? getAllToolNames()).filter((t) => t !== "claude_code");
+	}
+	// Modo ahorro: solo las herramientas que parecen hacer falta para este mensaje (y los últimos).
+	if (saverOn(ref) && opts.textOnly !== true) {
+		const before = effectiveTools ?? getAllToolNames();
+		if (before.length) {
+			effectiveTools = selectToolsByIntent(before, intentTexts(goal, conversation));
+			if (effectiveTools.length < before.length) logger.info(`🎯 Modo ahorro: ${effectiveTools.length} de ${before.length} herramientas`);
+		}
 	}
 	// Una lista vacía significa "ninguna tool": se responde solo con texto.
 	const textOnly = opts.textOnly === true || (effectiveTools !== undefined && effectiveTools.length === 0);
@@ -208,8 +250,11 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 				: { role: "assistant", content: typeof m.content === "string" ? m.content : getMessagePreview(m.content) },
 		);
 
-	const fullMessages: Message[] = [{ role: "system", content: system }, ...(history.length ? history : messages)];
 	const toolsDef = getToolsDefinitionScoped(effectiveTools);
+	// Solo se manda la parte del chat que cabe en el presupuesto (Ajustes → Modelo → "Conversación
+	// que se envía"): cada vuelta con herramientas reenvía todo, y un chat largo gasta muchísimo.
+	const sentHistory = history.length ? trimToBudget(history, system.length + JSON.stringify(toolsDef ?? []).length, ref) : history;
+	const fullMessages: Message[] = [{ role: "system", content: system }, ...(sentHistory.length ? sentHistory : messages)];
 
 	const usedTools: { name: string; ok: boolean; argsKeys: string[] }[] = [];
 	const callCounts = new Map<string, number>();
@@ -278,8 +323,8 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 				content = await runWithProject(project, () =>
 					runWithApprover(approver, () =>
 						textOnly
-							? llm.chat(fullMessages, { onDelta, signal, sessionId })
-							: llm.chatWithTools(fullMessages, toolsDef, executeTool, { onDelta, signal, sessionId }),
+							? llm.chat(fullMessages, { onDelta, onUsage, signal, sessionId })
+							: llm.chatWithTools(fullMessages, toolsDef, executeTool, { onDelta, onUsage, signal, sessionId }),
 					),
 				);
 				break;

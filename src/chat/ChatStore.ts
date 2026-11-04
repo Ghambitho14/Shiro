@@ -7,6 +7,7 @@ import { getConfig } from "../config/config.js";
 import { currentStorage } from "../storage/storage.js";
 import { chatBackendFor, createMemoryBackend, type ChatBackend } from "./backends.js";
 import type { ContentPart } from "../core/agent/Types.js";
+import type { ResponseUsage } from "../core/llm/LLMClient.js";
 import { getMessagePreview } from "../core/agent/contentUtils.js";
 
 /** Herramienta usada en una respuesta (se muestra como "pasos" en la web). */
@@ -23,6 +24,8 @@ export type ChatMessage = {
 	agent?: string;
 	/** Su nombre en ese momento (se sigue viendo aunque luego se borre el agente). */
 	agentName?: string;
+	/** Respuestas del asistente: tokens que gastó (leídos, escritos, pensando y vueltas con el modelo). */
+	usage?: ResponseUsage;
 };
 
 export type ChatSessionMeta = {
@@ -68,8 +71,14 @@ function isContentPartArray(raw: unknown): raw is ContentPart[] {
 }
 
 /** Datos extra de cada mensaje que guarda la web: hora, herramientas usadas y, en salas, qué agente habló. */
-function sanitizeMeta(item: Record<string, unknown>): Pick<ChatMessage, "ts" | "tools" | "agent" | "agentName"> {
-	const out: Pick<ChatMessage, "ts" | "tools" | "agent" | "agentName"> = {};
+function sanitizeMeta(item: Record<string, unknown>): Pick<ChatMessage, "ts" | "tools" | "agent" | "agentName" | "usage"> {
+	const out: Pick<ChatMessage, "ts" | "tools" | "agent" | "agentName" | "usage"> = {};
+	if (item.role === "assistant" && item.usage && typeof item.usage === "object") {
+		const u = item.usage as Record<string, unknown>;
+		const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.min(Math.round(v), 1e9) : 0);
+		const usage = { input: n(u.input), output: n(u.output), reasoning: n(u.reasoning), turns: n(u.turns) };
+		if (usage.turns) out.usage = usage;
+	}
 	if (typeof item.ts === "number" && Number.isFinite(item.ts)) out.ts = item.ts;
 	if (item.role === "assistant" && typeof item.agent === "string" && /^[a-z0-9][a-z0-9-]{0,39}$/.test(item.agent)) {
 		out.agent = item.agent;

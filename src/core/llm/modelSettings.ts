@@ -4,13 +4,15 @@
  * (config.modelSettings["<proveedor>|<modelo>"]) → los generales (campos sueltos de la
  * configuración, que ya existían) → los valores por defecto del schema.
  */
-import { getConfig, modelTuningSchema, setConfig, type AppConfig, type LLMProvider, type ModelTuning } from "../../config/config.js";
+import { getConfig, modelTuningSchema, setConfig, type AppConfig, type LLMProvider, type ModelTuning, type ThinkingLevel } from "../../config/config.js";
 
 /** Todos los ajustes ya resueltos para un modelo. */
 export type EffectiveTuning = {
 	/** undefined = la del modelo. */
 	temperature?: number;
-	thinking: "auto" | "on" | "off";
+	thinking: ThinkingLevel;
+	/** Conversación anterior que se manda (tokens aproximados). 0 = automático. */
+	historyTokens: number;
 	/** undefined = sin límite. */
 	maxTokens?: number;
 	/** llama.cpp integrado: 0 = automático. Ollama: num_ctx. */
@@ -23,6 +25,8 @@ export type EffectiveTuning = {
 	toolProfile: "auto" | "lite" | "full";
 	maxToolIterations: number;
 	timeoutMs: number;
+	/** Modo ahorro: auto = encendido en modelos locales y de OpenCode (saverOn() en providers.ts). */
+	saver: "auto" | "on" | "off";
 };
 
 export const TUNING_KEYS = Object.keys(modelTuningSchema.shape) as (keyof ModelTuning)[];
@@ -38,6 +42,7 @@ export function generalTuning(provider: LLMProvider, cfg: AppConfig = getConfig(
 	return {
 		temperature: cfg.temperature,
 		thinking: cfg.thinking,
+		historyTokens: cfg.historyTokens,
 		maxTokens: cfg.maxTokens,
 		contextSize: cfg[contextField(provider)],
 		gpuLayers: cfg.llamaGpuLayers,
@@ -48,6 +53,7 @@ export function generalTuning(provider: LLMProvider, cfg: AppConfig = getConfig(
 		toolProfile: cfg.toolProfile,
 		maxToolIterations: cfg.maxToolIterations,
 		timeoutMs: cfg.llmTimeoutMs,
+		saver: cfg.saver,
 	};
 }
 
@@ -105,6 +111,7 @@ export function setGeneralTuning(provider: LLMProvider, values: ModelTuning): vo
 		maxTokens: values.maxTokens,
 	};
 	if (values.thinking) patch.thinking = values.thinking;
+	if (values.historyTokens !== undefined) patch.historyTokens = values.historyTokens;
 	if (values.contextSize !== undefined) {
 		if (provider === "gguf") patch.llamaContext = values.contextSize;
 		else if (values.contextSize >= 1024) patch.contextWindow = values.contextSize;
@@ -117,5 +124,6 @@ export function setGeneralTuning(provider: LLMProvider, values: ModelTuning): vo
 	if (values.toolProfile) patch.toolProfile = values.toolProfile;
 	if (values.maxToolIterations !== undefined) patch.maxToolIterations = values.maxToolIterations;
 	if (values.timeoutMs !== undefined) patch.llmTimeoutMs = values.timeoutMs;
+	if (values.saver) patch.saver = values.saver;
 	setConfig(patch);
 }

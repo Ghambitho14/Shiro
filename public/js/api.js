@@ -84,7 +84,7 @@ export async function streamChat(body, handlers, signal) {
 		const j = await r.json();
 		if (j.error) throw new Error(j.error);
 		if (j.room !== undefined) handlers.onRoom?.({ room: j.room, openVoice: j.openVoice });
-		handlers.onDone?.({ content: j.content || "", agent: j.agent });
+		handlers.onDone?.({ content: j.content || "", agent: j.agent, usage: j.usage });
 		return;
 	}
 	const reader = r.body.getReader();
@@ -121,7 +121,7 @@ export async function streamChat(body, handlers, signal) {
 					handlers.onRoom?.(evt);
 				} else if (evt.type === "done") {
 					finished = true;
-					handlers.onDone?.({ content: evt.content ?? full, agent: evt.agent });
+					handlers.onDone?.({ content: evt.content ?? full, agent: evt.agent, usage: evt.usage });
 				} else if (evt.type === "error") {
 					throw new Error(evt.message || "Error en la respuesta");
 				}

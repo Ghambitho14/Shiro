@@ -1,4 +1,4 @@
-import { getConfig, type LLMProvider } from "../../config/config.js";
+import { getConfig, type LLMProvider, type ThinkingLevel } from "../../config/config.js";
 import { ensureCatalog, guessApi, lookupModel, resolveModelId, type CatalogId } from "./catalog.js";
 import { LLMError } from "./LLMClient.js";
 import { currentLlamaServer, ensureLlamaServer } from "../llamacpp/engine.js";
@@ -185,8 +185,8 @@ export type LLMSettings = {
 	maxOutputTokens?: number;
 	/** Largo máximo de respuesta elegido por el usuario (Ajustes → Modelo). */
 	maxTokens?: number;
-	/** Pensar antes de responder (solo se envía a modelos locales; sin valor o "auto" = lo que diga el modelo). */
-	thinking?: "auto" | "on" | "off";
+	/** Cuánto piensa antes de responder (sin valor o "auto" = lo que diga el modelo). Ver reasoningOptions() en transports.ts. */
+	thinking?: ThinkingLevel;
 	/** Si tiene texto, el modelo no se puede usar desde Shiro y este es el motivo. */
 	unsupported?: string;
 };
@@ -333,6 +333,17 @@ export function resolveLLMSettings(ref?: ModelRef): LLMSettings {
 export function activeModelTuning(ref?: ModelRef): EffectiveTuning {
 	const s = resolveLLMSettings(ref);
 	return getModelTuning(s.provider, s.model);
+}
+
+/**
+ * ¿Está el modo ahorro encendido para el modelo activo (o el de `ref`)? En automático, sí con los
+ * modelos de este equipo (pequeños, contexto justo) y los de OpenCode (se paga por token o hay límite).
+ */
+export function saverOn(ref?: ModelRef): boolean {
+	const s = resolveLLMSettings(ref);
+	const saver = getModelTuning(s.provider, s.model).saver;
+	if (saver !== "auto") return saver === "on";
+	return s.local || Boolean(PROVIDER_PRESETS[s.provider].catalog);
 }
 
 /** Nombres de modelos que aceptan imágenes (visión). */

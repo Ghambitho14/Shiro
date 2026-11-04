@@ -33,3 +33,14 @@ test("sanitizeMessages: agent y agentName solo en respuestas del asistente con u
 		{ role: "assistant", content: "nombre sin id" },
 	]);
 });
+
+test("sanitizeMessages guarda los tokens gastados solo en respuestas del asistente y con números válidos", () => {
+	const [user, ok, bad] = sanitizeMessages([
+		{ role: "user", content: "hola", usage: { input: 1, output: 1, reasoning: 0, turns: 1 } },
+		{ role: "assistant", content: "hola", usage: { input: 1200.4, output: 50, reasoning: -3, turns: 2 } },
+		{ role: "assistant", content: "sin uso", usage: { input: "x", turns: 0 } },
+	]);
+	assert.equal(user.usage, undefined);
+	assert.deepEqual(ok.usage, { input: 1200, output: 50, reasoning: 0, turns: 2 });
+	assert.equal(bad.usage, undefined);
+});

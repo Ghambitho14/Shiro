@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { AssistantCarry, Message, ToolCallSpec, ContentPart } from "../agent/Types.js";
-import { LLMError, type ToolDef } from "./LLMClient.js";
+import { LLMError, type TokenUsage, type ToolDef } from "./LLMClient.js";
 import { PROVIDER_PRESETS, type LLMSettings } from "./providers.js";
 
 /**
@@ -13,7 +13,21 @@ export type TurnResult = {
 	toolCalls: ToolCallSpec[];
 	/** Razonamiento que hay que devolver al modelo junto a sus tool calls en la siguiente vuelta. */
 	carry?: AssistantCarry;
+	/** Tokens que gastó esta vuelta, si el servidor lo dice. */
+	usage?: TokenUsage;
 };
+
+/** Tokens aproximados de un texto (para el razonamiento cuando el servidor no lo cuenta aparte). */
+const approxTokens = (text: string) => Math.ceil(text.length / 3.5);
+
+type OpenAIUsage = { prompt_tokens?: number; completion_tokens?: number; completion_tokens_details?: { reasoning_tokens?: number } };
+
+/** Uso del formato OpenAI. Si no separa el razonamiento, se estima por el texto que devolvió. */
+function openaiUsage(u: OpenAIUsage | null | undefined, reasoningText: string): TokenUsage | undefined {
+	if (!u || (u.prompt_tokens === undefined && u.completion_tokens === undefined)) return undefined;
+	const reasoning = u.completion_tokens_details?.reasoning_tokens || (reasoningText ? approxTokens(reasoningText) : 0);
+	return { input: u.prompt_tokens ?? 0, output: u.completion_tokens ?? 0, ...(reasoning ? { reasoning } : {}) };
+}
 
 export type TurnRequest = {
 	messages: Message[];
@@ -45,16 +59,94 @@ export async function sendTurn(settings: LLMSettings, req: TurnRequest): Promise
 	if (preset.catalog) {
 		settings = { ...settings, headers: { ...settings.headers, "x-opencode-session": opencodeSessionHeader(req.sessionId) } };
 	}
-	switch (settings.dialect) {
-		case "ollama":
-			return ollamaTurn(settings, req);
-		case "anthropic":
-			return anthropicTurn(settings, req);
-		case "responses":
-			return responsesTurn(settings, req);
-		default:
-			return openaiTurn(settings, req);
+	const turn = (extra: Record<string, unknown>) => {
+		switch (settings.dialect) {
+			case "ollama":
+				return ollamaTurn(settings, req, extra);
+			case "anthropic":
+				return anthropicTurn(settings, req);
+			case "responses":
+				return responsesTurn(settings, req, extra);
+			default:
+				return openaiTurn(settings, req, extra);
+		}
+	};
+	// Cuánto piensa: cada servidor lo pide a su manera y no todos lo aceptan. Se prueba la primera
+	// opción; si el servidor la rechaza, la siguiente (la última es no pedir nada). La que funciona
+	// se recuerda para no repetir el intento fallido en cada mensaje.
+	const options = reasoningOptions(settings);
+	const memo = `${settings.provider}|${settings.model}|${settings.thinking}`;
+	for (let i = reasoningMemo.get(memo) ?? 0; ; i++) {
+		try {
+			const result = await turn(options[i]);
+			if (i > 0) reasoningMemo.set(memo, i);
+			return result;
+		} catch (err) {
+			const last = i >= options.length - 1;
+			if (last || !(err instanceof LLMError) || !isReasoningRejection(err)) throw err;
+		}
 	}
+}
+
+/** Qué opción de razonamiento funcionó con cada modelo (índice en reasoningOptions). */
+const reasoningMemo = new Map<string, number>();
+
+/**
+ * Lo que se añade a la petición para elegir cuánto piensa el modelo, de la opción preferida a la
+ * de reserva. La última siempre es {} (no pedir nada: lo que diga el modelo).
+ * - Ollama: `think` (true/false; gpt-oss y otros aceptan "low" | "medium" | "high").
+ * - llama.cpp, vLLM, LM Studio: la plantilla del modelo (`enable_thinking`, Qwen3…) y `reasoning_effort`.
+ * - OpenRouter: su objeto `reasoning`.
+ * - OpenCode y otros de la nube: `reasoning_effort` (estándar de OpenAI) y `thinking` (GLM, Kimi, DeepSeek).
+ * - /responses (GPT): `reasoning.effort`.
+ * - Formato Anthropic: no se toca (Claude solo piensa si se le pide, y Shiro no se lo pide).
+ */
+export function reasoningOptions(settings: Pick<LLMSettings, "dialect" | "local" | "provider" | "thinking" | "model">): Record<string, unknown>[] {
+	const level = settings.thinking ?? "auto";
+	if (level === "auto" || settings.dialect === "anthropic") return [{}];
+	const effort = level === "on" ? "medium" : level;
+	const wantsThinking = level !== "off";
+
+	if (settings.dialect === "ollama") {
+		// gpt-oss no deja de pensar con think:false (lo ignora): lo mínimo que acepta es "low".
+		if (level === "off" && /gpt-oss/i.test(settings.model)) return [{ think: "low" }, {}];
+		if (level === "off") return [{ think: false }, {}];
+		if (level === "on") return [{ think: true }, {}];
+		return [{ think: effort }, { think: true }, {}];
+	}
+	if (settings.dialect === "responses") {
+		if (level === "off") return [{ reasoning: { effort: "none" } }, { reasoning: { effort: "minimal" } }, { reasoning: { effort: "low" } }, {}];
+		if (level === "on") return [{}];
+		return [{ reasoning: { effort } }, {}];
+	}
+	if (settings.local) {
+		const template = { chat_template_kwargs: { enable_thinking: wantsThinking } };
+		if (level === "off" || level === "on") return [template, {}];
+		return [{ ...template, reasoning_effort: effort }, template, {}];
+	}
+	if (settings.provider === "openrouter") {
+		if (level === "off") return [{ reasoning: { effort: "none" } }, { reasoning: { enabled: false } }, {}];
+		if (level === "on") return [{ reasoning: { enabled: true } }, {}];
+		return [{ reasoning: { effort } }, {}];
+	}
+	if (level === "off") {
+		return [
+			{ reasoning_effort: "none", thinking: { type: "disabled" } },
+			{ thinking: { type: "disabled" } },
+			{ reasoning_effort: "minimal" },
+			{ reasoning_effort: "low" },
+			{},
+		];
+	}
+	if (level === "on") return [{}];
+	return [{ reasoning_effort: effort }, {}];
+}
+
+/** ¿El servidor rechazó la forma de pedir el razonamiento (y no otra cosa)? */
+function isReasoningRejection(err: LLMError): boolean {
+	if (err.kind === "reasoning_unsupported") return true;
+	if (err.kind !== "bad_request" || (err.status !== undefined && err.status !== 400 && err.status !== 422)) return false;
+	return /reason|think|effort|enable_thinking|chat_template|unrecognized|unknown (parameter|field|argument|variant)|extra (fields|inputs)|not permitted|unsupported (parameter|value)/i.test(err.message);
 }
 
 // ---------- utilidades ----------
@@ -168,7 +260,7 @@ async function toHttpError(settings: LLMSettings, res: Response): Promise<LLMErr
 		return new LLMError(`La conversación no cabe en la memoria del modelo${sizes}. ${fix}`, "bad_request", res.status);
 	}
 	if (/does not support thinking|thinking is not supported/.test(lower)) {
-		return new LLMError(`El modelo ${settings.model} no sabe «pensar antes de responder». Ponlo en «Lo que diga el modelo» en Ajustes → Modelo.`, "bad_request", res.status);
+		return new LLMError(`El modelo ${settings.model} no sabe «pensar antes de responder». Ponlo en «Lo que diga el modelo» en Ajustes → Modelo.`, "reasoning_unsupported", res.status);
 	}
 	if (/does not support tools|tool.*not supported|tools? (is|are) not supported|tool_choice|function calling is not/.test(lower)) {
 		return new LLMError(`El modelo ${settings.model} no soporta herramientas nativas.`, "tools_unsupported", res.status);
@@ -234,17 +326,18 @@ function toOpenAIMessage(m: Message): Record<string, unknown> {
 
 type OpenAIToolCallDelta = { index?: number; id?: string; function?: { name?: string; arguments?: unknown } };
 
-async function openaiTurn(settings: LLMSettings, req: TurnRequest): Promise<TurnResult> {
+async function openaiTurn(settings: LLMSettings, req: TurnRequest, thinkingParams: Record<string, unknown> = {}): Promise<TurnResult> {
 	const stream = Boolean(req.onDelta);
 	const body: Record<string, unknown> = {
 		model: settings.model,
 		messages: req.messages.map(toOpenAIMessage),
 		stream,
+		...thinkingParams,
 	};
 	if (settings.temperature !== undefined) body.temperature = settings.temperature;
 	if (settings.maxTokens) body.max_tokens = settings.maxTokens;
-	// Pensar sí/no: lo entienden las plantillas de llama.cpp y vLLM (Qwen3…). Solo si el usuario lo eligió.
-	if (settings.local && settings.thinking && settings.thinking !== "auto") body.chat_template_kwargs = { enable_thinking: settings.thinking === "on" };
+	// Para saber cuántos tokens gastó: en streaming el uso solo llega si se pide.
+	if (stream) body.stream_options = { include_usage: true };
 	if (req.tools?.length) {
 		body.tools = req.tools;
 		body.tool_choice = "auto";
@@ -254,6 +347,7 @@ async function openaiTurn(settings: LLMSettings, req: TurnRequest): Promise<Turn
 	if (!stream) {
 		const data = (await res.json()) as {
 			choices?: { message?: { content?: string | null; reasoning_content?: string | null; tool_calls?: OpenAIToolCallDelta[] } }[];
+			usage?: OpenAIUsage;
 		};
 		const msg = data.choices?.[0]?.message;
 		return {
@@ -266,11 +360,13 @@ async function openaiTurn(settings: LLMSettings, req: TurnRequest): Promise<Turn
 					function: { name: tc.function!.name!, arguments: argsToString(tc.function!.arguments) },
 				})),
 			...(msg?.reasoning_content ? { carry: { reasoning_content: msg.reasoning_content } } : {}),
+			usage: openaiUsage(data.usage, msg?.reasoning_content ?? ""),
 		};
 	}
 
 	let content = "";
 	let reasoning = "";
+	let usage: OpenAIUsage | undefined;
 	const calls = new Map<number, { id: string; name: string; args: string }>();
 	for await (const line of readLines(res)) {
 		if (!line.startsWith("data:")) continue;
@@ -279,6 +375,7 @@ async function openaiTurn(settings: LLMSettings, req: TurnRequest): Promise<Turn
 		let evt: {
 			choices?: { delta?: { content?: string | null; reasoning_content?: string | null; tool_calls?: OpenAIToolCallDelta[] } }[];
 			error?: { message?: string };
+			usage?: OpenAIUsage | null;
 		};
 		try {
 			evt = JSON.parse(payload);
@@ -286,6 +383,7 @@ async function openaiTurn(settings: LLMSettings, req: TurnRequest): Promise<Turn
 			continue;
 		}
 		if (evt.error) throw new LLMError(`Error del modelo: ${evt.error.message ?? "desconocido"}`, "server");
+		if (evt.usage) usage = evt.usage;
 		const delta = evt.choices?.[0]?.delta;
 		if (!delta) continue;
 		if (delta.reasoning_content) reasoning += delta.reasoning_content;
@@ -310,6 +408,7 @@ async function openaiTurn(settings: LLMSettings, req: TurnRequest): Promise<Turn
 			.filter((c) => c.name)
 			.map((c) => ({ id: c.id || newCallId(), type: "function" as const, function: { name: c.name, arguments: c.args || "{}" } })),
 		...(reasoning ? { carry: { reasoning_content: reasoning } } : {}),
+		usage: openaiUsage(usage, reasoning),
 	};
 }
 
@@ -337,12 +436,14 @@ function toOllamaMessage(m: Message): Record<string, unknown> {
 }
 
 type OllamaChunk = {
-	message?: { content?: string; tool_calls?: { function?: { name?: string; arguments?: unknown } }[] };
+	message?: { content?: string; thinking?: string; tool_calls?: { function?: { name?: string; arguments?: unknown } }[] };
 	done?: boolean;
+	prompt_eval_count?: number;
+	eval_count?: number;
 	error?: string;
 };
 
-async function ollamaTurn(settings: LLMSettings, req: TurnRequest): Promise<TurnResult> {
+async function ollamaTurn(settings: LLMSettings, req: TurnRequest, thinkingParams: Record<string, unknown> = {}): Promise<TurnResult> {
 	const stream = Boolean(req.onDelta);
 	const options: Record<string, unknown> = { num_ctx: settings.contextWindow };
 	if (settings.temperature !== undefined) options.temperature = settings.temperature;
@@ -352,15 +453,22 @@ async function ollamaTurn(settings: LLMSettings, req: TurnRequest): Promise<Turn
 		messages: req.messages.map(toOllamaMessage),
 		stream,
 		options,
+		...thinkingParams,
 	};
-	if (settings.thinking && settings.thinking !== "auto") body.think = settings.thinking === "on";
 	if (req.tools?.length) body.tools = req.tools;
 	const res = await doFetch(settings, `${settings.baseUrl}/api/chat`, body, req.signal);
 
 	let content = "";
+	let thinking = "";
+	let usage: TokenUsage | undefined;
 	const toolCalls: ToolCallSpec[] = [];
 	const absorb = (chunk: OllamaChunk) => {
 		if (chunk.error) throw new LLMError(`${PROVIDER_PRESETS[settings.provider].title}: ${chunk.error}`, "server");
+		if (chunk.message?.thinking) thinking += chunk.message.thinking;
+		// El último trozo trae lo que leyó (prompt_eval_count) y lo que escribió, pensando incluido (eval_count).
+		if (chunk.prompt_eval_count !== undefined || chunk.eval_count !== undefined) {
+			usage = { input: chunk.prompt_eval_count ?? 0, output: chunk.eval_count ?? 0 };
+		}
 		const piece = chunk.message?.content ?? "";
 		if (piece) {
 			content += piece;
@@ -387,7 +495,8 @@ async function ollamaTurn(settings: LLMSettings, req: TurnRequest): Promise<Turn
 			}
 		}
 	}
-	return { content, toolCalls };
+	if (usage && thinking) usage.reasoning = Math.min(usage.output, approxTokens(thinking));
+	return { content, toolCalls, usage };
 }
 
 // ---------- Anthropic (/messages): Claude; en OpenCode también MiniMax y algunos Qwen ----------
@@ -453,7 +562,14 @@ type AnthropicEvent = {
 	content_block?: AnthropicBlock;
 	delta?: { type?: string; text?: string; partial_json?: string; thinking?: string; signature?: string };
 	error?: { message?: string };
+	message?: { usage?: AnthropicUsage };
+	usage?: AnthropicUsage;
 };
+
+type AnthropicUsage = { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number };
+
+/** Lo leído incluye lo que vino de la caché del servidor. */
+const anthropicInput = (u: AnthropicUsage) => (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
 
 async function anthropicTurn(settings: LLMSettings, req: TurnRequest): Promise<TurnResult> {
 	const stream = Boolean(req.onDelta);
@@ -477,9 +593,11 @@ async function anthropicTurn(settings: LLMSettings, req: TurnRequest): Promise<T
 	const res = await doFetch(settings, `${settings.baseUrl}/messages`, body, req.signal);
 
 	let blocks: AnthropicBlock[] = [];
+	let usage: TokenUsage | undefined;
 	if (!stream) {
-		const data = (await res.json()) as { content?: AnthropicBlock[] };
+		const data = (await res.json()) as { content?: AnthropicBlock[]; usage?: AnthropicUsage };
 		blocks = Array.isArray(data.content) ? data.content : [];
+		if (data.usage) usage = { input: anthropicInput(data.usage), output: data.usage.output_tokens ?? 0 };
 	} else {
 		// Cada bloque (texto, razonamiento, uso de herramienta) llega a trozos, identificado por su índice.
 		const partial = new Map<number, AnthropicBlock>();
@@ -494,6 +612,9 @@ async function anthropicTurn(settings: LLMSettings, req: TurnRequest): Promise<T
 			}
 			if (evt.type === "error") throw new LLMError(`Error del modelo: ${evt.error?.message ?? "desconocido"}`, "server");
 			if (evt.type === "message_stop") break;
+			// Lo leído llega al empezar; lo escrito, al final (message_delta).
+			if (evt.type === "message_start" && evt.message?.usage) usage = { input: anthropicInput(evt.message.usage), output: evt.message.usage.output_tokens ?? 0 };
+			if (evt.type === "message_delta" && evt.usage) usage = { input: usage?.input ?? 0, output: evt.usage.output_tokens ?? usage?.output ?? 0 };
 			const index = evt.index ?? 0;
 			if (evt.type === "content_block_start" && evt.content_block) {
 				partial.set(index, { ...evt.content_block });
@@ -541,7 +662,9 @@ async function anthropicTurn(settings: LLMSettings, req: TurnRequest): Promise<T
 			keep.push(b);
 		}
 	}
-	return { content, toolCalls, ...(toolCalls.length ? { carry: { anthropic_blocks: keep } } : {}) };
+	const thinkingText = blocks.map((b) => (b.type === "thinking" && typeof b.thinking === "string" ? b.thinking : "")).join("");
+	if (usage && thinkingText) usage.reasoning = Math.min(usage.output, approxTokens(thinkingText));
+	return { content, toolCalls, usage, ...(toolCalls.length ? { carry: { anthropic_blocks: keep } } : {}) };
 }
 
 // ---------- OpenAI Responses (/responses): GPT, Grok y Muse en OpenCode ----------
@@ -603,15 +726,23 @@ type ResponsesEvent = {
 	delta?: string;
 	item?: ResponsesItem;
 	message?: string;
-	response?: { output?: ResponsesItem[]; error?: { message?: string } | null };
+	response?: { output?: ResponsesItem[]; error?: { message?: string } | null; usage?: ResponsesUsage };
 	error?: { message?: string };
 };
 
-async function responsesTurn(settings: LLMSettings, req: TurnRequest): Promise<TurnResult> {
+type ResponsesUsage = { input_tokens?: number; output_tokens?: number; output_tokens_details?: { reasoning_tokens?: number } };
+
+function responsesUsage(u: ResponsesUsage | undefined): TokenUsage | undefined {
+	if (!u) return undefined;
+	const reasoning = u.output_tokens_details?.reasoning_tokens ?? 0;
+	return { input: u.input_tokens ?? 0, output: u.output_tokens ?? 0, ...(reasoning ? { reasoning } : {}) };
+}
+
+async function responsesTurn(settings: LLMSettings, req: TurnRequest, thinkingParams: Record<string, unknown> = {}): Promise<TurnResult> {
 	const stream = Boolean(req.onDelta);
 	const conversation = toResponsesInput(req.messages);
 	// store:false = el servidor no guarda la conversación; Shiro la manda entera cada vez.
-	const body: Record<string, unknown> = { model: settings.model, input: conversation.input, stream, store: false };
+	const body: Record<string, unknown> = { model: settings.model, input: conversation.input, stream, store: false, ...thinkingParams };
 	if (conversation.instructions) body.instructions = conversation.instructions;
 	if (settings.temperature !== undefined) body.temperature = settings.temperature;
 	if (settings.maxTokens) body.max_output_tokens = settings.maxTokens;
@@ -628,12 +759,13 @@ async function responsesTurn(settings: LLMSettings, req: TurnRequest): Promise<T
 	const res = await doFetch(settings, `${settings.baseUrl}/responses`, body, req.signal);
 
 	if (!stream) {
-		const data = (await res.json()) as { output?: ResponsesItem[]; error?: { message?: string } | null };
+		const data = (await res.json()) as { output?: ResponsesItem[]; error?: { message?: string } | null; usage?: ResponsesUsage };
 		if (data.error?.message) throw new LLMError(`Error del modelo: ${data.error.message}`, "server");
-		return readResponsesOutput(data.output);
+		return { ...readResponsesOutput(data.output), usage: responsesUsage(data.usage) };
 	}
 
 	let content = "";
+	let usage: TokenUsage | undefined;
 	const toolCalls: ToolCallSpec[] = [];
 	for await (const line of readLines(res)) {
 		if (!line.startsWith("data:")) continue;
@@ -662,8 +794,9 @@ async function responsesTurn(settings: LLMSettings, req: TurnRequest): Promise<T
 				req.onDelta?.(final.content);
 			}
 			if (!toolCalls.length) toolCalls.push(...final.toolCalls);
+			usage = responsesUsage(evt.response?.usage);
 			break;
 		}
 	}
-	return { content, toolCalls };
+	return { content, toolCalls, usage };
 }

@@ -14,8 +14,24 @@ const tokens = (n) => `${Number(n).toLocaleString("es")} tokens`;
 
 const THINKING = [
 	["auto", "Lo que diga el modelo"],
-	["on", "Sí (razona mejor, tarda más)"],
-	["off", "No (responde enseguida)"],
+	["off", "No pensar (lo que menos gasta)"],
+	["low", "Poco (gasta poco)"],
+	["medium", "Normal"],
+	["high", "Mucho (razona mejor, gasta más)"],
+];
+const SAVER = [
+	["auto", "Automático (encendido en modelos de tu PC y de OpenCode)"],
+	["on", "Encendido"],
+	["off", "Apagado"],
+];
+const HISTORY = [
+	[0, "Automático (lo que quepa; en la nube, hasta 16.000 tokens)"],
+	[2000, "Muy poca (≈2.000 tokens, los últimos mensajes)"],
+	[4000, "Poca (≈4.000 tokens)"],
+	[8000, "Media (≈8.000 tokens)"],
+	[16000, "Bastante (≈16.000 tokens)"],
+	[32000, "Mucha (≈32.000 tokens)"],
+	[1000000, "Toda la conversación"],
 ];
 const MAX_TOKENS = [["", "Sin límite"], ...[512, 1024, 2048, 4096, 8192, 16384].map((n) => [n, tokens(n)])];
 const LLAMA_CTX = [[0, "Automático (lo que quepa en la tarjeta)"], ...[8192, 16384, 32768, 65536, 131072].map((n) => [n, tokens(n)])];
@@ -74,16 +90,19 @@ export function mountModelSettings(container, ctx) {
 			<p class="set-desc" data-part="hint"></p>
 			<details class="tuning-sec" open>
 				<summary>Cómo responde</summary>
+				${row("Modo ahorro", "Gasta menos: solo le da las herramientas que parecen hacer falta para tu mensaje, acorta los resultados largos y usa como mucho 4 pasos.", `<select class="select" data-f="saver"></select>`)}
 				${row(
 					"Temperatura",
 					"Baja: más preciso y repetible. Alta: más creativo y variado.",
 					`<label class="tuning-check"><input type="checkbox" data-f="tempDefault" /> La del modelo</label><input type="range" min="0" max="2" step="0.05" data-f="temperature" aria-label="Temperatura" /><b class="tuning-val" data-part="tempVal"></b>`,
 				)}
-				${row("Pensar antes de responder", "Modelos como Qwen3 pueden razonar en silencio antes de contestar.", `<select class="select" data-f="thinking"></select>`, "thinking")}
+				${row("Cuánto piensa antes de responder", "Muchos modelos razonan en silencio antes de contestar, y eso gasta tokens. Con modelos pequeños o de pago, «Poco» o «No pensar» ahorra mucho.", `<select class="select" data-f="thinking"></select>`, "thinking")}
+				<p class="tuning-note" data-part="thinkingNote" hidden></p>
 				${row("Largo máximo de la respuesta", "Corta las respuestas que se alarguen de más.", `<select class="select" data-f="maxTokens"></select>`)}
 			</details>
-			<details class="tuning-sec" data-show="context">
+			<details class="tuning-sec">
 				<summary>Contexto</summary>
+				${row("Conversación que se envía", "Cuántos mensajes anteriores ve el modelo en cada respuesta. Menos gasta menos, pero recuerda menos del chat. El chat completo se sigue guardando.", `<select class="select" data-f="historyTokens"></select>`)}
 				${row("Tamaño de contexto", "Cuánto texto tiene en cuenta a la vez: conversación, instrucciones y archivos leídos. Más contexto usa más memoria.", `<select class="select" data-f="contextSize"></select>`, "contextSelect")}
 				<p class="tuning-note" data-part="contextInfo"></p>
 			</details>
@@ -139,13 +158,17 @@ export function mountModelSettings(container, ctx) {
 		f("tempDefault").checked = v.temperature === undefined || v.temperature === null;
 		f("temperature").value = v.temperature ?? 0.7;
 		paintTemp();
-		f("thinking").innerHTML = opts(THINKING, v.thinking);
+		// "on" es el valor viejo: equivale a pensar lo normal.
+		f("thinking").innerHTML = opts(THINKING, v.thinking === "on" ? "medium" : v.thinking);
+		part("thinkingNote").textContent = st.thinkingNote || "";
+		part("thinkingNote").hidden = !st.thinkingNote;
 		f("maxTokens").innerHTML = opts(MAX_TOKENS, v.maxTokens ?? "");
+		f("historyTokens").innerHTML = opts(HISTORY, v.historyTokens ?? 0);
+		f("saver").innerHTML = opts(SAVER, v.saver ?? "auto");
 
 		const c = st.fields.context;
 		const show = (name, on) => container.querySelectorAll(`[data-show="${name}"]`).forEach((el) => (el.hidden = !on));
 		show("thinking", st.fields.thinking);
-		show("context", Boolean(c));
 		show("contextSelect", c === "llama" || c === "ollama");
 		show("performance", st.fields.performance);
 		if (c === "llama") f("contextSize").innerHTML = opts(LLAMA_CTX, v.contextSize);
@@ -185,6 +208,8 @@ export function mountModelSettings(container, ctx) {
 		const values = {
 			temperature: f("tempDefault").checked ? null : Number(f("temperature").value),
 			maxTokens: f("maxTokens").value ? Number(f("maxTokens").value) : null,
+			historyTokens: Number(f("historyTokens").value) || 0,
+			saver: f("saver").value,
 			toolMode: f("toolMode").value,
 			toolProfile: f("toolProfile").value,
 			maxToolIterations: Math.min(40, Math.max(1, num(f("maxToolIterations"), 10))),

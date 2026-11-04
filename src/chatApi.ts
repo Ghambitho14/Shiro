@@ -13,6 +13,7 @@ import { SCREENSHOT_DIR } from "./core/pc/pc.js";
 import { setHealthActive } from "./core/health/HealthManager.js";
 import { buildWorkspaceContext } from "./workspace.js";
 import { getLLM } from "./core/llm/getLLM.js";
+import { addUsage, newUsage } from "./core/llm/LLMClient.js";
 import { runAgent } from "./core/agent/Agent.js";
 import { getAllToolNames } from "./core/tools/ToolRegistry.js";
 import { matchSkillCommand, parseCommand } from "./commands.js";
@@ -405,6 +406,7 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 				res.on("close", () => {
 					if (!res.writableEnded) abort.abort();
 				});
+				const usage = newUsage();
 				try {
 					const content = await runAgent(goal, {
 						llm: turn?.llm ?? getLLM(),
@@ -418,6 +420,7 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 						room: turn?.room,
 						userProfile: getUserProfile(),
 						onStreamDelta: (chunk) => sendSseData(res, { type: "delta", text: chunk }),
+						onUsage: (u) => addUsage(usage, u),
 						onToolEvent: (e) =>
 							sendSseData(res, e.phase === "end" ? { type: "tool", ...e, image: screenshotUrl(e.image) } : { type: "tool", ...e }),
 						approver: createSseApprover(res, sessionId ?? "web-default"),
@@ -429,7 +432,7 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 						projectId: project?.id,
 					}, workspaceContext ?? undefined);
 					if (abort.signal.aborted) return true;
-					sendSseData(res, { type: "done", content, ...speakerInfo });
+					sendSseData(res, { type: "done", content, ...speakerInfo, ...(usage.turns ? { usage } : {}) });
 					res.end();
 				} catch (errIn) {
 					const msgIn = errIn instanceof Error ? errIn.message : String(errIn);
@@ -438,7 +441,9 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 				}
 				return true;
 			}
+			const usage = newUsage();
 			const content = await runAgent(goal, {
+				onUsage: (u) => addUsage(usage, u),
 				llm: turn?.llm ?? getLLM(),
 				agentName: turn?.agentName ?? state.name,
 				tokenBudget: 8000,
@@ -452,7 +457,7 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 				sessionId,
 				projectId: project?.id,
 			}, workspaceContext ?? undefined);
-			sendJson(res, 200, { content, ...speakerInfo, ...(roomPayload ?? {}) });
+			sendJson(res, 200, { content, ...speakerInfo, ...(roomPayload ?? {}), ...(usage.turns ? { usage } : {}) });
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);
 			if (streamSse && res.headersSent) {

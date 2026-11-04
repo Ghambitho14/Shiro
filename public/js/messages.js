@@ -54,6 +54,7 @@ export function replaceText(content, newText) {
 export function fromServer(m) {
 	const out = { role: m.role, content: m.content, ts: m.ts };
 	if (m.agent) Object.assign(out, { agent: m.agent, agentName: m.agentName });
+	if (m.usage?.turns) out.usage = m.usage;
 	if (Array.isArray(m.tools)) out.tools = m.tools.map((t, i) => ({ id: `h${i}`, name: t.name, label: t.label, status: t.ok === false ? "fail" : "ok", image: t.image }));
 	return out;
 }
@@ -62,6 +63,7 @@ export function serialize(m) {
 	const o = { role: m.role, content: m.content };
 	if (m.ts) o.ts = m.ts;
 	if (m.agent) Object.assign(o, { agent: m.agent, agentName: m.agentName });
+	if (m.usage) o.usage = m.usage;
 	if (m.tools?.length) {
 		o.tools = m.tools.map((t) => ({ name: t.name, label: t.label, ok: t.status !== "fail", ...(t.image ? { image: t.image } : {}) }));
 	}
@@ -148,6 +150,7 @@ export function buildAssistant(m) {
 		actionButton("copy", "Copiar", (b) => copyText(m.content, b)),
 		actionButton("volume", "Leer en voz alta", (b) => readAloud(m, b)),
 		actionButton("refresh", "Regenerar respuesta", () => regenerate(m)),
+		el("span", "msg-usage"),
 	);
 	refs.set(m, r);
 	if ((m.tools?.length ?? 0) > 3) r.steps.classList.add("collapsed");
@@ -223,6 +226,25 @@ export function paintAssistant(m) {
 		r.extra.innerHTML = '<div class="msg-note">Respuesta detenida.</div>';
 	}
 	r.actions.hidden = Boolean(m.error) && !m.content;
+	paintUsage(m, r);
+}
+
+const num = (n) => Number(n).toLocaleString("es");
+/** 12345 → "12,3 mil" (corto, para la barra de acciones). */
+const short = (n) => (n >= 1000 ? `${(n / 1000).toLocaleString("es", { maximumFractionDigits: n >= 10_000 ? 0 : 1 })} mil` : num(n));
+
+/** Cuántos tokens gastó la respuesta (si el servidor lo dijo): leídos y escritos; el detalle, al pasar el ratón. */
+function paintUsage(m, r) {
+	const box = $(".msg-usage", r.actions);
+	if (!box) return;
+	const u = m.usage;
+	box.hidden = !u?.turns;
+	if (!u?.turns) return;
+	box.textContent = `${short(u.input)} leídos · ${short(u.output)} escritos`;
+	const parts = [`Leyó ${num(u.input)} tokens y escribió ${num(u.output)}`];
+	if (u.reasoning) parts.push(`de ellos, unos ${num(u.reasoning)} pensando`);
+	parts.push(u.turns === 1 ? "en 1 vuelta con el modelo" : `en ${u.turns} vueltas con el modelo (cada herramienta es una vuelta más y reenvía todo)`);
+	box.title = parts.join(", ") + ".";
 }
 
 export function renderThread() {
