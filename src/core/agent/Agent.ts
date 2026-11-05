@@ -24,6 +24,10 @@ import { mcpManager } from "../mcp/McpManager.js";
 import { getEnabledSkills, getSkillInstructions } from "../skills/SkillLoader.js";
 import { getProject, inlineProjectText, projectIndex, runWithProject } from "../projects/projects.js";
 import { claudeCodeLauncher } from "../claudeCode/claudeCode.js";
+import { loadAgents } from "../agents/registry.js";
+import { runWithAgentContext, type AgentRunContext } from "./runContext.js";
+import type { ThinkingLevel } from "../../config/config.js";
+import { isPlanToolCall, type ChatMode, type PermissionMode } from "./chatMode.js";
 
 export type UserProfileForAgent = {
 	userName?: string;
@@ -67,6 +71,12 @@ export type AgentOptions = {
 	signal?: AbortSignal;
 	/** El usuario habla por voz: respuestas breves y sin formato. */
 	voice?: boolean;
+	/** Chat normal, programación o pentesting autorizado. */
+	mode?: ChatMode;
+	/** Preguntar, planear (solo lectura), automático u omitir permisos. Solo la web la elige; sin approver no aplica. */
+	permissions?: PermissionMode;
+	/** Cuánto piensa en esta respuesta, si no es lo de Ajustes → Modelo. */
+	thinking?: ThinkingLevel;
 	/** Id del chat, para que el proveedor agrupe las peticiones de la misma conversación. */
 	sessionId?: string;
 	/** Ofrecer las herramientas de los servidores MCP (por defecto sí, si hay approver). */
@@ -79,6 +89,8 @@ export type AgentOptions = {
 	persona?: PersonaContext;
 	/** Sala con varios agentes: quién está y cómo llegan los mensajes de los demás. */
 	room?: RoomContext;
+	/** Es un ayudante creado con `delegate`: hace su tarea y no puede crear otros. */
+	subagent?: { boss: string };
 };
 
 /** Veces que se permite repetir exactamente la misma llamada (nombre + args) en una respuesta. */
@@ -101,22 +113,28 @@ export function resolveTools(
 	canAskUser: boolean,
 	includeMcp = true,
 	ref?: ModelRef,
+	mode: ChatMode = "chat",
+	planning = false,
 ): string[] | undefined {
 	let tools = requested;
 	// Ajustes → Modelo: cada modelo puede tener su perfil (pocas o todas las herramientas).
+	// Code y Planear ya son listas cortas y elegidas a propósito: no se vuelven a recortar.
 	const profile = activeModelTuning(ref).toolProfile;
-	const lite = profile === "lite" || (profile === "auto" && localModel);
+	const lite = mode === "chat" && !planning && (profile === "lite" || (profile === "auto" && localModel));
 	if (lite) {
 		tools = (tools ?? LITE_TOOLS).filter((t) => LITE_TOOLS.includes(t));
 	}
 	// El control del PC solo se ofrece donde se puede pedir permiso al usuario (web, terminal).
 	// En WhatsApp, Telegram o tareas programadas cualquiera que escriba podría abrir cosas o mirar la pantalla.
-	if (!getConfig().pcControl || !canAskUser) {
+	// Code y CodeHacking se activan a propósito: conservan su terminal (cada comando sigue pidiendo
+	// permiso), pero solo donde hay approver (canAskUser).
+	const stripPc = !canAskUser || (!getConfig().pcControl && mode !== "code" && mode !== "hacking");
+	if (stripPc) {
 		tools = (tools ?? getAllToolNames()).filter((t) => !PC_TOOLS.includes(t));
 	}
 	// Las de los servidores MCP las eligió el usuario (también con modelos locales), pero pueden
-	// tener efectos: igual que el control del PC, solo donde se le puede pedir permiso.
-	const mcp = includeMcp && canAskUser ? mcpManager.getToolNames() : [];
+	// tener efectos: igual que el control del PC, solo donde se le puede pedir permiso. Nunca al planear.
+	const mcp = !planning && includeMcp && canAskUser ? mcpManager.getToolNames() : [];
 	if (mcp.length) tools = [...(tools ?? getAllToolNames()), ...mcp];
 	return tools;
 }
@@ -168,13 +186,16 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 		sessionId,
 	} = opts;
 
+	const mode = opts.mode ?? "chat";
+	const permissions = opts.permissions ?? "ask";
+	const planning = permissions === "plan";
 	// Los servidores MCP que aún están arrancando tienen unos segundos para ofrecer sus tools.
 	if (mcpManager.isStarted()) await mcpManager.whenReady(8000);
 	// El modelo de este cliente (el de un agente puede no ser el de Ajustes → Modelo).
 	const llmInfo = llm.getConfig();
 	const ref: ModelRef | undefined =
 		llmInfo.provider in PROVIDER_PRESETS ? { provider: llmInfo.provider as ModelRef["provider"], model: llmInfo.model } : undefined;
-	let effectiveTools = resolveTools(allowedTools, llmInfo.local, approver !== undefined, opts.mcp !== false, ref);
+	let effectiveTools = resolveTools(allowedTools, llmInfo.local, approver !== undefined, opts.mcp !== false, ref, mode, planning);
 	// use_skill solo tiene sentido si hay habilidades activas.
 	const skills = getEnabledSkills();
 	if (!skills.length && (effectiveTools ?? getAllToolNames()).includes("use_skill")) {
@@ -193,8 +214,13 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 	if (!canUseClaudeCode && (effectiveTools ?? getAllToolNames()).includes("claude_code")) {
 		effectiveTools = (effectiveTools ?? getAllToolNames()).filter((t) => t !== "claude_code");
 	}
-	// Modo ahorro: solo las herramientas que parecen hacer falta para este mensaje (y los últimos).
-	if (saverOn(ref) && opts.textOnly !== true) {
+	// Los ayudantes no crean otros ayudantes: solo reparte el jefe.
+	if (opts.subagent && (effectiveTools ?? getAllToolNames()).includes("delegate")) {
+		effectiveTools = (effectiveTools ?? getAllToolNames()).filter((t) => t !== "delegate");
+	}
+	// Modo ahorro: solo en Chat. Code, CodeHacking y Planear ya tienen listas cortas y completas
+	// para su tarea; quitarles herramientas por palabras clave los dejaría cojos a mitad de trabajo.
+	if (saverOn(ref) && opts.textOnly !== true && mode === "chat" && !planning) {
 		const before = effectiveTools ?? getAllToolNames();
 		if (before.length) {
 			effectiveTools = selectToolsByIntent(before, intentTexts(goal, conversation));
@@ -203,7 +229,10 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 	}
 	// Una lista vacía significa "ninguna tool": se responde solo con texto.
 	const textOnly = opts.textOnly === true || (effectiveTools !== undefined && effectiveTools.length === 0);
-	const hasPcTools = !textOnly && (effectiveTools ?? getAllToolNames()).some((t) => PC_TOOLS.includes(t));
+	// El bloque general de control del PC solo cuando tiene esas tools; tener terminal o Claude Code
+	// no significa que pueda abrir apps, mover el ratón o cambiar el volumen.
+	const generalPcTools = ["pc_open", "pc_screenshot", "pc_keyboard", "pc_mouse", "pc_media", "pc_windows"];
+	const hasPcTools = !textOnly && (effectiveTools ?? getAllToolNames()).some((t) => generalPcTools.includes(t));
 	const vision = modelSupportsVision(llmInfo.model, undefined, ref?.provider);
 
 	const wantExplain = /\b(explica|explicame|explícame|que hiciste|qué hiciste|como lo hiciste|cómo lo hiciste|pasos|tools|herramientas)\b/i.test(goal || "");
@@ -231,11 +260,19 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 		pcControl: hasPcTools,
 		vision,
 		voice,
+		mode,
+		planning,
 		skills: !textOnly && (effectiveTools ?? getAllToolNames()).includes("use_skill") ? skills : undefined,
 		forcedSkill: opts.skill ? getSkillInstructions(opts.skill) ?? undefined : undefined,
 		project: projectContext,
 		persona: opts.persona,
 		room: opts.room,
+		subagent: opts.subagent,
+		// El jefe sabe a qué agentes de Ajustes → Agentes puede encargar tareas.
+		helpers:
+			!textOnly && (effectiveTools ?? getAllToolNames()).includes("delegate")
+				? loadAgents().agents.map((a) => ({ name: a.name, description: a.description || undefined }))
+				: undefined,
 	});
 
 	const history: Message[] = (conversation ?? [])
@@ -279,7 +316,12 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 
 		const id = `t${++toolSeq}`;
 		onToolEvent?.({ phase: "start", id, name, label: describeToolUse(name, args) });
-		const r = await executeToolSafeScoped(name, args, effectiveTools);
+		// Planear es solo lectura de verdad: project agrupa leer y escribir bajo un mismo nombre,
+		// así que la acción se vuelve a comprobar aquí, también para los ayudantes de delegate.
+		const r =
+			planning && !isPlanToolCall(name, args)
+				? { ok: false as const, error: "Estás planeando: es solo lectura. Para modificar archivos o ejecutar acciones, el usuario tiene que cambiar el botón de permisos del chat a Preguntar o Automático." }
+				: await executeToolSafeScoped(name, args, effectiveTools);
 		usedTools.push({ name, ok: r.ok, argsKeys });
 		onToolEvent?.(
 			r.ok ? { phase: "end", id, name, ok: true, image: r.image } : { phase: "end", id, name, ok: false, error: r.error },
@@ -316,15 +358,37 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 			}
 		: undefined;
 	const retryPolicy = createRetryPolicy({ maxRetries: 2, baseDelayMs: 800 });
+	// Para las tools que necesitan saber de esta respuesta (delegate crea ayudantes con lo mismo).
+	const runContext: AgentRunContext = {
+		llm,
+		agentName,
+		mode,
+		permissions,
+		thinking: opts.thinking,
+		tools: effectiveTools,
+		approver,
+		signal,
+		userProfile,
+		workspaceContext,
+		sessionId,
+		projectId: project?.id,
+		subagent: opts.subagent !== undefined,
+		launched: 0,
+	};
 	let content = "";
 	try {
 		for (let attempt = 0; ; attempt++) {
 			try {
-				content = await runWithProject(project, () =>
-					runWithApprover(approver, () =>
-						textOnly
-							? llm.chat(fullMessages, { onDelta, onUsage, signal, sessionId })
-							: llm.chatWithTools(fullMessages, toolsDef, executeTool, { onDelta, onUsage, signal, sessionId }),
+				content = await runWithAgentContext(runContext, () =>
+					runWithProject(project, () =>
+						runWithApprover(
+							approver,
+							() =>
+								textOnly
+									? llm.chat(fullMessages, { onDelta, onUsage, signal, sessionId, thinking: opts.thinking })
+									: llm.chatWithTools(fullMessages, toolsDef, executeTool, { onDelta, onUsage, signal, sessionId, thinking: opts.thinking }),
+							permissions,
+						),
 					),
 				);
 				break;

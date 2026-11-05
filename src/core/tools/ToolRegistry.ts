@@ -1,7 +1,8 @@
 import type { ToolResult } from "../agent/Types.js";
 import type { ToolDef } from "../llm/LLMClient.js";
 import { executeTool } from "./tools.js";
-import { requestApproval } from "./approval.js";
+import { noteExternalRead, requestApproval } from "./approval.js";
+import { isExternalTool } from "./untrusted.js";
 import { isMcpToolName, mcpManager } from "../mcp/McpManager.js";
 import { shiroBrowser } from "../browser/browser.js";
 
@@ -134,6 +135,25 @@ export const TOOLS: ToolDefinition[] = [
 			properties: { url: { type: "string", description: "URL completa (https://...)" } },
 			required: ["url"],
 		},
+	},
+	{
+		label: "Buscar CVE",
+		name: "cve_search",
+		description:
+			"Busca vulnerabilidades (CVE) en la base de datos de CIRCL. Úsalo en pruebas de seguridad para saber qué fallos afectan a un software y su versión. Dos formas: por id (un CVE concreto, p. ej. CVE-2024-3094) o por producto (product, y opcional vendor, p. ej. vendor=openbsd product=openssh). Devuelve CVSS, resumen, productos afectados y referencias.",
+		category: "web",
+		parameters: {
+			type: "object",
+			properties: {
+				id: { type: "string", description: "Un CVE concreto, formato CVE-AAAA-NNNN (ej: CVE-2024-3094)" },
+				vendor: { type: "string", description: "Fabricante del producto (ej: openbsd, apache)" },
+				product: { type: "string", description: "Nombre del producto (ej: openssh, log4j)" },
+			},
+		},
+		examples: [
+			'"qué sabes del CVE-2021-44228" → cve_search({id: "CVE-2021-44228"})',
+			'"vulnerabilidades de openssh" → cve_search({vendor: "openbsd", product: "openssh"})',
+		],
 	},
 	{
 		label: "Describir Imagen",
@@ -566,21 +586,27 @@ export const TOOLS: ToolDefinition[] = [
 		label: "Terminal",
 		name: "terminal",
 		description:
-			"Terminal (PowerShell en Windows) compartida con el usuario, visible en el panel Terminal. read: ver lo último que hay (comandos del usuario y su salida, errores). run: ejecutar un comando a la vista del usuario y recibir su salida. stop: detener lo que se esté ejecutando.",
+			"Terminal real (PowerShell en Windows, bash en Linux) compartida con el usuario, visible en el panel Terminal. read: ver lo que hay en pantalla. run: ejecutar un comando a su vista; vuelve al terminar o cuando un programa queda abierto esperando algo. write: teclear en lo que esté abierto (responder a una pregunta, manejar un programa interactivo como claude, ssh o vim). stop: detener lo que esté en marcha (Ctrl+C). Para programas interactivos: run los abre, write les escribe, read (con wait_seconds si tardan) muestra su pantalla. Contraseñas: nunca las pidas en el chat; si un programa pide una, el panel avisa al usuario, él la escribe ahí sin que tú la veas y sigues solo. Teclea una solo si el usuario te la dio expresamente.",
 		category: "pc",
 		parameters: {
 			type: "object",
 			properties: {
-				action: { type: "string", enum: ["read", "run", "stop"] },
+				action: { type: "string", enum: ["read", "run", "write", "stop"] },
 				command: { type: "string", description: "Para run: el comando" },
+				text: { type: "string", description: "Para write: el texto que se teclea" },
+				enter: { type: "boolean", description: "Para write: pulsar Enter tras el texto (por defecto sí si hay text)" },
+				keys: { type: "string", description: "Para write: teclas separadas por espacios: ctrl+c, enter, esc, tab, up, down, left, right, backspace…" },
 				lines: { type: "number", description: "Para read: cuántas líneas finales ver (por defecto 80)" },
-				timeout_seconds: { type: "number", description: "Para run: segundos máximos de espera (por defecto 60)" },
+				wait_seconds: { type: "number", description: "Para read: esperar hasta estos segundos a que lo que esté en marcha termine o se calle" },
+				timeout_seconds: { type: "number", description: "Para run (por defecto 60) y write (por defecto 15): segundos máximos de espera" },
 			},
 			required: ["action"],
 		},
 		examples: [
 			'"mira qué error sale en la terminal" → terminal({action: "read"})',
 			'"instala las dependencias" → terminal({action: "run", command: "npm install"})',
+			'el programa pregunta "¿continuar? [s/n]" → terminal({action: "write", text: "s"})',
+			'"abre claude en la terminal y pídele X" → terminal({action: "run", command: "claude"}) y luego terminal({action: "write", text: "X"})',
 		],
 	},
 
@@ -603,6 +629,38 @@ export const TOOLS: ToolDefinition[] = [
 		examples: [
 			'"que Claude Code arregle el error del login" → claude_code({task: "Arregla el error al iniciar sesión: ... Comprueba con npm test."})',
 			'"sigue con lo de antes" → claude_code({task: "Sigue con la tarea anterior", continue: true})',
+		],
+	},
+
+	// ============ AYUDANTES ============
+	{
+		label: "Repartir tareas",
+		name: "delegate",
+		description:
+			"Crea ayudantes (subagentes) que hacen tareas a la vez, cada uno con tus mismas herramientas, y te devuelven su resultado; el usuario los ve trabajar en el panel «Oficina». Úsalo para trabajos grandes que se parten en tareas independientes (investigar varias cosas, comparar opciones, revisar varios archivos); lo simple hazlo tú. Cada task tiene que entenderse sola (el ayudante no ve la conversación): qué hacer, con qué datos y qué devolver. agent: nombre de un agente de Ajustes → Agentes; si no, name: nombre corto para un ayudante temporal. Máximo 4 tareas por llamada.",
+		category: "utilidades",
+		parameters: {
+			type: "object",
+			properties: {
+				tasks: {
+					type: "array",
+					description: "Las tareas, una por ayudante (máximo 4)",
+					items: {
+						type: "object",
+						properties: {
+							task: { type: "string", description: "La tarea completa y concreta, y qué debe devolver" },
+							agent: { type: "string", description: "Opcional: nombre de un agente de Ajustes → Agentes" },
+							name: { type: "string", description: "Opcional: nombre corto para un ayudante temporal (ej: Investigador)" },
+						},
+						required: ["task"],
+					},
+				},
+				timeout_minutes: { type: "number", description: "Minutos máximos por ayudante (por defecto 5, máximo 20)" },
+			},
+			required: ["tasks"],
+		},
+		examples: [
+			'"compara estos 3 portátiles" → delegate({tasks: [{name: "Portátil A", task: "Busca precio y opiniones del ... y devuelve un resumen con enlaces"}, ...]})',
 		],
 	},
 
@@ -641,6 +699,7 @@ export const LITE_TOOLS = [
 	"list_dir",
 	"search_web",
 	"fetch_url",
+	"cve_search",
 	"calculator",
 	"get_time",
 	"create_reminder",
@@ -664,6 +723,72 @@ export const LITE_TOOLS = [
 
 /** Herramientas que controlan el PC (se pueden desactivar todas con `pcControl: false`). */
 export const PC_TOOLS = TOOLS.filter((t) => t.category === "pc").map((t) => t.name);
+
+/** Programación: archivos, proyecto, Git y comprobaciones, sin los controles generales del PC. */
+export const CODE_TOOLS = [
+	"project",
+	"read_file",
+	"write_file",
+	"list_dir",
+	"read_file_system",
+	"write_file_system",
+	"list_dir_system",
+	"search_web",
+	"fetch_url",
+	"calculator",
+	"get_time",
+	"memory_search",
+	"memory_add",
+	"use_skill",
+	"git",
+	"exec",
+	"terminal",
+	"claude_code",
+	"delegate",
+];
+
+/** Planear: investigar y proponer sin cambiar archivos, memoria, recordatorios ni ejecutar comandos. */
+export const PLAN_TOOLS = [
+	"project",
+	"read_file",
+	"list_dir",
+	"read_file_system",
+	"list_dir_system",
+	"search_web",
+	"fetch_url",
+	"calculator",
+	"get_time",
+	"list_reminders",
+	"memory_search",
+	"use_skill",
+	"sessions_list",
+	"sessions_history",
+	"delegate",
+];
+
+/**
+ * Herramientas del modo CodeHacking (pentesting autorizado). Todas están también en LITE_TOOLS,
+ * así que funcionan con modelos locales pequeños. La terminal es la clave: en la MV de Kali es
+ * `bash`, con acceso directo a nmap, nikto, sqlmap, etc.
+ */
+export const HACKING_TOOLS = [
+	"terminal",
+	"exec",
+	"browser",
+	"fetch_url",
+	"search_web",
+	"cve_search",
+	"read_file",
+	"write_file",
+	"list_dir",
+	"memory_search",
+	"memory_add",
+];
+
+/** Las herramientas de solo lectura al planear, según el modo. */
+export function planToolsFor(mode: string): string[] {
+	return mode === "hacking" ? [...PLAN_TOOLS, "cve_search"] : PLAN_TOOLS;
+}
 
 function short(v: unknown, max = 60): string {
 	const s = typeof v === "string" ? v : v === undefined || v === null ? "" : JSON.stringify(v);
@@ -793,8 +918,14 @@ export function describeToolUse(name: string, args: Record<string, unknown> = {}
 		}
 		case "claude_code":
 			return `Claude Code está trabajando${a.continue === true ? " (sigue)" : ""}: ${short(a.task)}`;
+		case "delegate": {
+			const tasks = Array.isArray(a.tasks) ? (a.tasks as Record<string, unknown>[]) : [];
+			const names = tasks.map((t, i) => String(t?.agent || t?.name || `Ayudante ${i + 1}`)).join(", ");
+			return tasks.length === 1 ? `Encargando una tarea a ${names}` : `Repartiendo ${tasks.length} tareas: ${short(names, 80)}`;
+		}
 		case "terminal":
-			return a.action === "run" ? `Ejecutando en la terminal: ${short(a.command)}` : a.action === "stop" ? "Deteniendo la terminal" : "Mirando la terminal";
+			// Lo tecleado no se muestra: podría ser una contraseña.
+			return a.action === "run" ? `Ejecutando en la terminal: ${short(a.command)}` : a.action === "write" ? "Escribiendo en la terminal" : a.action === "stop" ? "Deteniendo la terminal" : "Mirando la terminal";
 		default: {
 			const mcp = isMcpToolName(name) ? mcpManager.lookup(name) : undefined;
 			if (mcp) return `Usando ${mcp.tool} (${mcp.server})`;
@@ -852,12 +983,18 @@ export async function executeToolSafeScoped(
 		}
 		const approval = await requestApproval(name, args);
 		if (!approval.ok) return { ok: false, error: approval.error };
-		return mcpManager.callTool(name, args);
+		return markExternal(name, await mcpManager.callTool(name, args));
 	}
 	if (Array.isArray(allowedTools) && !allowedTools.includes(name)) {
 		return { ok: false, error: "Herramienta no permitida en esta sesion: " + name };
 	}
 	const approval = await requestApproval(name, args);
 	if (!approval.ok) return { ok: false, error: approval.error };
-	return executeTool(name, args);
+	return markExternal(name, await executeTool(name, args));
+}
+
+/** Tras leer una web o un servidor MCP, guardar en la memoria pide permiso (`describeRiskyAction`). */
+function markExternal(name: string, r: ToolResult): ToolResult {
+	if (r.ok && isExternalTool(name)) noteExternalRead();
+	return r;
 }

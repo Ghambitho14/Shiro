@@ -53,6 +53,7 @@ export function replaceText(content, newText) {
 
 export function fromServer(m) {
 	const out = { role: m.role, content: m.content, ts: m.ts };
+	if (m.mode) out.mode = m.mode;
 	if (m.agent) Object.assign(out, { agent: m.agent, agentName: m.agentName });
 	if (m.usage?.turns) out.usage = m.usage;
 	if (Array.isArray(m.tools)) out.tools = m.tools.map((t, i) => ({ id: `h${i}`, name: t.name, label: t.label, status: t.ok === false ? "fail" : "ok", image: t.image }));
@@ -62,6 +63,7 @@ export function fromServer(m) {
 export function serialize(m) {
 	const o = { role: m.role, content: m.content };
 	if (m.ts) o.ts = m.ts;
+	if (m.mode) o.mode = m.mode;
 	if (m.agent) Object.assign(o, { agent: m.agent, agentName: m.agentName });
 	if (m.usage) o.usage = m.usage;
 	if (m.tools?.length) {
@@ -271,7 +273,12 @@ export function updateEmpty() {
 	$("#project-hero").hidden = !home;
 	$("#project-home").hidden = !home;
 	state.placeholder ||= input.placeholder;
-	input.placeholder = home ? `Nuevo chat en «${projects.store.current?.name ?? "el proyecto"}»` : state.placeholder;
+	const modePlaceholders = {
+		code: "Pídeme que revise, arregle o compruebe código",
+		hacking: "Describe un objetivo tuyo o autorizado para probar su seguridad",
+	};
+	const hint = state.permissions === "plan" ? "Investiga y prepara un plan; no cambiaré nada" : modePlaceholders[state.mode];
+	input.placeholder = home ? `Nuevo chat en «${projects.store.current?.name ?? "el proyecto"}»` : hint || state.placeholder;
 	paintCrumb();
 }
 

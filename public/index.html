@@ -76,10 +76,16 @@
 						<span class="model-name" id="model-name">…</span>
 						<span data-icon="chevronDown" data-size="sm"></span>
 					</button>
+					<div class="mode-seg" id="mode-seg" role="tablist" aria-label="Modo de Shiro">
+						<button type="button" class="mode-opt active" data-mode="chat" role="tab" aria-selected="true" title="Chat normal"><span data-icon="sparkles" data-size="sm"></span><span>Chat</span></button>
+						<button type="button" class="mode-opt" data-mode="code" role="tab" aria-selected="false" title="Code: lee, modifica y comprueba código"><span data-icon="braces" data-size="sm"></span><span>Code</span></button>
+						<button type="button" class="mode-opt" data-mode="hacking" role="tab" aria-selected="false" title="CodeHacking: pruebas de seguridad (pentesting) sobre tus propios sistemas"><span data-icon="shield" data-size="sm"></span><span>CodeHacking</span></button>
+					</div>
 					<button class="crumb-btn" id="project-crumb" hidden title="Ir a la página del proyecto"><span data-icon="folder" data-size="sm"></span><span class="crumb-name"></span></button>
 					<div class="spacer"></div>
 					<button class="icon-btn" id="browser-btn" title="Navegador de Shiro" aria-label="Navegador" aria-pressed="false" data-icon="globe"></button>
 					<button class="icon-btn" id="terminal-btn" title="Terminal" aria-label="Terminal" aria-pressed="false" data-icon="terminal"></button>
+					<button class="icon-btn" id="office-btn" title="Oficina: los ayudantes de Shiro" aria-label="Oficina" aria-pressed="false" data-icon="users"></button>
 					<button class="icon-btn" id="theme-btn" title="Cambiar tema" aria-label="Cambiar tema" data-icon="moon"></button>
 					<button class="icon-btn" id="chat-menu-btn" title="Opciones del chat" aria-label="Opciones del chat" data-icon="dots"></button>
 				</header>
@@ -113,6 +119,8 @@
 							<textarea id="input" rows="1" placeholder="Pregunta o pide lo que quieras" enterkeyhint="send"></textarea>
 							<div class="composer-bar">
 								<button type="button" class="icon-btn" id="attach-btn" title="Adjuntar imágenes o archivos de texto" aria-label="Adjuntar" data-icon="plus"></button>
+								<button type="button" class="composer-chip" id="perm-btn" aria-haspopup="menu"><span id="perm-icon" data-size="sm"></span><span id="perm-label">Preguntar</span><span data-icon="chevronDown" data-size="sm"></span></button>
+								<button type="button" class="composer-chip" id="reason-btn" aria-pressed="false"><span data-icon="brain" data-size="sm"></span><span class="chip-text">Más razonamiento</span></button>
 								<span class="composer-hint" id="dictate-hint"><span class="rec-dot"></span><span id="dictate-text">Escuchando…</span></span>
 								<div class="spacer"></div>
 								<button type="button" class="icon-btn dictate-btn" id="dictate-btn" title="Dictar (tu voz se escribe en el cuadro)" aria-label="Dictar" data-icon="mic"></button>
@@ -161,7 +169,7 @@
 				</section>
 			</main>
 
-			<!-- ============ Paneles: navegador y terminal ============ -->
+			<!-- ============ Paneles: navegador, terminal y oficina ============ -->
 			<aside class="dock" id="dock" hidden aria-label="Paneles">
 				<div class="dock-resizer" id="dock-resizer" role="separator" aria-orientation="vertical" aria-label="Arrastra para cambiar el ancho de los paneles" tabindex="0"></div>
 				<section class="pane browser-pane" id="browser-pane" hidden aria-label="Navegador">
@@ -195,15 +203,30 @@
 						<span class="pane-sub" id="terminal-shell"></span>
 						<span class="pane-badge" id="terminal-badge" hidden><span class="pane-dot"></span><span class="pane-badge-text"></span></span>
 						<div class="spacer"></div>
-						<button class="icon-btn sm" id="terminal-stop" title="Detener lo que se está ejecutando (Ctrl+C)" aria-label="Detener" data-icon="stop" data-size="sm" disabled></button>
-						<button class="icon-btn sm" id="terminal-clear" title="Limpiar (Ctrl+L)" aria-label="Limpiar la terminal" data-icon="trash" data-size="sm"></button>
+						<button class="icon-btn sm" id="terminal-stop" title="Detener lo que se está ejecutando (Ctrl+C; si no responde, reinicia la terminal)" aria-label="Detener" data-icon="stop" data-size="sm" disabled></button>
+						<button class="icon-btn sm" id="terminal-clear" title="Limpiar la pantalla" aria-label="Limpiar la terminal" data-icon="trash" data-size="sm"></button>
 						<button class="icon-btn sm" id="terminal-hide" title="Ocultar el panel" aria-label="Ocultar el panel de la terminal" data-icon="x" data-size="sm"></button>
 					</div>
-					<div class="term-out" id="term-out" role="log" aria-label="Salida de la terminal"></div>
-					<form class="term-input" id="term-form" autocomplete="off">
-						<span class="term-prompt" id="term-prompt">PS&gt;</span>
-						<input id="term-cmd" type="text" spellcheck="false" autocapitalize="off" placeholder="Escribe un comando y pulsa Enter" aria-label="Comando" />
-					</form>
+					<button type="button" class="term-attention" id="term-attention" hidden><span data-icon="lock" data-size="sm"></span><span id="term-attention-text"></span></button>
+					<div class="term-external" id="term-external" hidden aria-label="Tareas de Claude Code"></div>
+					<div class="term-screen" id="term-screen" aria-label="Terminal"></div>
+				</section>
+				<section class="pane office-pane" id="office-pane" hidden aria-label="Oficina">
+					<div class="pane-head">
+						<span data-icon="users" data-size="sm"></span>
+						<span class="pane-title">Oficina</span>
+						<span class="pane-sub" id="office-count"></span>
+						<span class="pane-badge" id="office-badge" hidden><span class="pane-dot"></span><span class="pane-badge-text"></span></span>
+						<div class="spacer"></div>
+						<button class="icon-btn sm" id="office-stop" title="Detener a todos los ayudantes" aria-label="Detener a todos" data-icon="stop" data-size="sm" disabled></button>
+						<button class="icon-btn sm" id="office-clear" title="Quitar los que ya terminaron" aria-label="Quitar los que terminaron" data-icon="trash" data-size="sm"></button>
+						<button class="icon-btn sm" id="office-hide" title="Ocultar el panel" aria-label="Ocultar el panel de la oficina" data-icon="x" data-size="sm"></button>
+					</div>
+					<div class="office-desks" id="office-desks" role="list" aria-label="Escritorios de los ayudantes"></div>
+					<div class="office-empty" id="office-empty">
+						<span data-icon="users" data-size="lg"></span>
+						<p>Aquí trabajan los ayudantes de Shiro. Pídele algo grande, como «investiga estas tres cosas a la vez», y verás a cada uno en su escritorio.</p>
+					</div>
 				</section>
 			</aside>
 		</div>

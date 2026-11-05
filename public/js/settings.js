@@ -14,6 +14,7 @@ import { $, $$, applyTheme, closeMenu, confirmDialog, copyText, el, openMenu, pr
 import { state } from "./state.js";
 import { renderThread, updateEmpty } from "./messages.js";
 import { sendMessage, setStatus } from "./chat.js";
+import { paintPermissions } from "./permissions.js";
 import { openRoom, paintRoomBar } from "./rooms.js";
 import { chatMenu, closeSidebarMobile, loadSessions, newChat, openChat, openOverview, openProject, paintSidebar, refreshModelInfo, setDocTitle } from "./sidebar.js";
 import { ttsSettings } from "./voiceMode.js";
@@ -48,11 +49,31 @@ export const SUGGESTIONS = [
 	{ icon: "window", text: "¿Qué ventanas tengo abiertas?", pc: true },
 ];
 
+const PLAN_SUGGESTIONS = [
+	{ icon: "file", text: "Analiza este proyecto y haz un plan de mejora" },
+	{ icon: "search", text: "Investiga las opciones antes de decidir" },
+	{ icon: "check", text: "Haz un plan paso a paso para mi próxima tarea" },
+];
+
+const MODE_SUGGESTIONS = {
+	code: [
+		{ icon: "braces", text: "Revisa este proyecto y busca errores" },
+		{ icon: "file", text: "Explica cómo está organizado este proyecto" },
+		{ icon: "check", text: "¿Qué pruebas faltan en este proyecto?" },
+	],
+	hacking: [
+		{ icon: "shield", text: "Haz un plan de pruebas para mi VPS" },
+		{ icon: "search", text: "¿Qué es un CVE y cómo se lee?" },
+		{ icon: "globe", text: "Revisa la seguridad de mi web autorizada" },
+	],
+};
+
 export function paintSuggestions() {
-	const pc = state.settings?.pcControl !== false && state.settings?.autonomousMode !== false;
+	const pc = state.mode === "chat" && state.settings?.pcControl !== false && state.settings?.autonomousMode !== false;
+	const suggestions = state.permissions === "plan" ? PLAN_SUGGESTIONS : state.mode === "chat" ? SUGGESTIONS.filter((x) => pc || !x.pc) : (MODE_SUGGESTIONS[state.mode] || []);
 	const box = $("#suggestions");
 	box.innerHTML = "";
-	for (const s of SUGGESTIONS.filter((x) => pc || !x.pc)) {
+	for (const s of suggestions) {
 		const b = el("button", "suggestion", `${icon(s.icon)}<span></span>`);
 		b.type = "button";
 		$("span", b).textContent = s.text;
@@ -65,6 +86,7 @@ export async function loadSettings() {
 	const [s, llm, profile] = await Promise.all([api("/api/settings"), api("/api/llm-config"), api("/api/user-profile")]);
 	state.settings = s;
 	state.llm = llm;
+	paintPermissions();
 	state.profile = profile || {};
 	state.name = s.assistantName || "Shiro";
 	$("#model-name").textContent = llm.model || "sin configurar";
@@ -196,6 +218,7 @@ export async function putSettings(patch, okMessage = "Guardado") {
 		state.settings = await api("/api/settings", { method: "PUT", json: patch });
 		state.name = state.settings.assistantName || state.name;
 		paintIdentity();
+		paintPermissions();
 		if (okMessage) toast(okMessage);
 		return true;
 	} catch (err) {

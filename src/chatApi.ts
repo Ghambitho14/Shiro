@@ -15,7 +15,8 @@ import { buildWorkspaceContext } from "./workspace.js";
 import { getLLM } from "./core/llm/getLLM.js";
 import { addUsage, newUsage } from "./core/llm/LLMClient.js";
 import { runAgent } from "./core/agent/Agent.js";
-import { getAllToolNames } from "./core/tools/ToolRegistry.js";
+import { parseChatMode, parsePermissionMode, type ChatMode, type PermissionMode } from "./core/agent/chatMode.js";
+import { CODE_TOOLS, getAllToolNames, HACKING_TOOLS, planToolsFor } from "./core/tools/ToolRegistry.js";
 import { matchSkillCommand, parseCommand } from "./commands.js";
 import { deleteRoom, getRoom, isValidSessionId, saveRoom } from "./core/rooms/roomStore.js";
 import { currentAgents, planRoomTurn, prepareAgentTurn, publicAgent, publicRoom, type AgentTurn, type RoomPlan } from "./core/rooms/roomTurn.js";
@@ -263,14 +264,25 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 		let allowedTools: string[] | undefined;
 		let sessionId: string | undefined;
 		let voice = false;
+		let mode: ChatMode = "chat";
+		let permissions: PermissionMode = "ask";
+		let moreReasoning = false;
 		try {
 			const parsed = JSON.parse(body) as {
 				messages?: Array<{ role?: string; content?: string }>;
 				allowedTools?: unknown;
 				sessionId?: unknown;
 				voice?: unknown;
+				mode?: unknown;
+				permissions?: unknown;
+				reasoning?: unknown;
 			};
 			voice = parsed.voice === true;
+			// El modo decide las tools en el servidor; un valor desconocido vuelve a Chat.
+			mode = parseChatMode(parsed.mode);
+			// Una pestaña abierta de antes aún manda mode "plan": debe seguir siendo solo lectura.
+			permissions = parsed.mode === "plan" ? "plan" : parsePermissionMode(parsed.permissions);
+			moreReasoning = parsed.reasoning === "more";
 			incoming = sanitizeMessages(parsed.messages);
 			allowedTools = sanitizeAllowedTools(parsed.allowedTools);
 			console.log("🛠️ Tools sanitized:", allowedTools?.length || "todas");
@@ -298,16 +310,21 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 			setHealthActive();
 			const config = getConfig();
 			const autonomous = config.autonomousMode === true;
-				const webTools = ["search_web", "fetch_url", "get_weather"];
-				const effectiveAllowedTools =
-					autonomous
-						? allowedTools
-						: (() => {
-								// Cumplir “siempre internet”: en modo no-autónomo limitamos a web-tools.
-								const incoming = Array.isArray(allowedTools) ? allowedTools : [];
-								const filtered = incoming.filter((t) => webTools.includes(t));
-								return (filtered.length ? filtered : webTools) as string[];
-							})();
+			const webTools = ["search_web", "fetch_url", "get_weather"];
+			// Elegir Code, CodeHacking o Planear es una decisión explícita: no depende del interruptor
+			// general de herramientas. Al planear, la lista de solo lectura manda sobre cualquier ajuste.
+			const planning = permissions === "plan";
+			const thinking = moreReasoning ? ("high" as const) : undefined;
+			const modeTools = planning ? planToolsFor(mode) : mode === "hacking" ? HACKING_TOOLS : mode === "code" ? CODE_TOOLS : undefined;
+			const effectiveAllowedTools = modeTools ??
+				(autonomous
+					? allowedTools
+					: (() => {
+							// Cumplir “siempre internet”: en modo no-autónomo limitamos a web-tools.
+							const incoming = Array.isArray(allowedTools) ? allowedTools : [];
+							const filtered = incoming.filter((t) => webTools.includes(t));
+							return (filtered.length ? filtered : webTools) as string[];
+						})());
 			const goal = userContent.trim() || "¿Qué hay en esta imagen?";
 			// Si el chat es de un proyecto, Shiro usa sus instrucciones y sus archivos.
 			const project = projectOfChat(sessionId);
@@ -379,9 +396,17 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 					messages: incoming,
 					assistantName: state.name,
 					baseTools: effectiveAllowedTools,
-					autonomous,
+					autonomous: mode === "chat" && !planning && autonomous,
 				});
 			}
+			// Un agente con una lista propia nunca puede recuperar herramientas que el modo quitó.
+			// En Chat se conserva su comportamiento; en Code, CodeHacking o al planear se cruza con la del modo.
+			const responseTools =
+				turn && modeTools && effectiveAllowedTools
+					? (turn.allowedTools ?? effectiveAllowedTools).filter((t) => effectiveAllowedTools.includes(t))
+					: turn
+						? turn.allowedTools
+						: effectiveAllowedTools;
 			const speakerInfo = speaker ? { agent: publicAgent(speaker) } : {};
 
 			console.log(
@@ -413,7 +438,10 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 						agentName: turn?.agentName ?? state.name,
 						tokenBudget: 8000,
 						textOnly: false,
-						allowedTools: turn ? turn.allowedTools : effectiveAllowedTools,
+						allowedTools: responseTools,
+						mode,
+						permissions,
+						thinking,
 						explainMode: config.explainMode,
 						conversation: turn?.conversation ?? incoming,
 						persona: turn?.persona,
@@ -426,7 +454,7 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 						approver: createSseApprover(res, sessionId ?? "web-default"),
 						signal: abort.signal,
 						voice,
-						mcp: turn ? turn.mcp : autonomous,
+						mcp: mode === "chat" && !planning ? (turn ? turn.mcp : autonomous) : false,
 						skill,
 						sessionId,
 						projectId: project?.id,
@@ -448,7 +476,11 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 				agentName: turn?.agentName ?? state.name,
 				tokenBudget: 8000,
 				textOnly: false,
-				allowedTools: turn ? turn.allowedTools : effectiveAllowedTools,
+				allowedTools: responseTools,
+				mode,
+				// Sin streaming no hay a quién preguntar: Automático y Omitir no aplican.
+				permissions: planning ? "plan" : "ask",
+				thinking,
 				explainMode: config.explainMode,
 				conversation: turn?.conversation ?? incoming,
 				persona: turn?.persona,

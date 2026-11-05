@@ -7,6 +7,7 @@ import { registerToolExecutor, getToolExecutor, hasToolExecutor } from "./toolEx
 
 // Importar ejecutores de módulos separados
 import { executeFetchUrl } from "./modules/fetch.js";
+import { executeCveSearch } from "./modules/cve.js";
 import { executeSearchWeb } from "./modules/search.js";
 import { executeGetWeather } from "./modules/weather.js";
 import { executeCalculator } from "./modules/calculator.js";
@@ -27,6 +28,7 @@ import { executeUseSkill } from "./modules/skills.js";
 import { executeBrowser, executeTerminal } from "./modules/workbench.js";
 import { executeProject } from "./modules/project.js";
 import { executeClaudeCode } from "./modules/claudeCode.js";
+import { executeDelegate } from "./modules/delegate.js";
 import { isWithinRoot } from "./paths.js";
 import { splitCommandLine } from "../mcp/mcpConfig.js";
 import { isPotentiallyDangerousCommand } from "../sanitizeResponse.js";
@@ -45,6 +47,7 @@ registerToolExecutor("pc_power", executePcPower);
 registerToolExecutor("browser", executeBrowser);
 registerToolExecutor("terminal", executeTerminal);
 registerToolExecutor("fetch_url", executeFetchUrl);
+registerToolExecutor("cve_search", executeCveSearch);
 registerToolExecutor("search_web", executeSearchWeb);
 registerToolExecutor("get_weather", executeGetWeather);
 registerToolExecutor("calculator", executeCalculator);
@@ -52,6 +55,7 @@ registerToolExecutor("get_time", executeGetTime);
 registerToolExecutor("use_skill", executeUseSkill);
 registerToolExecutor("project", executeProject);
 registerToolExecutor("claude_code", executeClaudeCode);
+registerToolExecutor("delegate", executeDelegate);
 
 /** Raíz de read_file/write_file/list_dir: data/workspace, o la carpeta "Shiro" de la bóveda con Obsidian. */
 export function getWorkspaceDir(): string {

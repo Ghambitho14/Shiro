@@ -130,7 +130,7 @@ export function startEdit(m) {
 		if (!v) return;
 		const idx = state.messages.indexOf(m);
 		state.messages = state.messages.slice(0, idx);
-		state.messages.push({ role: "user", content: replaceText(m.content, v), ts: Date.now() });
+		state.messages.push({ role: "user", content: replaceText(m.content, v), ts: Date.now(), mode: state.mode });
 		renderThread();
 		runAssistant();
 	};

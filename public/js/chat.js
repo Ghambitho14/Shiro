@@ -3,7 +3,7 @@ import * as projects from "./projects.js";
 import { icon } from "./icons.js";
 import { answerApproval, api, streamChat } from "./api.js";
 import { CommandPalette } from "./commands.js";
-import { $, el, notifySystem, prefs, toast } from "./ui.js";
+import { $, $$, el, notifySystem, prefs, toast } from "./ui.js";
 import { input, messagesBox, refs, state } from "./state.js";
 import { buildAssistant, buildContent, buildUser, inProjectHome, markLast, nearBottom, paintAssistant, scrollToBottom, updateEmpty } from "./messages.js";
 import { persist, setRoom } from "./rooms.js";
@@ -22,6 +22,10 @@ export function paintComposer() {
 	$("#send-btn").hidden = state.busy || !hasContent;
 	$("#voice-btn").hidden = state.busy || hasContent;
 	$("#stop-btn").hidden = !state.busy;
+	// El modo y los permisos forman parte de la petición: no se cambian a mitad de una respuesta.
+	$$("#mode-seg .mode-opt").forEach((b) => (b.disabled = state.busy));
+	$("#perm-btn").disabled = state.busy;
+	$("#reason-btn").disabled = state.busy;
 }
 
 export function setBusy(b) {
@@ -142,7 +146,7 @@ export async function sendMessage(textArg, opts = {}) {
 		return;
 	}
 	stopReading();
-	const m = { role: "user", content: buildContent(text, attachments), ts: Date.now() };
+	const m = { role: "user", content: buildContent(text, attachments), ts: Date.now(), mode: state.mode };
 	state.messages.push(m);
 	messagesBox.append(buildUser(m));
 	updateEmpty();
@@ -241,14 +245,22 @@ export async function runAssistant({ voice = false, hooks = {} } = {}) {
 			if (stick) scrollToBottom();
 		});
 	};
+	// También al regenerar: el último mensaje guarda el modo con el que se respondió.
+	const lastUser = [...list].reverse().find((x) => x.role === "user");
+	if (lastUser) lastUser.mode = state.mode;
 	// En una sala el servidor necesita saber qué agente dijo cada respuesta.
 	const payload = list
 		.filter((x) => x !== m && !x.error)
-		.map((x) => (x.agent ? { role: x.role, content: x.content, agent: x.agent, agentName: x.agentName } : { role: x.role, content: x.content }));
+		.map((x) => ({
+			role: x.role,
+			content: x.content,
+			...(x.agent ? { agent: x.agent, agentName: x.agentName } : {}),
+			...(x.mode ? { mode: x.mode } : {}),
+		}));
 
 	try {
 		await streamChat(
-			{ messages: payload, sessionId, voice },
+			{ messages: payload, sessionId, voice, mode: state.mode, permissions: state.permissions, reasoning: state.moreReasoning ? "more" : undefined },
 			{
 				onDelta: (full) => {
 					m.content = full;

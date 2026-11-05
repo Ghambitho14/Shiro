@@ -1,9 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { resolveTools } from "./Agent.js";
+import { resolveTools, runAgent } from "./Agent.js";
 import { getConfig } from "../../config/config.js";
 import { activeModelTuning } from "../llm/providers.js";
-import { PC_TOOLS } from "../tools/ToolRegistry.js";
+import { CODE_TOOLS, PC_TOOLS, PLAN_TOOLS, planToolsFor } from "../tools/ToolRegistry.js";
+import { isPlanToolCall, parseChatMode, parsePermissionMode } from "./chatMode.js";
+import type { LLMClient } from "../llm/LLMClient.js";
 
 const hasPc = (tools: string[] | undefined) => (tools ?? PC_TOOLS).some((t) => PC_TOOLS.includes(t));
 
@@ -22,4 +24,95 @@ test("en la web o la terminal (con approver) sí se ofrece, también a modelos l
 		assert.ok(lite?.includes("pc_open"));
 		assert.ok(lite?.includes("pc_media"));
 	}
+});
+
+test("los modos y permisos se validan, y al planear las acciones mixtas se limitan a lectura", () => {
+	assert.equal(parseChatMode("code"), "code");
+	// Plan ya no es un modo: es un permiso que vale en cualquiera.
+	assert.equal(parseChatMode("plan"), "chat");
+	assert.equal(parseChatMode("cualquier cosa"), "chat");
+	assert.equal(parseChatMode(undefined), "chat");
+	assert.equal(parsePermissionMode("plan"), "plan");
+	assert.equal(parsePermissionMode("auto"), "auto");
+	assert.equal(parsePermissionMode("bypass"), "bypass");
+	assert.equal(parsePermissionMode("admin"), "ask");
+	assert.equal(parsePermissionMode(undefined), "ask");
+	assert.equal(isPlanToolCall("project", { action: "read" }), true);
+	assert.equal(isPlanToolCall("project", { action: "search" }), true);
+	assert.equal(isPlanToolCall("project", { action: "write" }), false);
+	assert.equal(isPlanToolCall("terminal", { action: "read" }), true);
+	assert.equal(isPlanToolCall("terminal", { action: "run" }), false);
+	assert.equal(isPlanToolCall("terminal", { action: "write", text: "hola" }), false);
+});
+
+test("Code conserva sus herramientas y al planear solo se recibe lectura, en cualquier modo", () => {
+	const code = resolveTools(CODE_TOOLS, true, true, false, undefined, "code");
+	for (const tool of ["write_file", "git", "exec", "terminal", "delegate"]) assert.ok(code?.includes(tool), tool);
+	for (const mode of ["chat", "code"] as const) {
+		const plan = resolveTools(planToolsFor(mode), true, true, false, undefined, mode, true);
+		assert.deepEqual(plan, PLAN_TOOLS);
+	}
+	const hacking = resolveTools(planToolsFor("hacking"), true, true, false, undefined, "hacking", true);
+	assert.ok(hacking?.includes("cve_search"));
+	for (const tool of ["write_file", "write_file_system", "memory_add", "exec", "terminal", "git", "claude_code"]) {
+		assert.equal(hacking?.includes(tool), false, tool);
+	}
+});
+
+test("Más razonamiento llega al modelo solo si se pidió", async () => {
+	const seen: unknown[] = [];
+	const llm: LLMClient = {
+		chat: async () => "ok",
+		chatWithTools: async (_m, _d, _e, opts) => {
+			seen.push(opts?.thinking);
+			return "ok";
+		},
+		getConfig: () => ({ provider: "ollama", model: "qwen3:8b", baseUrl: "http://localhost:11434", local: true }),
+	};
+	const base = { llm, agentName: "Shiro", mode: "code" as const, allowedTools: CODE_TOOLS, mcp: false, approver: async () => true };
+	await runAgent("hola", base);
+	await runAgent("hola", { ...base, thinking: "high" });
+	assert.deepEqual(seen, [undefined, "high"]);
+});
+
+test("el modo ahorro no quita a Code las herramientas de programación", async () => {
+	let offered: string[] = [];
+	const llm: LLMClient = {
+		chat: async () => "ok",
+		chatWithTools: async (_messages, defs) => {
+			offered = defs.map((d) => d.function.name);
+			return "Respuesta de prueba.";
+		},
+		getConfig: () => ({ provider: "ollama", model: "qwen3:8b", baseUrl: "http://localhost:11434", local: true }),
+	};
+	const out = await runAgent("hola", {
+		llm,
+		agentName: "Shiro",
+		mode: "code",
+		allowedTools: CODE_TOOLS,
+		mcp: false,
+		approver: async () => true,
+	});
+	assert.equal(out, "Respuesta de prueba.");
+	for (const tool of ["write_file", "git", "exec", "terminal", "delegate"]) assert.ok(offered.includes(tool), tool);
+});
+
+test("planear bloquea project write antes de ejecutar la herramienta", async () => {
+	const llm: LLMClient = {
+		chat: async () => "ok",
+		chatWithTools: async (_messages, _defs, exec) => {
+			const r = await exec("project", { action: "write", path: "Subidos/prueba.ts", content: "no debe escribirse" });
+			return r.ok ? r.content : (r.error ?? "La herramienta falló");
+		},
+		getConfig: () => ({ provider: "ollama", model: "qwen3:8b", baseUrl: "http://localhost:11434", local: true }),
+	};
+	const out = await runAgent("escribe este archivo", {
+		llm,
+		agentName: "Shiro",
+		permissions: "plan",
+		allowedTools: PLAN_TOOLS,
+		mcp: false,
+	});
+	assert.match(out, /Estás planeando: es solo lectura/i);
+	assert.match(out, /Preguntar o Automático/);
 });

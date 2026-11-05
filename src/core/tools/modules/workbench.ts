@@ -1,7 +1,8 @@
 /** Tools del navegador de Shiro (`browser`) y de la terminal compartida (`terminal`). */
 import type { ToolExecutor } from "../toolExecutors.js";
 import { shiroBrowser } from "../../browser/browser.js";
-import { terminal, TerminalSession } from "../../terminal/terminal.js";
+import { currentAgentRun } from "../../agent/runContext.js";
+import { terminal, type TermOutcome } from "../../terminal/terminal.js";
 
 type Result = Awaited<ReturnType<ToolExecutor>>;
 
@@ -51,21 +52,50 @@ function tail(text: string, max = 6000): string {
 	return t.length > max ? "…" + t.slice(-max) : t;
 }
 
+/** Qué decirle al modelo cuando el programa no ha terminado. */
+function pendingText(outcome: TermOutcome, seconds: number): string {
+	switch (outcome) {
+		case "input":
+			return "El programa sigue abierto y parece esperar algo. Usa action=write para responderle, action=read para volver a mirar o action=stop para cerrarlo.";
+		case "password":
+			return "El programa pide una contraseña y el usuario no la ha escrito. Pídele que la escriba en el panel Terminal (no en el chat) y mira luego con action=read.";
+		case "aborted":
+			return "El usuario detuvo la respuesta; lo que estaba en la terminal sigue abierto.";
+		default:
+			return `Sigue en marcha (lleva ${seconds} s). Usa action=read con wait_seconds para esperar y ver cómo va, o action=stop para detenerlo.`;
+	}
+}
+
 export const executeTerminal = safe(async (a) => {
+	const signal = currentAgentRun()?.signal;
 	switch (a.action) {
 		case "run": {
 			const seconds = num(a.timeout_seconds) ?? 60;
-			const { block, finished } = await terminal.runAndWait(String(a.command ?? ""), "shiro", seconds * 1000);
-			const out = tail(TerminalSession.outputOf(block)) || "(sin salida)";
-			if (!finished) {
-				return `El comando sigue ejecutándose (lleva ${seconds} s). Salida hasta ahora:\n${out}\n\nUsa terminal con action=read más tarde para ver cómo va, o action=stop para detenerlo.`;
-			}
-			const status = block.exitCode === 0 ? "terminó bien" : block.exitCode === null ? "se interrumpió" : `terminó con código ${block.exitCode}`;
-			return `El comando ${status}. Carpeta actual: ${terminal.cwd}\n\n${out}`;
+			const r = await terminal.runAndWait(String(a.command ?? ""), { timeoutMs: seconds * 1000, signal });
+			const out = tail(r.output) || "(sin salida)";
+			if (r.outcome !== "finished") return `${pendingText(r.outcome, seconds)}\n\nEn pantalla:\n${out}`;
+			const status = r.exitCode === 0 ? "terminó bien" : r.exitCode === null ? "se interrumpió" : `terminó con código ${r.exitCode}`;
+			return `El comando ${status}. Carpeta actual: ${r.cwd}\n\n${out}`;
 		}
-		case "stop":
-			return terminal.stop() ? "Detuve el comando que se estaba ejecutando (la terminal se reinició)." : "No había nada ejecutándose.";
-		default:
+		case "write": {
+			const seconds = num(a.timeout_seconds) ?? 15;
+			const text = typeof a.text === "string" ? a.text : "";
+			const keys = typeof a.keys === "string" ? a.keys : "";
+			// Con texto se pulsa Enter salvo que se pida lo contrario; con teclas sueltas, solo esas teclas.
+			const enter = typeof a.enter === "boolean" ? a.enter : Boolean(text);
+			const outcome = await terminal.write({ text, enter, keys, timeoutMs: seconds * 1000, signal });
+			const state = outcome === "finished" ? "Volvió al prompt." : pendingText(outcome, seconds);
+			return `Escribí en la terminal. ${state}\n\nEn pantalla:\n${terminal.tail()}`;
+		}
+		case "stop": {
+			if (!terminal.stop()) return "No había nada ejecutándose.";
+			await terminal.whenIdle(3000);
+			return `Detuve lo que se estaba ejecutando.\n\nEn pantalla:\n${terminal.tail(20)}`;
+		}
+		default: {
+			const wait = num(a.wait_seconds);
+			if (wait && terminal.isRunning()) await terminal.watch(wait * 1000, signal);
 			return terminal.readText(num(a.lines) ?? 80);
+		}
 	}
 });

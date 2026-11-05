@@ -37,6 +37,14 @@ export const searchWebSchema = z.object({
 	query: z.string().min(1, "query requerida").max(200, "query demasiado larga"),
 });
 
+export const cveSearchSchema = z
+	.object({
+		id: z.string().trim().max(40).optional(),
+		vendor: z.string().trim().max(80).optional(),
+		product: z.string().trim().max(80).optional(),
+	})
+	.refine((v) => v.id || v.vendor || v.product, { message: "indica id (CVE-AAAA-NNNN) o product" });
+
 export const execSchema = z.object({
 	command: z.string().min(1, "comando requerido").max(1000, "comando demasiado largo"),
 	timeout: z.number().optional().default(30000),
@@ -176,18 +184,38 @@ export const browserSchema = z
 
 export const terminalSchema = z
 	.object({
-		action: z.enum(["read", "run", "stop"]).default("read"),
+		action: z.enum(["read", "run", "write", "stop"]).default("read"),
 		command: z.string().trim().max(8000, "comando demasiado largo").optional(),
+		// Sin trim: los espacios pueden importar a quien lo recibe.
+		text: z.string().max(64_000, "texto demasiado largo").optional(),
+		enter: optionalBool,
+		keys: z.string().trim().max(200, "demasiadas teclas").optional(),
 		lines: optionalNumber(5, 400),
 		timeout_seconds: optionalNumber(1, 600),
+		wait_seconds: optionalNumber(1, 300),
 	})
-	.refine((a) => a.action !== "run" || Boolean(a.command), { message: "indica 'command' con el comando a ejecutar" });
+	.refine((a) => a.action !== "run" || Boolean(a.command), { message: "indica 'command' con el comando a ejecutar" })
+	.refine((a) => a.action !== "write" || Boolean(a.text || a.keys || a.enter), { message: "indica 'text' con lo que hay que teclear o 'keys' con las teclas" });
 
 export const claudeCodeSchema = z.object({
 	task: z.string().trim().min(1, "indica la tarea (task)").max(20000, "tarea demasiado larga"),
 	folder: z.string().trim().max(1000).optional(),
 	continue: optionalBool,
 	timeout_minutes: optionalNumber(1, 60),
+});
+
+export const delegateSchema = z.object({
+	tasks: z
+		.array(
+			z.object({
+				task: z.string().trim().min(1, "cada tarea necesita su texto (task)").max(8000, "tarea demasiado larga"),
+				agent: z.string().trim().max(60).optional(),
+				name: z.string().trim().max(60).optional(),
+			}),
+		)
+		.min(1, "indica al menos una tarea en tasks")
+		.max(4, "como mucho 4 tareas a la vez"),
+	timeout_minutes: optionalNumber(1, 20),
 });
 
 export const projectSchema = z
@@ -216,6 +244,7 @@ export const toolSchemas: Record<string, z.ZodType<Record<string, unknown>>> = {
 	list_dir_system: listDirSystemSchema,
 	fetch_url: fetchUrlSchema,
 	search_web: searchWebSchema,
+	cve_search: cveSearchSchema,
 	exec: execSchema,
 	cron_create: cronCreateSchema,
 	cron_list: cronListSchema,
@@ -243,6 +272,7 @@ export const toolSchemas: Record<string, z.ZodType<Record<string, unknown>>> = {
 	browser: browserSchema,
 	terminal: terminalSchema,
 	claude_code: claudeCodeSchema,
+	delegate: delegateSchema,
 	use_skill: useSkillSchema,
 	project: projectSchema,
 };

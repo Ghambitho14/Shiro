@@ -5,12 +5,13 @@ import { api } from "./api.js";
 import { escapeHtml } from "./markdown.js";
 import { promptDialog } from "./extensions.js";
 import { initPanels } from "./panels.js";
-import { $, closeMenu, confirmDialog, el, isMobile, menuAnchor, norm, openMenu, openMenuEl, prefs, savePrefs, setTheme, showMenu, toast } from "./ui.js";
+import { $, $$, closeMenu, confirmDialog, el, isMobile, menuAnchor, norm, openMenu, openMenuEl, prefs, savePrefs, setTheme, showMenu, toast } from "./ui.js";
 import { input, state } from "./state.js";
-import { contentParts, fromServer, inProjectHome, paintCrumb, renderThread, scrollToBottom } from "./messages.js";
+import { contentParts, fromServer, inProjectHome, paintCrumb, renderThread, scrollToBottom, updateEmpty } from "./messages.js";
 import { paintAttachments, setStatus, stopGeneration } from "./chat.js";
+import { initPermissions, paintPermissions, permissionNote } from "./permissions.js";
 import { loadRoom, paintRoomBar, setRoom } from "./rooms.js";
-import { loadSettings, openSettings } from "./settings.js";
+import { loadSettings, openSettings, paintSuggestions } from "./settings.js";
 import { openReminders } from "./reminders.js";
 import { stopReading, voice } from "./voiceMode.js";
 
@@ -228,6 +229,7 @@ export async function openProject(id, push = true) {
 		paintAttachments();
 		showView("chat");
 		renderThread();
+		setMode(prefs.mode);
 		paintSidebar();
 		document.title = `${state.name} · ${p.name}`;
 		if (push) pushHash(`#/p/${encodeURIComponent(id)}`);
@@ -265,6 +267,8 @@ export async function openChat(id, push = true) {
 		paintAttachments();
 		setDocTitle(d.session.title);
 		renderThread();
+		const lastMode = [...state.messages].reverse().find((m) => m.role === "user" && m.mode)?.mode;
+		setMode(lastMode || prefs.mode);
 		requestAnimationFrame(() => scrollToBottom());
 		paintSidebar();
 		if (push) setRoute(id);
@@ -286,6 +290,7 @@ export function newChat(push = true) {
 	setRoom(null);
 	showView("chat");
 	renderThread();
+	setMode(prefs.mode);
 	paintSidebar();
 	closeSidebarMobile();
 	setDocTitle();
@@ -320,6 +325,37 @@ export function openSearch() {
 }
 // ───────────────────────────── barra superior ─────────────────────────────
 
+const CHAT_MODES = ["chat", "code", "hacking"];
+const MODE_DISCLAIMERS = {
+	chat: "Shiro puede equivocarse. Antes de acciones delicadas en tu PC te pide permiso.",
+	code: "Modo Code: puede cambiar código y ejecutar comprobaciones; las acciones delicadas piden permiso.",
+	hacking: "CodeHacking: solo para sistemas tuyos o con permiso explícito. Las acciones delicadas piden permiso.",
+};
+
+/** Cambia el modo y toda su ayuda visual. Solo la elección del usuario se guarda como preferencia. */
+export function setMode(mode, { remember = false } = {}) {
+	state.mode = CHAT_MODES.includes(mode) ? mode : "chat";
+	if (remember) {
+		prefs.mode = state.mode;
+		savePrefs();
+	}
+	$$("#mode-seg .mode-opt").forEach((b) => {
+		const active = b.dataset.mode === state.mode;
+		b.classList.toggle("active", active);
+		b.setAttribute("aria-selected", String(active));
+		b.tabIndex = active ? 0 : -1;
+	});
+	for (const m of CHAT_MODES) $("#app").classList.toggle(`mode-${m}`, state.mode === m);
+	paintModeHints();
+}
+
+/** Lo que cambia según el modo y los permisos: el aviso, el texto de la caja y las sugerencias. */
+function paintModeHints() {
+	$(".disclaimer").textContent = permissionNote() || MODE_DISCLAIMERS[state.mode];
+	updateEmpty();
+	paintSuggestions();
+}
+
 // Paneles Navegador y Terminal (se abren solos cuando Shiro los usa).
 export const panels = initPanels({ toast });
 
@@ -333,6 +369,7 @@ export async function refreshModelInfo() {
 	} catch {}
 	$("#model-name").textContent = state.llm?.model || "sin configurar";
 	$("#model-btn").title = `${providerLabel()} · ${state.llm?.model || ""}\nClic para cambiar de modelo`;
+	paintPermissions();
 }
 
 export async function switchModel(name) {
@@ -377,6 +414,21 @@ export async function testModel(target) {
 
 /** Lo que antes se hacía al cargar la página (botones, eventos); app.js lo llama en orden. */
 export function initSidebar() {
+	initPermissions({ onChange: paintModeHints });
+	$$("#mode-seg .mode-opt").forEach((b) => {
+		b.onclick = () => setMode(b.dataset.mode, { remember: true });
+	});
+	$("#mode-seg").addEventListener("keydown", (e) => {
+		if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
+		e.preventDefault();
+		const buttons = $$("#mode-seg .mode-opt:not(:disabled)");
+		if (!buttons.length) return;
+		const current = buttons.indexOf(document.activeElement);
+		const next = e.key === "Home" ? 0 : e.key === "End" ? buttons.length - 1 : (current + (e.key === "ArrowRight" ? 1 : -1) + buttons.length) % buttons.length;
+		buttons[next].focus();
+		buttons[next].click();
+	});
+	setMode(prefs.mode);
 	$("#chat-list").addEventListener("click", (e) => {
 		const row = e.target.closest(".sb-chat");
 		if (!row || row.querySelector(".title-input")) return;

@@ -9,6 +9,7 @@ import { chatBackendFor, createMemoryBackend, type ChatBackend } from "./backend
 import type { ContentPart } from "../core/agent/Types.js";
 import type { ResponseUsage } from "../core/llm/LLMClient.js";
 import { getMessagePreview } from "../core/agent/contentUtils.js";
+import { CHAT_MODES, type ChatMode } from "../core/agent/chatMode.js";
 
 /** Herramienta usada en una respuesta (se muestra como "pasos" en la web). */
 export type ChatToolUse = { name: string; label: string; ok: boolean; image?: string };
@@ -26,6 +27,8 @@ export type ChatMessage = {
 	agentName?: string;
 	/** Respuestas del asistente: tokens que gastó (leídos, escritos, pensando y vueltas con el modelo). */
 	usage?: ResponseUsage;
+	/** En mensajes del usuario: modo usado; al abrir el chat se recupera el del último. */
+	mode?: ChatMode;
 };
 
 export type ChatSessionMeta = {
@@ -71,8 +74,11 @@ function isContentPartArray(raw: unknown): raw is ContentPart[] {
 }
 
 /** Datos extra de cada mensaje que guarda la web: hora, herramientas usadas y, en salas, qué agente habló. */
-function sanitizeMeta(item: Record<string, unknown>): Pick<ChatMessage, "ts" | "tools" | "agent" | "agentName" | "usage"> {
-	const out: Pick<ChatMessage, "ts" | "tools" | "agent" | "agentName" | "usage"> = {};
+function sanitizeMeta(item: Record<string, unknown>): Pick<ChatMessage, "ts" | "tools" | "agent" | "agentName" | "usage" | "mode"> {
+	const out: Pick<ChatMessage, "ts" | "tools" | "agent" | "agentName" | "usage" | "mode"> = {};
+	if (item.role === "user" && typeof item.mode === "string" && (CHAT_MODES as readonly string[]).includes(item.mode)) {
+		out.mode = item.mode as ChatMode;
+	}
 	if (item.role === "assistant" && item.usage && typeof item.usage === "object") {
 		const u = item.usage as Record<string, unknown>;
 		const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.min(Math.round(v), 1e9) : 0);

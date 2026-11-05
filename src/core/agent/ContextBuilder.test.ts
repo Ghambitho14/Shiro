@@ -115,3 +115,41 @@ test("bloque «## Sala»: participantes, principal y mensajes omitidos", () => {
 	strictEqual(buildContext(base).system.includes("## Sala"), false);
 	strictEqual(buildContext({ ...base, room }).system.includes(block), true);
 });
+
+test("modo CodeHacking: incluye el bloque de pentesting y el guardarraíl de alcance", () => {
+	const { system } = buildContext({ goal: "Escanea mi VPS", agentName: "Shiro", tokenBudget: 4000, mode: "hacking" });
+	strictEqual(system.includes("Modo CodeHacking"), true);
+	// Guardarraíl: solo objetivos autorizados.
+	strictEqual(/autorizad/i.test(system), true);
+	strictEqual(system.includes("cve_search"), true);
+});
+
+test("sin hacking no aparece el bloque de pentesting", () => {
+	const { system } = buildContext({ goal: "Hola", agentName: "Shiro", tokenBudget: 4000 });
+	strictEqual(system.includes("Modo CodeHacking"), false);
+});
+
+test("en modo texto (sin herramientas) no se añade el bloque de pentesting", () => {
+	const { system } = buildContext({ goal: "Hola", agentName: "Shiro", tokenBudget: 4000, mode: "hacking", textOnly: true });
+	strictEqual(system.includes("Modo CodeHacking"), false);
+});
+
+test("planear explica el solo lectura incluso si no hay herramientas", () => {
+	const { system } = buildContext({ goal: "Haz un plan", agentName: "Shiro", tokenBudget: 4000, planning: true, textOnly: true });
+	strictEqual(system.includes("Planear (solo lectura)"), true);
+	strictEqual(system.includes("No implementes el plan"), true);
+	strictEqual(system.includes("«Preguntar» o «Automático»"), true);
+});
+
+test("planear sustituye al bloque del modo: en Code no dice que puede cambiar cosas", () => {
+	const { system } = buildContext({ goal: "Haz un plan", agentName: "Shiro", tokenBudget: 4000, mode: "code", planning: true });
+	strictEqual(system.includes("Planear (solo lectura)"), true);
+	strictEqual(system.includes("Modo Code (programación)"), false);
+});
+
+test("Code pide leer antes de cambiar y comprobar el resultado", () => {
+	const { system } = buildContext({ goal: "Arregla el fallo", agentName: "Shiro", tokenBudget: 4000, mode: "code" });
+	strictEqual(system.includes("Modo Code (programación)"), true);
+	strictEqual(system.includes("Antes de cambiar algo"), true);
+	strictEqual(system.includes("Nunca digas que algo funciona"), true);
+});

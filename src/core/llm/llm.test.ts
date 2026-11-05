@@ -207,6 +207,17 @@ test("Otros proveedores no envían x-opencode-session", async () => {
 	strictEqual(requests[0].headers["x-opencode-session"], undefined);
 });
 
+test("Más razonamiento cambia cuánto piensa solo en esa petición, sin tocar los ajustes", async () => {
+	requests.length = 0;
+	handler = () => ({ json: { choices: [{ message: { content: "ok" } }] } });
+	const client = createLLMClient(settings("openai", { thinking: "off", model: "qwen-razona" }));
+	await client.chat([{ role: "user", content: "a" }], { thinking: "high" });
+	await client.chat([{ role: "user", content: "a" }]);
+	deepStrictEqual(requests[0].body.chat_template_kwargs, { enable_thinking: true });
+	strictEqual(requests[0].body.reasoning_effort, "high");
+	deepStrictEqual(requests[1].body.chat_template_kwargs, { enable_thinking: false });
+});
+
 test("Ajustes del modelo: pensar y largo máximo llegan en el formato de cada servidor", async () => {
 	requests.length = 0;
 	handler = (path) => (path.includes("/api/chat") ? { json: { message: { content: "ok" }, done: true } } : { json: { choices: [{ message: { content: "ok" } }] } });

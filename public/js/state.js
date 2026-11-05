@@ -19,6 +19,12 @@ export const state = {
 	projectHome: null,
 	/** "chat" o "projects" (la lista de proyectos). */
 	view: "chat",
+	/** Modo del chat: normal, programación (Code) o pentesting (CodeHacking). */
+	mode: "chat",
+	/** Cómo trabaja el agente en cualquier modo: ask, plan, auto o bypass (permissions.js). */
+	permissions: "ask",
+	/** «Más razonamiento»: pensar al máximo en cada respuesta. */
+	moreReasoning: false,
 	placeholder: "",
 	/** Agentes de Ajustes → Agentes (para nombres, colores y voces). */
 	agents: [],

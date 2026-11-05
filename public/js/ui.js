@@ -46,6 +46,9 @@ export const prefs = Object.assign(
 		ttsRate: 1,
 		autoRead: false,
 		sidebarCollapsed: false,
+		mode: "chat",
+		permissions: "ask",
+		moreReasoning: false,
 	},
 	readJSON("shiro.prefs"),
 );

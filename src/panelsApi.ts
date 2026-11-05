@@ -1,11 +1,12 @@
 /**
- * API de los paneles de la web: "Navegador" (el navegador de Shiro en vivo) y "Terminal".
+ * API de los paneles de la web: "Navegador" (el navegador de Shiro en vivo), "Terminal" y "Oficina" (ayudantes).
  * server.ts la llama antes de sus propias rutas; devuelve true si atendió la petición.
  * Las rutas están en isSensitivePath (piden contraseña si Shiro está abierto a la red).
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { shiroBrowser, type BrowserInput } from "./core/browser/browser.js";
-import { terminal } from "./core/terminal/terminal.js";
+import { MAX_INPUT_CHARS, terminal } from "./core/terminal/terminal.js";
+import { office } from "./core/office/office.js";
 
 type Helpers = {
 	readJson: <T>(req: IncomingMessage) => Promise<T>;
@@ -57,7 +58,7 @@ export function parseBrowserInput(d: Record<string, unknown>): BrowserInput | nu
 }
 
 export async function handlePanelsApi(req: IncomingMessage, res: ServerResponse, method: string, pathname: string, h: Helpers): Promise<boolean> {
-	if (!pathname.startsWith("/api/browser/") && !pathname.startsWith("/api/terminal/")) return false;
+	if (!pathname.startsWith("/api/browser/") && !pathname.startsWith("/api/terminal/") && !pathname.startsWith("/api/office/")) return false;
 	try {
 		// ───────── Navegador ─────────
 		if (method === "GET" && pathname === "/api/browser/stream") {
@@ -105,12 +106,35 @@ export async function handlePanelsApi(req: IncomingMessage, res: ServerResponse,
 
 		// ───────── Terminal ─────────
 		if (method === "GET" && pathname === "/api/terminal/stream") {
-			openSse(req, res, (send) => terminal.subscribe(send));
+			openSse(req, res, (send) => {
+				const off = terminal.subscribe(send);
+				// Abrir el panel es abrir la terminal.
+				try {
+					terminal.ensureStarted();
+				} catch (err) {
+					send({ type: "notice", text: err instanceof Error ? err.message : String(err) });
+				}
+				return off;
+			});
 			return true;
 		}
-		if (method === "POST" && pathname === "/api/terminal/run") {
-			const d = await h.readJson<{ command?: unknown }>(req);
-			terminal.run(typeof d.command === "string" ? d.command : "", "user");
+		if (method === "POST" && pathname === "/api/terminal/input") {
+			const d = await h.readJson<{ data?: unknown }>(req);
+			if (typeof d.data !== "string" || d.data.length > MAX_INPUT_CHARS) {
+				h.sendJson(res, 400, { error: "Entrada inválida" });
+				return true;
+			}
+			terminal.input(d.data);
+			h.sendJson(res, 200, { ok: true });
+			return true;
+		}
+		if (method === "POST" && pathname === "/api/terminal/resize") {
+			const d = await h.readJson<{ cols?: unknown; rows?: unknown }>(req);
+			if (!finite(d.cols) || !finite(d.rows)) {
+				h.sendJson(res, 400, { error: "Tamaño inválido" });
+				return true;
+			}
+			terminal.resize(d.cols, d.rows);
 			h.sendJson(res, 200, { ok: true });
 			return true;
 		}
@@ -121,6 +145,23 @@ export async function handlePanelsApi(req: IncomingMessage, res: ServerResponse,
 		}
 		if (method === "POST" && pathname === "/api/terminal/clear") {
 			terminal.clear();
+			h.sendJson(res, 200, { ok: true });
+			return true;
+		}
+
+		// ───────── Oficina ─────────
+		if (method === "GET" && pathname === "/api/office/stream") {
+			openSse(req, res, (send) => office.subscribe(send));
+			return true;
+		}
+		if (method === "POST" && pathname === "/api/office/stop") {
+			const d = await h.readJson<{ id?: unknown }>(req);
+			const stopped = office.stop(typeof d.id === "string" && d.id ? d.id : undefined);
+			h.sendJson(res, 200, { ok: true, stopped });
+			return true;
+		}
+		if (method === "POST" && pathname === "/api/office/clear") {
+			office.clear();
 			h.sendJson(res, 200, { ok: true });
 			return true;
 		}

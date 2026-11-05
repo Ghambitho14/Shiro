@@ -6,6 +6,8 @@ import { isMcpToolName, mcpManager } from "../mcp/McpManager.js";
 import { shiroBrowser } from "../browser/browser.js";
 import { hostOf } from "../browser/pageModel.js";
 import { currentProject } from "../projects/projects.js";
+import { terminal } from "../terminal/terminal.js";
+import type { PermissionMode } from "../agent/chatMode.js";
 import { getWorkspaceDir } from "../../workspace.js";
 import { isWithinRoot } from "./paths.js";
 
@@ -25,11 +27,25 @@ export type ApprovalRequest = {
 
 export type Approver = (req: ApprovalRequest) => Promise<boolean>;
 
-const approverStore = new AsyncLocalStorage<Approver | undefined>();
+/** Una respuesta: quién aprueba, cómo se quiso trabajar y si ya se leyó contenido de afuera (webs, servidores MCP). */
+const approverStore = new AsyncLocalStorage<{ approver?: Approver; externalRead: boolean; permissions: PermissionMode }>();
 
-export function runWithApprover<T>(approver: Approver | undefined, fn: () => Promise<T>): Promise<T> {
-	return approverStore.run(approver, fn);
+export function runWithApprover<T>(approver: Approver | undefined, fn: () => Promise<T>, permissions: PermissionMode = "ask"): Promise<T> {
+	// Un ayudante creado tras leer una web puede traer esas órdenes en su encargo: lo leído se hereda.
+	return approverStore.run({ approver, externalRead: approverStore.getStore()?.externalRead ?? false, permissions }, fn);
 }
+
+/** Apunta que en esta respuesta el modelo leyó contenido de afuera (lo llama executeToolSafeScoped). */
+export function noteExternalRead(): void {
+	const store = approverStore.getStore();
+	if (store) store.externalRead = true;
+}
+
+function externalReadInThisResponse(): boolean {
+	return approverStore.getStore()?.externalRead === true;
+}
+
+const AFTER_WEB = " (en esta respuesta leí contenido de una web o de un servidor MCP)";
 
 const SHELL_META = /[;&|`$(){}\[\]<>\n\r]/;
 const READ_ONLY_GIT = new Set(["status", "log", "diff", "show", "branch", "remote", "rev-parse", "ls-files"]);
@@ -66,6 +82,15 @@ function describeCommand(prefix: string, command: string, where = ""): string | 
 	return `${prefix}: ${command}${where}`;
 }
 
+/** Teclear en la terminal siempre se pregunta: en el prompt sería ejecutar un comando. Una contraseña no se enseña. */
+function describeTerminalWrite(args: Record<string, unknown>): string {
+	const parts: string[] = [];
+	if (args.text) parts.push(terminal.waitingForPassword() ? "una contraseña (oculta)" : `"${str(args.text).slice(0, 400)}"`);
+	if (args.keys) parts.push(`las teclas ${str(args.keys)}`);
+	const enter = args.enter === undefined ? Boolean(args.text) : args.enter === true || args.enter === "true";
+	return `Escribir en la terminal: ${parts.join(" y ") || "Enter"}${enter && parts.length ? " y pulsar Enter" : ""}`;
+}
+
 /** Devuelve la descripción de la acción si necesita aprobación, o null si es segura. */
 export function describeRiskyAction(tool: string, args: Record<string, unknown>): string | null {
 	switch (tool) {
@@ -82,6 +107,7 @@ export function describeRiskyAction(tool: string, args: Record<string, unknown>)
 			return `Pedir a Claude Code (tu suscripción) que trabaje en ${where}${args.continue === true ? ", siguiendo lo anterior" : ""}: "${str(args.task).trim().slice(0, 500)}"`;
 		}
 		case "terminal":
+			if (args.action === "write") return describeTerminalWrite(args);
 			return args.action === "run" ? describeCommand("Ejecutar en la terminal", str(args.command).trim()) : null;
 		case "browser": {
 			// Leer y moverse por la web no pide permiso; pulsar o escribir sí (puede enviar formularios o comprar).
@@ -92,6 +118,14 @@ export function describeRiskyAction(tool: string, args: Record<string, unknown>)
 			if (args.action === "click") return `Hacer clic en ${what}${site}`;
 			return `Escribir "${str(args.text).slice(0, 300)}" en ${what}${site}${args.enter === true || args.enter === "true" ? " y pulsar Enter" : ""}`;
 		}
+		// Guardar en la memoria o en la carpeta de Shiro (SOUL.md, MEMORY.md…) queda para siempre:
+		// después de leer una web se pregunta, para que una página no deje órdenes guardadas.
+		case "memory_add":
+			return externalReadInThisResponse() ? `Guardar en tu memoria: "${str(args.content).slice(0, 400)}"${AFTER_WEB}` : null;
+		case "write_file":
+			return externalReadInThisResponse()
+				? `Escribir el archivo ${str(args.path)} en la carpeta de Shiro (${str(args.content).length} caracteres)${AFTER_WEB}`
+				: null;
 		case "write_file_system":
 			return `Escribir el archivo ${str(args.path)} (${str(args.content).length} caracteres)`;
 		case "read_file_system":
@@ -178,6 +212,38 @@ export function canRememberApproval(tool: string): boolean {
 	return REMEMBERABLE_TOOLS.has(tool) || isMcpToolName(tool);
 }
 
+/** Lo único que «Automático» hace sin preguntar: comandos y archivos. El resto (web, teclado, MCP, tareas programadas…) se pregunta. */
+const AUTO_TOOLS = new Set(["exec", "terminal", "git", "project", "write_file", "write_file_system", "read_file_system", "memory_add", "claude_code"]);
+
+/** Borrar, formatear, apagar, reescribir git, ejecutar lo que baje de internet. Va por palabras: no es infalible. */
+const DESTRUCTIVE_COMMAND = new RegExp(
+	[
+		// Solo donde empieza un comando: «npm run format» o «cat rm.txt» no borran nada.
+		String.raw`(^\s*|[;&|("'` + "`" + String.raw`]\s*|\b(sudo|xargs)\s+)(rm|rmdir|rd|del|erase|ri|remove-item|remove-itemproperty|clear-content|clear-recyclebin|clear-disk|format|format-volume|diskpart|fdisk|dd|shred|shutdown|reboot|halt|poweroff|stop-computer|restart-computer|taskkill|stop-process|kill|killall|pkill)(\.exe)?(?=$|[\s;&|)"'])`,
+		String.raw`\bfind\b.*\s-delete\b`,
+		String.raw`\bmkfs\b|\bmkfs\.`,
+		String.raw`\breg(\.exe)?\s+delete\b`,
+		String.raw`\bgit\s+(push\b.*(\s-f\b|--force)|reset\s+--hard\b|clean\b|checkout\s+--|branch\s+-d\b|rebase\b|filter-branch\b|gc\s+--prune\b)`,
+		String.raw`\b(curl|wget|iwr|irm|invoke-webrequest|invoke-restmethod)\b.*\|\s*(sudo\s+)?(sh|bash|zsh|iex|invoke-expression|pwsh|powershell|python\d?)\b`,
+		String.raw`>\s*/dev/(sd|nvme|disk)`,
+		String.raw`\bchmod\s+-r\b.*\b777\b`,
+	].join("|"),
+	"i",
+);
+
+/** ¿Este comando puede borrar o romper algo sin vuelta atrás? */
+export function isDestructiveCommand(command: string): boolean {
+	return DESTRUCTIVE_COMMAND.test(command);
+}
+
+/** «Automático» sigue preguntando esto: lo que no es un comando o un archivo, lo destructivo y teclear una contraseña. */
+export function isHardToUndo(tool: string, args: Record<string, unknown>): boolean {
+	if (!AUTO_TOOLS.has(tool)) return true;
+	if (tool === "terminal" && args.action === "write" && terminal.waitingForPassword()) return true;
+	const typed = tool === "exec" || tool === "terminal" ? str(args.command ?? args.text) : tool === "git" ? `git ${str(args.command)}` : "";
+	return isDestructiveCommand(typed);
+}
+
 export async function requestApproval(tool: string, args: Record<string, unknown>): Promise<{ ok: true } | { ok: false; error: string }> {
 	const summary = describeRiskyAction(tool, args);
 	if (!summary) return { ok: true };
@@ -186,7 +252,14 @@ export async function requestApproval(tool: string, args: Record<string, unknown
 	if (mode === "allow") return { ok: true };
 	if (mode === "deny") return { ok: false, error: `Acción bloqueada por configuración (approvalMode=deny): ${summary}` };
 
-	const approver = approverStore.getStore();
+	const store = approverStore.getStore();
+	if (store?.approver) {
+		if (store.permissions === "bypass") return { ok: true };
+		// Tras leer una web o un MCP se vuelve a preguntar todo: podría traer órdenes escondidas.
+		if (store.permissions === "auto" && !store.externalRead && !isHardToUndo(tool, args)) return { ok: true };
+	}
+
+	const approver = store?.approver;
 	if (!approver) {
 		return {
 			ok: false,

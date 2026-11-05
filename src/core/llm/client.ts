@@ -8,6 +8,7 @@ import { sendTurn } from "./transports.js";
 import { StreamFilter } from "./streamFilter.js";
 import { buildTextToolInstructions, formatTextToolResult, parseTextToolCalls, stripToolCalls } from "./textTools.js";
 import { getMaxToolIterations, normalizeToolResult } from "./toolRuntime.js";
+import { wrapExternal } from "../tools/untrusted.js";
 
 /** Modelos que ya rechazaron tools nativas en esta ejecución: se usan en modo texto. */
 const textModeModels = new Set<string>();
@@ -88,7 +89,7 @@ function buildClient(resolve: () => LLMSettings, real: Real | null, ref?: ModelR
 			const { settings, release } = await begin(opts.signal);
 			try {
 				const filter = opts.onDelta ? new StreamFilter(opts.onDelta) : null;
-				const turn = await sendTurn(settings, {
+				const turn = await sendTurn(opts.thinking ? { ...settings, thinking: opts.thinking } : settings, {
 					messages,
 					onDelta: filter ? (c) => filter.push(c) : undefined,
 					signal: opts.signal,
@@ -138,7 +139,7 @@ function buildClient(resolve: () => LLMSettings, real: Real | null, ref?: ModelR
 				let turn;
 				try {
 					({ settings, release } = await begin(opts.signal));
-					turn = await sendTurn(settings, {
+					turn = await sendTurn(opts.thinking ? { ...settings, thinking: opts.thinking } : settings, {
 						messages: msgs,
 						tools: textMode ? undefined : toolsDef,
 						onDelta: filter ? (c) => filter.push(c) : undefined,
@@ -187,7 +188,9 @@ function buildClient(resolve: () => LLMSettings, real: Real | null, ref?: ModelR
 						continue;
 					}
 					const r = await executeTool(call.function.name, args);
-					results.push({ call, content: normalizeToolResult(r.ok ? r.content : `Error: ${r.error ?? "desconocido"}`, ref, saver) });
+					const content = normalizeToolResult(r.ok ? r.content : `Error: ${r.error ?? "desconocido"}`, ref, saver);
+					// Se envuelve después de recortar, para que la marca de cierre no se pierda.
+					results.push({ call, content: r.ok ? wrapExternal(call.function.name, content) : content });
 					if (r.ok && r.image) images.push(r.image);
 				}
 

@@ -15,6 +15,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, s
 import { join } from "node:path";
 import { build } from "esbuild";
 import { runPowerShell } from "./core/pc/powershell.js";
+import { ptyPackageDir } from "./core/terminal/ptyLoader.js";
 import { APP_DIR, APP_VERSION, SQL_WASM_FILE, VENDOR_FILES } from "./runtime.js";
 
 const DIST = join(APP_DIR, "dist");
@@ -46,14 +47,17 @@ function collectAssets(): Record<string, string> {
 		if (!existsSync(full)) throw new Error(`Falta ${rel}. ¿Ejecutaste npm install?`);
 		assets[rel] = full;
 	};
-	const walk = (rel: string) => {
+	const walk = (rel: string, skip?: RegExp) => {
 		for (const e of readdirSync(join(APP_DIR, rel), { withFileTypes: true })) {
 			const child = `${rel}/${e.name}`;
-			if (e.isDirectory()) walk(child);
-			else add(child);
+			if (e.isDirectory()) walk(child, skip);
+			else if (!skip?.test(child)) add(child);
 		}
 	};
 	walk("public");
+	// La consola de la terminal: ptyLoader.ts la copia fuera del .exe para poder abrir sus binarios.
+	// Los .pdb (10 MB) solo sirven para depurar la propia librería.
+	walk(ptyPackageDir(), /\.pdb$/i);
 	for (const rel of Object.values(VENDOR_FILES)) add(rel);
 	add(SQL_WASM_FILE);
 	add("package.json");

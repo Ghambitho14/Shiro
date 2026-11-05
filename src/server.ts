@@ -146,7 +146,7 @@ const server = createServer(async (req, res) => {
 
 	// Ajustes → Habilidades, Ajustes → Conectores MCP y la lista de comandos del chat.
 	if (await handleExtensionsApi(req, res, method, pathname, { readJson, sendJson })) return;
-	// Paneles Navegador y Terminal.
+	// Paneles Navegador, Terminal y Oficina.
 	if (await handlePanelsApi(req, res, method, pathname, { readJson, sendJson })) return;
 	// Ajustes → Datos y paso "¿Dónde guardo tus cosas?" de la bienvenida.
 	if (await handleStorageApi(req, res, method, pathname, { readJson, sendJson })) return;

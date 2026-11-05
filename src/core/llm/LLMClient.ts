@@ -1,3 +1,4 @@
+import type { ThinkingLevel } from "../../config/config.js";
 import type { Message } from "../agent/Types.js";
 
 export type ToolDef = {
@@ -38,6 +39,8 @@ export type ChatOptions = {
 	signal?: AbortSignal;
 	/** Id de la conversación (OpenCode Go lo exige para enrutar y cachear). */
 	sessionId?: string;
+	/** Cuánto piensa en esta respuesta, si no es lo de Ajustes → Modelo («Más razonamiento» del chat). */
+	thinking?: ThinkingLevel;
 };
 
 export interface LLMClient {

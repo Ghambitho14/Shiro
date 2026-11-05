@@ -22,6 +22,9 @@ export const VENDOR_FILES: Record<string, string> = {
 	"highlight.js": "node_modules/@highlightjs/cdn-assets/highlight.min.js",
 	"hljs-light.css": "node_modules/@highlightjs/cdn-assets/styles/github.min.css",
 	"hljs-dark.css": "node_modules/@highlightjs/cdn-assets/styles/github-dark.min.css",
+	"xterm.mjs": "node_modules/@xterm/xterm/lib/xterm.mjs",
+	"xterm.css": "node_modules/@xterm/xterm/css/xterm.css",
+	"xterm-fit.mjs": "node_modules/@xterm/addon-fit/lib/addon-fit.mjs",
 };
 
 /** El motor de SQLite (sql.js) para el índice de chats. */

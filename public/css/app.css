@@ -1266,10 +1266,102 @@ a {
 	display: flex;
 	align-items: center;
 	gap: 4px;
+	/* Lo que importa es el ancho de la caja, no el de la ventana: un panel abierto la estrecha. */
+	container-type: inline-size;
 }
 
 .composer-bar .spacer {
 	flex: 1;
+}
+
+/* Botones de permisos y razonamiento (permissions.js). */
+.composer-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 30px;
+	padding: 0 10px;
+	border-radius: 999px;
+	color: var(--text-2);
+	font-size: 13px;
+	white-space: nowrap;
+}
+
+.composer-chip:hover:not(:disabled) {
+	background: var(--bg-hover);
+	color: var(--text);
+}
+
+.composer-chip:disabled {
+	opacity: 0.55;
+	cursor: default;
+}
+
+.composer-chip.active {
+	background: var(--bg-active);
+	color: var(--accent);
+}
+
+.composer-chip.danger,
+.composer-chip.danger:hover:not(:disabled) {
+	background: color-mix(in srgb, var(--danger) 14%, transparent);
+	color: var(--danger);
+}
+
+.composer-chip.muted {
+	opacity: 0.55;
+}
+
+@container (max-width: 480px) {
+	.composer-chip .chip-text {
+		display: none;
+	}
+}
+
+@container (max-width: 300px) {
+	.composer-chip {
+		padding: 0 6px;
+	}
+
+	#perm-label,
+	#perm-btn > span:last-child {
+		display: none;
+	}
+}
+
+.menu-item.perm-item {
+	height: auto;
+	align-items: flex-start;
+	padding: 8px 10px;
+}
+
+.menu-item.perm-item:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+.perm-item .svg-icon {
+	flex-shrink: 0;
+	margin-top: 2px;
+}
+
+.perm-text {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+}
+
+.perm-text strong {
+	font-weight: 500;
+}
+
+.perm-text small {
+	color: var(--text-3);
+	font-size: 12px;
+	line-height: 1.35;
+	white-space: normal;
 }
 
 .composer-hint {
@@ -2774,22 +2866,246 @@ body.voice-open .toasts {
 	}
 }
 
+/* Oficina: un escritorio (tarjeta) por ayudante, con su estado. */
+.office-desks {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+	align-content: start;
+	gap: 10px;
+	padding: 12px;
+	background: var(--bg-soft);
+}
+
+.office-desks[hidden],
+.office-empty[hidden] {
+	display: none;
+}
+
+.office-empty {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 12px;
+	padding: 24px;
+	text-align: center;
+	color: var(--text-3);
+	font-size: 14px;
+	background: var(--bg-soft);
+}
+
+.office-empty p {
+	max-width: 320px;
+	margin: 0;
+}
+
+.desk {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	min-width: 0;
+	padding: 10px 12px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--bg);
+}
+
+.desk[data-status="working"] {
+	border-color: var(--accent);
+	box-shadow: 0 0 0 1px var(--accent-soft);
+}
+
+.desk-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+.desk-avatar {
+	width: 30px;
+	height: 30px;
+	flex-shrink: 0;
+	display: grid;
+	place-items: center;
+	border-radius: 50%;
+	background: var(--accent);
+	color: #fff;
+	font-size: 14px;
+	font-weight: 600;
+}
+
+.desk-who {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	line-height: 1.25;
+}
+
+.desk-name {
+	font-weight: 600;
+	font-size: 14px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.desk-boss {
+	color: var(--text-3);
+	font-size: 12px;
+}
+
+.desk-status {
+	flex-shrink: 0;
+	padding: 2px 8px;
+	border-radius: 999px;
+	font-size: 11.5px;
+	font-weight: 500;
+	background: var(--bg-soft);
+	color: var(--text-2);
+}
+
+.desk[data-status="working"] .desk-status {
+	background: var(--accent-soft);
+	color: var(--accent);
+}
+
+.desk[data-status="done"] .desk-status {
+	color: var(--success);
+}
+
+.desk[data-status="error"] .desk-status {
+	background: var(--danger-soft);
+	color: var(--danger);
+}
+
+.desk[data-status="stopped"] .desk-status {
+	background: var(--warning-soft);
+	color: var(--warning);
+}
+
+.desk-stop[hidden] {
+	display: none;
+}
+
+.desk-task {
+	margin: 0;
+	font-size: 13px;
+	color: var(--text);
+	display: -webkit-box;
+	-webkit-line-clamp: 3;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+	overflow-wrap: anywhere;
+}
+
+.desk-step {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	font-size: 12px;
+	color: var(--text-2);
+}
+
+.desk[data-status="working"] .desk-step {
+	color: var(--accent);
+}
+
+.desk:not([data-status="working"]) .desk-step .pane-dot {
+	display: none;
+}
+
+.desk-step-text {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.desk-time {
+	flex-shrink: 0;
+	color: var(--text-3);
+	font-variant-numeric: tabular-nums;
+}
+
+.desk-result[hidden] {
+	display: none;
+}
+
+.desk-result summary {
+	cursor: pointer;
+	font-size: 12px;
+	color: var(--text-2);
+}
+
+.desk-result-text {
+	margin-top: 6px;
+	max-height: 220px;
+	overflow-y: auto;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	font-size: 12.5px;
+	color: var(--text);
+}
+
 /* La terminal es oscura en los dos temas, como una consola. */
 .terminal-pane {
 	--term-bg: #0f1115;
 	--term-fg: #d7dae0;
 }
 
-.term-out {
+.term-screen {
 	flex: 1;
 	min-height: 0;
-	overflow: auto;
-	padding: 10px 12px;
+	/* El relleno va aquí: la terminal mide lo que le queda dentro. */
+	padding: 8px 0 4px 10px;
 	background: var(--term-bg);
+	overflow: hidden;
+}
+
+.term-screen .xterm {
+	height: 100%;
+}
+
+.term-attention {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	padding: 8px 12px;
+	background: #3a2c12;
+	color: #f5c86b;
+	font-size: 13px;
+	text-align: left;
+	cursor: pointer;
+}
+
+.term-attention[hidden] {
+	display: none;
+}
+
+.term-external {
+	max-height: 40%;
+	flex-shrink: 0;
+	overflow: auto;
+	padding: 8px 12px;
+	background: var(--term-bg);
+	border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 	color: var(--term-fg);
 	font: 12.5px/1.5 var(--mono);
 	white-space: pre-wrap;
 	overflow-wrap: anywhere;
+}
+
+.term-external[hidden] {
+	display: none;
 }
 
 .term-block + .term-block {
@@ -2800,22 +3116,8 @@ body.voice-open .toasts {
 	font-weight: 600;
 }
 
-.term-ps {
-	color: #7fb4ff;
-}
-
 .term-text {
 	color: #fff;
-}
-
-.term-by {
-	margin-left: 8px;
-	padding: 0 6px;
-	border-radius: 4px;
-	background: rgba(139, 125, 255, 0.25);
-	color: #c4bcff;
-	font: 500 11px var(--font);
-	vertical-align: 1px;
 }
 
 .term-block.running .term-cmd::after {
@@ -2831,45 +3133,6 @@ body.voice-open .toasts {
 	display: block;
 	color: #f5b454;
 	font-size: 11.5px;
-}
-
-.term-block.system .term-output {
-	color: #8a8f98;
-	font-style: italic;
-}
-
-.term-input {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	padding: 8px 12px;
-	background: var(--term-bg);
-	border-top: 1px solid rgba(255, 255, 255, 0.08);
-	font: 12.5px var(--mono);
-}
-
-.term-prompt {
-	flex-shrink: 0;
-	max-width: 45%;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	color: #7fb4ff;
-}
-
-.term-input input {
-	flex: 1;
-	min-width: 0;
-	border: 0;
-	outline: none;
-	background: none;
-	color: #fff;
-	font: inherit;
-	caret-color: #fff;
-}
-
-.term-input input::placeholder {
-	color: #6b7079;
 }
 
 @media (max-width: 860px) {
@@ -4118,4 +4381,103 @@ body.voice-open .toasts {
 	border-radius: var(--radius-sm);
 	background: none;
 	cursor: pointer;
+}
+
+/* ───────────── Modos Chat / Plan / Code / CodeHacking (barra superior) ───────────── */
+:root {
+	--hack: #15803d;
+	--hack-soft: rgba(22, 163, 74, 0.14);
+	--plan: #2563eb;
+	--plan-soft: rgba(37, 99, 235, 0.12);
+}
+:root[data-theme="dark"] {
+	--hack: #4ade80;
+	--hack-soft: rgba(34, 197, 94, 0.18);
+	--plan: #60a5fa;
+	--plan-soft: rgba(96, 165, 250, 0.16);
+}
+.mode-seg {
+	display: inline-flex;
+	flex-shrink: 0;
+	gap: 2px;
+	padding: 2px;
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	background: var(--bg-soft);
+}
+.mode-opt {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	padding: 4px 11px;
+	border: 0;
+	border-radius: 999px;
+	background: transparent;
+	color: var(--text-2);
+	font-size: 13px;
+	font-weight: 500;
+	cursor: pointer;
+	white-space: nowrap;
+}
+.mode-opt svg {
+	width: 15px;
+	height: 15px;
+}
+.mode-opt:hover {
+	color: var(--text);
+}
+.mode-opt:disabled {
+	cursor: default;
+	opacity: 0.55;
+}
+.mode-opt.active {
+	background: var(--bg-elevated);
+	color: var(--text);
+	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+.mode-opt[data-mode="plan"].active {
+	background: var(--plan-soft);
+	color: var(--plan);
+}
+.mode-opt[data-mode="code"].active {
+	background: var(--accent-soft);
+	color: var(--accent);
+}
+.mode-opt[data-mode="hacking"].active {
+	background: var(--hack-soft);
+	color: var(--hack);
+}
+/* Un acento discreto deja claro en qué modo especial estás. */
+#app.mode-plan .topbar {
+	box-shadow: inset 0 -2px 0 var(--plan);
+}
+#app.mode-code .topbar {
+	box-shadow: inset 0 -2px 0 var(--accent);
+}
+#app.mode-hacking .topbar {
+	box-shadow: inset 0 -2px 0 var(--hack);
+}
+.topbar {
+	overflow-x: auto;
+	scrollbar-width: none;
+}
+.topbar::-webkit-scrollbar {
+	display: none;
+}
+.topbar > .icon-btn,
+.topbar > .crumb-btn {
+	flex-shrink: 0;
+}
+@media (max-width: 1100px) {
+	.mode-opt {
+		padding: 5px 8px;
+	}
+	.mode-opt span:last-child {
+		display: none;
+	}
+}
+@media (max-width: 680px) {
+	.model-btn .model-name {
+		display: none;
+	}
 }

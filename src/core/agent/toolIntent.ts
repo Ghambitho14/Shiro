@@ -23,7 +23,7 @@ const GROUPS: { tools: string[]; words: RegExp; raw?: RegExp }[] = [
 	{
 		tools: ["pc_open", "pc_screenshot", "pc_keyboard", "pc_mouse", "pc_media", "pc_windows", "pc_processes", "pc_clipboard", "pc_system", "pc_power", "exec", "terminal"],
 		words:
-			/\b(pc|computador\w*|ordenador|equipo|windows|abr\w*|cierr\w*|cerrar|ventanas?|volumen|musica|cancion\w*|reproduc\w*|pausa|siguiente|spotify|youtube|videos?|captura\w*|pantalla|ves|mira|apag\w*|reinici\w*|suspend\w*|bloque\w*|teclado|teclas?|raton|mouse|clic|procesos?|portapapeles|copi\w*|peg\w*|comandos?|terminal|powershell|consola|instal\w*|ejecut\w*|bateria|ram|cpu|disco|aplicacion\w*|apps?)\b/,
+			/\b(pc|computador\w*|ordenador|equipo|windows|abr\w*|cierr\w*|cerrar|ventanas?|volumen|musica|cancion\w*|reproduc\w*|pausa|siguiente|spotify|youtube|videos?|captura\w*|pantalla|ves|mira|apag\w*|reinici\w*|suspend\w*|bloque\w*|teclado|teclas?|raton|mouse|clic|procesos?|portapapeles|copi\w*|peg\w*|comandos?|terminal|powershell|consola|contrasen\w*|sudo|ssh|claude|instal\w*|ejecut\w*|bateria|ram|cpu|disco|aplicacion\w*|apps?)\b/,
 	},
 	{
 		tools: ["browser"],

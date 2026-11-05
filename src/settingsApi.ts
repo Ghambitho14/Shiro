@@ -91,6 +91,8 @@ export async function handleSettingsApi(req: IncomingMessage, res: ServerRespons
 			model: s.model,
 			baseUrl: s.baseUrl,
 			hasApiKey: Boolean(s.apiKey),
+			// En el formato Anthropic Shiro no elige cuánto piensa (el botón «Más razonamiento» lo avisa).
+			fixedThinking: s.dialect === "anthropic",
 			providers: LLM_PROVIDERS.map((p) => ({
 				value: p,
 				label: PROVIDER_PRESETS[p].label,

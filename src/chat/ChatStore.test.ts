@@ -44,3 +44,21 @@ test("sanitizeMessages guarda los tokens gastados solo en respuestas del asisten
 	assert.deepEqual(ok.usage, { input: 1200, output: 50, reasoning: 0, turns: 2 });
 	assert.equal(bad.usage, undefined);
 });
+
+test("sanitizeMessages guarda el modo del usuario y descarta valores inválidos", () => {
+	const out = sanitizeMessages([
+		{ role: "user", content: "pentest", mode: "hacking" },
+		{ role: "user", content: "programa", mode: "code" },
+		{ role: "assistant", content: "respuesta", mode: "code" },
+		{ role: "user", content: "modo inventado", mode: "admin" },
+		// Chats de cuando Plan era un modo: se abren sin error, en el modo normal.
+		{ role: "user", content: "chat viejo", mode: "plan" },
+	]);
+	assert.deepEqual(out, [
+		{ role: "user", content: "pentest", mode: "hacking" },
+		{ role: "user", content: "programa", mode: "code" },
+		{ role: "assistant", content: "respuesta" },
+		{ role: "user", content: "modo inventado" },
+		{ role: "user", content: "chat viejo" },
+	]);
+});

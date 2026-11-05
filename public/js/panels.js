@@ -1,5 +1,6 @@
-// Paneles a la derecha del chat: el navegador de Shiro (en vivo) y la terminal compartida.
+// Paneles a la derecha del chat: el navegador de Shiro (en vivo), la terminal compartida y la oficina (ayudantes).
 import { api, streamEvents } from "./api.js";
+import { hydrateIcons } from "./icons.js";
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -249,26 +250,31 @@ function createBrowserPane(toast) {
 
 // ───────────────────────────── terminal ─────────────────────────────
 
-const HISTORY_KEY = "shiro.termHistory";
-const MAX_DOM_BLOCKS = 300;
+const TERM_THEME = {
+	background: "#0f1115",
+	foreground: "#d7dae0",
+	cursor: "#d7dae0",
+	cursorAccent: "#0f1115",
+	selectionBackground: "rgba(127, 180, 255, 0.35)",
+};
 
 function createTerminalPane(toast) {
-	const out = $("#term-out");
-	const input = $("#term-cmd");
-	const promptEl = $("#term-prompt");
+	const screen = $("#term-screen");
 	const stopBtn = $("#terminal-stop");
 	const shellEl = $("#terminal-shell");
+	const attentionBar = $("#term-attention");
+	const external = $("#term-external");
 	const blocks = new Map();
-	let cwd = "";
-	let shell = "";
-	let history = [];
-	try {
-		history = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
-	} catch {}
-	let hIdx = history.length;
+	let term = null;
+	let fit = null;
+	let loading = null;
+	let active = false;
+	let busy = false;
 
-	const promptText = (dir) => (!shell || /powershell/i.test(shell) ? `PS ${dir}>` : `${dir}$`);
-	const nearBottom = () => out.scrollHeight - out.scrollTop - out.clientHeight < 60;
+	const post = (path, json) => api(path, { method: "POST", json }).catch((err) => toast(err.message, "error", 6000));
+
+	// ── tareas de Claude Code (no pasan por la consola: van en una franja aparte) ──
+
 	const span = (cls, text) => {
 		const s = document.createElement("span");
 		s.className = cls;
@@ -276,10 +282,8 @@ function createTerminalPane(toast) {
 		return s;
 	};
 
-	function paintPrompt() {
-		promptEl.textContent = cwd ? promptText(cwd) : "PS>";
-		shellEl.textContent = shell;
-		stopBtn.disabled = ![...blocks.values()].some((b) => b.running);
+	function paintStop() {
+		stopBtn.disabled = !busy && ![...blocks.values()].some((b) => b.running);
 	}
 
 	function appendChunk(entry, text, err) {
@@ -290,44 +294,170 @@ function createTerminalPane(toast) {
 			s.dataset.err = String(err);
 			entry.o.append(s);
 		}
+		external.scrollTop = external.scrollHeight;
 	}
 
 	function endBlock(entry, exitCode) {
 		entry.running = false;
 		entry.el.classList.remove("running");
-		if (entry.system || exitCode === 0 || exitCode === undefined) return;
+		if (exitCode === 0 || exitCode === undefined) return;
 		entry.el.append(span("term-exit", exitCode === null ? "interrumpido" : `terminó con código ${exitCode}`));
 	}
 
 	function addBlock(b) {
 		const el = document.createElement("div");
-		el.className = `term-block${b.by === "system" ? " system" : ""}${b.running ? " running" : ""}`;
-		if (b.by !== "system") {
-			const cmd = document.createElement("div");
-			cmd.className = "term-cmd";
-			cmd.append(span("term-ps", promptText(b.cwd)), " ", span("term-text", b.command));
-			if (b.by === "shiro") cmd.append(span("term-by", "Shiro"));
-			el.append(cmd);
-		}
+		el.className = `term-block${b.running ? " running" : ""}`;
+		const title = document.createElement("div");
+		title.className = "term-cmd";
+		title.append(span("term-text", b.command));
+		el.append(title);
 		const o = document.createElement("div");
 		o.className = "term-output";
 		el.append(o);
-		const entry = { el, o, running: b.running, system: b.by === "system" };
+		const entry = { el, o, running: b.running };
 		blocks.set(b.id, entry);
 		for (const c of b.chunks || []) appendChunk(entry, c.text, c.err);
-		out.append(el);
+		external.append(el);
+		external.hidden = false;
 		if (!b.running) endBlock(entry, b.exitCode);
-		while (out.children.length > MAX_DOM_BLOCKS) out.firstElementChild.remove();
+	}
+
+	function clearBlocks(keepRunning) {
+		for (const [id, entry] of blocks) {
+			if (keepRunning && entry.running) continue;
+			entry.el.remove();
+			blocks.delete(id);
+		}
+		external.hidden = blocks.size === 0;
+	}
+
+	// ── la consola ──
+
+	/** La librería pesa: se baja al abrir el panel por primera vez. */
+	function loadTerminal() {
+		loading ??= (async () => {
+			const css = document.createElement("link");
+			css.rel = "stylesheet";
+			css.href = "/vendor/xterm.css";
+			document.head.append(css);
+			const [{ Terminal }, { FitAddon }] = await Promise.all([import("/vendor/xterm.mjs"), import("/vendor/xterm-fit.mjs")]);
+			term = new Terminal({
+				allowProposedApi: true,
+				cursorBlink: true,
+				scrollback: 5000,
+				scrollOnEraseInDisplay: true,
+				fontFamily: getComputedStyle(document.documentElement).getPropertyValue("--mono").trim() || "Consolas, monospace",
+				fontSize: 13,
+				theme: TERM_THEME,
+			});
+			fit = new FitAddon();
+			term.loadAddon(fit);
+			term.open(screen);
+			term.onData(send);
+			term.onBinary(send);
+			term.attachCustomKeyEventHandler(onKey);
+			new ResizeObserver(syncSize).observe(screen);
+		})();
+		return loading;
+	}
+
+	// Lo tecleado va en orden: lo que llega mientras se manda algo se junta en el siguiente envío.
+	let pending = "";
+	let sending = false;
+	async function send(data) {
+		pending += data;
+		if (sending) return;
+		sending = true;
+		while (pending) {
+			const chunk = pending;
+			pending = "";
+			await post("/api/terminal/input", { data: chunk });
+		}
+		sending = false;
+	}
+
+	function onKey(e) {
+		if (e.type !== "keydown") return true;
+		const mod = e.ctrlKey || e.metaKey;
+		const key = e.key.toLowerCase();
+		// Ctrl+C con texto marcado copia; sin marcar, interrumpe (lo normal en una terminal).
+		if (mod && !e.altKey && key === "c" && term.hasSelection()) {
+			copyText(term.getSelection());
+			term.clearSelection();
+			return false;
+		}
+		// Ctrl+V: que lo haga el navegador; la terminal recibe el evento de pegar.
+		if (mod && !e.altKey && key === "v") return false;
+		return true;
+	}
+
+	async function copyText(text) {
+		try {
+			await navigator.clipboard.writeText(text);
+		} catch {
+			// Sin https (por Tailscale) el navegador no da acceso al portapapeles: se hace a la antigua.
+			const ta = document.createElement("textarea");
+			ta.value = text;
+			document.body.append(ta);
+			ta.select();
+			document.execCommand("copy");
+			ta.remove();
+		}
+	}
+
+	// Las teclas son de la terminal: Esc o Ctrl+K no deben activar los atajos de Shiro.
+	screen.addEventListener("keydown", (e) => e.stopPropagation());
+
+	let sizeTimer = 0;
+	let lastSize = "";
+	function syncSize() {
+		clearTimeout(sizeTimer);
+		sizeTimer = setTimeout(() => {
+			if (!active || !term || screen.clientWidth < 50 || screen.clientHeight < 30) return;
+			fit.fit();
+			const key = `${term.cols}x${term.rows}`;
+			if (key === lastSize) return;
+			lastSize = key;
+			post("/api/terminal/resize", { cols: term.cols, rows: term.rows });
+		}, 80);
+	}
+
+	function setAttention(attention) {
+		attentionBar.hidden = !attention;
+		if (!attention) return;
+		$("#term-attention-text").textContent = `«${attention.prompt}» Escríbela aquí: Shiro no la ve.`;
+		// Que no acabe escrita por error en la caja del chat.
+		term?.focus();
+	}
+
+	function setState(e) {
+		busy = e.busy;
+		shellEl.textContent = e.shell;
+		paintStop();
 	}
 
 	const stream = liveStream("/api/terminal/stream", (e) => {
-		const stick = nearBottom();
 		if (e.type === "snapshot") {
-			out.textContent = "";
-			blocks.clear();
-			cwd = e.cwd;
-			shell = e.shell;
+			setState(e);
+			setAttention(e.attention);
+			clearBlocks(false);
 			for (const b of e.blocks) addBlock(b);
+			if (e.windowsBuild) term.options.windowsPty = { backend: "conpty", buildNumber: e.windowsBuild };
+			term.reset();
+			term.resize(e.cols, e.rows);
+			lastSize = "";
+			term.write(e.data, syncSize);
+		} else if (e.type === "data") {
+			term.write(e.data);
+		} else if (e.type === "state") {
+			setState(e);
+		} else if (e.type === "attention") {
+			setAttention(e.attention);
+		} else if (e.type === "notice") {
+			toast(e.text, "info", 6000);
+		} else if (e.type === "clear") {
+			term.clear();
+			clearBlocks(true);
 		} else if (e.type === "block") {
 			addBlock(e.block);
 		} else if (e.type === "out") {
@@ -336,55 +466,132 @@ function createTerminalPane(toast) {
 		} else if (e.type === "end") {
 			const entry = blocks.get(e.id);
 			if (entry) endBlock(entry, e.exitCode);
-			cwd = e.cwd;
 		}
-		paintPrompt();
-		if (stick || e.type === "snapshot" || e.type === "block") out.scrollTop = out.scrollHeight;
+		paintStop();
 	});
 
-	const post = (path, json) => api(path, { method: "POST", json }).catch((err) => toast(err.message, "error", 6000));
-
-	$("#term-form").addEventListener("submit", (e) => {
-		e.preventDefault();
-		const command = input.value;
-		if (!command.trim()) return;
-		if (history[history.length - 1] !== command) history.push(command);
-		history = history.slice(-100);
-		hIdx = history.length;
-		try {
-			localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
-		} catch {}
-		input.value = "";
-		post("/api/terminal/run", { command });
-	});
-	input.addEventListener("keydown", (e) => {
-		if (e.key === "ArrowUp" || e.key === "ArrowDown") {
-			e.preventDefault();
-			hIdx = Math.max(0, Math.min(history.length, hIdx + (e.key === "ArrowUp" ? -1 : 1)));
-			input.value = history[hIdx] ?? "";
-			input.setSelectionRange(input.value.length, input.value.length);
-		} else if (e.ctrlKey && e.key.toLowerCase() === "c" && input.selectionStart === input.selectionEnd) {
-			e.preventDefault();
-			if (!stopBtn.disabled) post("/api/terminal/stop");
-			input.value = "";
-		} else if (e.ctrlKey && e.key.toLowerCase() === "l") {
-			e.preventDefault();
-			post("/api/terminal/clear");
-		}
-	});
-	// Clic en la salida (sin seleccionar texto) = escribir un comando.
-	out.addEventListener("mouseup", () => {
-		if (!window.getSelection()?.toString()) input.focus();
-	});
+	attentionBar.onclick = () => term?.focus();
 	stopBtn.onclick = () => post("/api/terminal/stop");
 	$("#terminal-clear").onclick = () => post("/api/terminal/clear");
 
 	return {
 		busy: badge($("#terminal-badge")),
+		focus() {
+			loadTerminal().then(() => term.focus());
+		},
 		setActive(on) {
+			active = on;
+			if (!on) return stream.stop();
+			loadTerminal()
+				.then(() => {
+					if (!active) return;
+					stream.start();
+					syncSize();
+				})
+				.catch((err) => toast(`No pude abrir la terminal: ${err.message}`, "error", 6000));
+		},
+	};
+}
+
+// ───────────────────────────── oficina ─────────────────────────────
+
+const STATUS_TEXT = { working: "Trabajando", done: "Terminó", error: "Falló", stopped: "Detenido" };
+
+/** "45 s", "3 min 10 s". */
+function elapsed(ms) {
+	const s = Math.max(0, Math.round(ms / 1000));
+	return s < 60 ? `${s} s` : `${Math.floor(s / 60)} min${s % 60 ? ` ${s % 60} s` : ""}`;
+}
+
+function createOfficePane(toast) {
+	const list = $("#office-desks");
+	const empty = $("#office-empty");
+	const count = $("#office-count");
+	const stopAll = $("#office-stop");
+	const desks = new Map();
+
+	const post = (path, json) => api(path, { method: "POST", json }).catch((err) => toast(err.message, "error", 6000));
+
+	function paintDesk(d) {
+		let card = list.querySelector(`[data-id="${d.id}"]`);
+		if (!card) {
+			card = document.createElement("article");
+			card.className = "desk";
+			card.dataset.id = d.id;
+			card.setAttribute("role", "listitem");
+			card.innerHTML =
+				'<div class="desk-head"><span class="desk-avatar"></span><div class="desk-who"><span class="desk-name"></span><span class="desk-boss"></span></div><span class="desk-status"></span><button class="icon-btn sm desk-stop" title="Detener a este ayudante" data-icon="stop" data-size="sm"></button></div><p class="desk-task"></p><div class="desk-step"><span class="pane-dot"></span><span class="desk-step-text"></span><span class="desk-time"></span></div><details class="desk-result"><summary>Resultado</summary><div class="desk-result-text"></div></details>';
+			hydrateIcons(card);
+			$(".desk-stop", card).onclick = () => post("/api/office/stop", { id: d.id });
+			list.prepend(card);
+		}
+		card.dataset.status = d.status;
+		const avatar = $(".desk-avatar", card);
+		avatar.textContent = (d.name.trim()[0] || "?").toUpperCase();
+		avatar.style.background = d.color || "";
+		$(".desk-name", card).textContent = d.name;
+		$(".desk-boss", card).textContent = `ayudante de ${d.boss}`;
+		$(".desk-status", card).textContent = STATUS_TEXT[d.status] || d.status;
+		$(".desk-stop", card).hidden = d.status !== "working";
+		$(".desk-task", card).textContent = d.task;
+		$(".desk-task", card).title = d.task;
+		$(".desk-step-text", card).textContent = d.status === "working" ? d.step : `${d.step}${d.steps ? ` · ${d.steps} ${d.steps === 1 ? "paso" : "pasos"}` : ""}`;
+		const result = $(".desk-result", card);
+		result.hidden = !d.result;
+		// El texto del modelo se muestra tal cual (sin HTML).
+		$(".desk-result-text", card).textContent = d.result || "";
+		$(".desk-result summary", card).textContent = d.status === "error" ? "Error" : "Resultado";
+	}
+
+	function paintTimes() {
+		const now = Date.now();
+		for (const d of desks.values()) {
+			const t = list.querySelector(`[data-id="${d.id}"] .desk-time`);
+			if (t) t.textContent = elapsed((d.endedAt || now) - d.startedAt);
+		}
+	}
+
+	function paintSummary() {
+		const all = [...desks.values()];
+		const working = all.filter((d) => d.status === "working").length;
+		empty.hidden = all.length > 0;
+		list.hidden = all.length === 0;
+		stopAll.disabled = working === 0;
+		count.textContent = all.length ? (working ? `${working} trabajando` : `${all.length} ${all.length === 1 ? "escritorio" : "escritorios"}`) : "";
+	}
+
+	const stream = liveStream("/api/office/stream", (e) => {
+		if (e.type === "snapshot") {
+			list.textContent = "";
+			desks.clear();
+			for (const d of e.desks) {
+				desks.set(d.id, d);
+				paintDesk(d);
+			}
+		} else if (e.type === "desk") {
+			desks.set(e.desk.id, e.desk);
+			paintDesk(e.desk);
+		} else if (e.type === "remove") {
+			desks.delete(e.id);
+			list.querySelector(`[data-id="${e.id}"]`)?.remove();
+		}
+		paintSummary();
+		paintTimes();
+	});
+
+	// El reloj de cada escritorio avanza mientras el panel está abierto.
+	let clock = 0;
+	stopAll.onclick = () => post("/api/office/stop", {});
+	$("#office-clear").onclick = () => post("/api/office/clear", {});
+	paintSummary();
+
+	return {
+		busy: badge($("#office-badge")),
+		setActive(on) {
+			clearInterval(clock);
 			if (on) {
 				stream.start();
-				setTimeout(() => input.focus(), 50);
+				clock = setInterval(paintTimes, 1000);
 			} else stream.stop();
 		},
 	};
@@ -395,10 +602,10 @@ function createTerminalPane(toast) {
 export function initPanels({ toast }) {
 	const app = $("#app");
 	const dock = $("#dock");
-	const prefs = { browser: false, terminal: false, width: 0, ...readPrefs() };
-	const panes = { browser: createBrowserPane(toast), terminal: createTerminalPane(toast) };
-	const els = { browser: $("#browser-pane"), terminal: $("#terminal-pane") };
-	const buttons = { browser: $("#browser-btn"), terminal: $("#terminal-btn") };
+	const prefs = { browser: false, terminal: false, office: false, width: 0, ...readPrefs() };
+	const panes = { browser: createBrowserPane(toast), terminal: createTerminalPane(toast), office: createOfficePane(toast) };
+	const els = { browser: $("#browser-pane"), terminal: $("#terminal-pane"), office: $("#office-pane") };
+	const buttons = { browser: $("#browser-btn"), terminal: $("#terminal-btn"), office: $("#office-btn") };
 
 	const applyWidth = () => {
 		if (prefs.width) dock.style.width = `${prefs.width}px`;
@@ -409,17 +616,21 @@ export function initPanels({ toast }) {
 		els[name].hidden = !open;
 		buttons[name].classList.toggle("active", open);
 		buttons[name].setAttribute("aria-pressed", String(open));
-		dock.hidden = els.browser.hidden && els.terminal.hidden;
+		dock.hidden = Object.values(els).every((e) => e.hidden);
 		app.classList.toggle("dock-open", !dock.hidden);
 		panes[name].setActive(open);
 		prefs[name] = open;
 		savePrefs(prefs);
 	}
 
-	buttons.browser.onclick = () => show("browser", els.browser.hidden);
-	buttons.terminal.onclick = () => show("terminal", els.terminal.hidden);
-	$("#browser-hide").onclick = () => show("browser", false);
-	$("#terminal-hide").onclick = () => show("terminal", false);
+	for (const name of Object.keys(panes)) {
+		buttons[name].onclick = () => {
+			show(name, els[name].hidden);
+			// Abierto a mano es para usarlo; abierto solo (lo usa Shiro) no le quita el foco al chat.
+			if (!els[name].hidden) panes[name].focus?.();
+		};
+		$(`#${name}-hide`).onclick = () => show(name, false);
+	}
 
 	// Arrastrar el borde izquierdo cambia el ancho.
 	const resizer = $("#dock-resizer");
@@ -450,15 +661,14 @@ export function initPanels({ toast }) {
 	});
 
 	applyWidth();
-	if (prefs.browser) show("browser", true);
-	if (prefs.terminal) show("terminal", true);
+	for (const name of Object.keys(panes)) if (prefs[name]) show(name, true);
 
 	return {
 		show,
 		/** Eventos de herramientas del chat: abre el panel que Shiro está usando y lo indica. */
 		onTool(evt) {
-			// Claude Code enseña su progreso en el panel Terminal.
-			const name = evt.name === "browser" || evt.name === "terminal" ? evt.name : evt.name === "claude_code" ? "terminal" : null;
+			// Claude Code enseña su progreso en el panel Terminal; los ayudantes, en la Oficina.
+			const name = { browser: "browser", terminal: "terminal", claude_code: "terminal", delegate: "office" }[evt.name] ?? null;
 			if (!name) return;
 			if (evt.phase === "start") {
 				show(name, true);
