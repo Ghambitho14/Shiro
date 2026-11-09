@@ -215,7 +215,7 @@ function attachClientEvents(waClient: Client, opts: StartBridgeOptions): void {
 
 	waClient.on("ready", () => {
 		setState("ready");
-		console.log("  WhatsApp conectado. Shiro ya puede responder mensajes.\n");
+		console.log("  WhatsApp conectado. Aku ya puede responder mensajes.\n");
 	});
 
 	waClient.on("authenticated", () => {
@@ -333,7 +333,7 @@ export async function stopWhatsAppBridge(): Promise<void> {
 
 export async function runWhatsAppBridge(): Promise<void> {
 	startNotesSync();
-	console.log("\n  Shiro WhatsApp bridge (modo personal)\n");
+	console.log("\n  Aku WhatsApp bridge (modo personal)\n");
 	console.log(`  Cliente: ${WA_CLIENT_ID}`);
 	if (WA_ALLOWED_CHAT) console.log(`  Filtro chat permitido: ${WA_ALLOWED_CHAT}`);
 	else console.log("  ⚠️  Sin WA_ALLOWED_CHAT: responde a cualquiera, solo con herramientas públicas (web, hora, calculadora).");

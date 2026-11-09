@@ -7,7 +7,7 @@
 export type SupabaseConfig = { url: string; key: string };
 
 /** SQL que el usuario pega en el editor SQL de Supabase (se puede ejecutar varias veces). */
-export const SUPABASE_SQL = `-- Tablas de Shiro (se puede ejecutar varias veces sin problema)
+export const SUPABASE_SQL = `-- Tablas de Aku (se puede ejecutar varias veces sin problema)
 create table if not exists shiro_chats (
   id text primary key,
   title text not null,
@@ -92,7 +92,7 @@ export function supabaseKeyProblem(key: string): string | null {
 function describeError(status: number, info: { message?: string; code?: string; hint?: string }, url: string): SupabaseError {
 	const msg = info.message ?? "";
 	if (info.code === "PGRST205" || info.code === "42P01" || /could not find the table|relation .* does not exist/i.test(msg)) {
-		return new SupabaseError(status, "Faltan las tablas de Shiro en Supabase: copia el SQL de Ajustes → Datos, pégalo en Supabase → SQL Editor y pulsa Run.", true);
+		return new SupabaseError(status, "Faltan las tablas de Aku en Supabase: copia el SQL de Ajustes → Datos, pégalo en Supabase → SQL Editor y pulsa Run.", true);
 	}
 	if (status === 401 || info.code === "PGRST301" || /invalid api key|jwt/i.test(msg)) {
 		return new SupabaseError(status, "Supabase rechazó la clave. Copia de nuevo la clave secreta (service_role o sb_secret_…) del proyecto.");

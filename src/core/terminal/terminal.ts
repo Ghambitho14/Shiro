@@ -197,7 +197,7 @@ export function cleanEnv(): NodeJS.ProcessEnv {
 function ptyEnv(shell: Shell): NodeJS.ProcessEnv {
 	const env = cleanEnv();
 	delete env.NO_COLOR;
-	return { ...env, TERM: "xterm-256color", COLORTERM: "truecolor", TERM_PROGRAM: "Shiro", ...shell.env };
+	return { ...env, TERM: "xterm-256color", COLORTERM: "truecolor", TERM_PROGRAM: "Aku", ...shell.env };
 }
 
 function isPowerShell(kind: ShellKind): boolean {

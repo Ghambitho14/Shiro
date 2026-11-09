@@ -185,7 +185,6 @@ export const TOOLS: ToolDefinition[] = [
 		examples: [
 			'"ejecuta npm install" → exec({command: "npm install"})',
 			'"compila el proyecto" → exec({command: "pnpm build"})',
-			'"git status" → exec({command: "git status"})',
 		],
 	},
 	{
@@ -303,13 +302,14 @@ export const TOOLS: ToolDefinition[] = [
 		label: "Usar habilidad",
 		name: "use_skill",
 		description:
-			'Carga las instrucciones de una habilidad de la lista "Habilidades" del sistema. Úsala antes de responder cuando una encaje con lo que pide el usuario y sigue lo que diga. Sin name, lista todas. Con file, lee otro archivo de la habilidad (referencias, plantillas).',
+			'Carga las instrucciones de una habilidad de la lista "Habilidades" del sistema. Úsala antes de responder cuando una encaje con lo que pide el usuario y sigue lo que diga. Sin name, lista todas. Con file, lee otro archivo de la habilidad (referencias, plantillas). Si el resultado dice que sigue, vuelve a llamarla con offset para leer el resto.',
 		category: "utilidades",
 		parameters: {
 			type: "object",
 			properties: {
 				name: { type: "string", description: "Nombre de la habilidad (tal cual aparece en la lista)" },
 				file: { type: "string", description: "Opcional: archivo dentro de la habilidad, p. ej. references/guia.md" },
+				offset: { type: "number", description: "Opcional: letra desde la que seguir leyendo (te la da el resultado anterior)" },
 			},
 		},
 	},
@@ -413,7 +413,7 @@ export const TOOLS: ToolDefinition[] = [
 		},
 		examples: [
 			'"qué cambios hay" → git({command: "status"})',
-			'"guarda los cambios" → git({command: "add ."}) y luego git({command: "commit -m \"mejora\""})',
+			'"haz un commit con mis cambios" → git({command: "add ."}) y luego git({command: "commit -m \"mejora\""})',
 		],
 	},
 
@@ -724,28 +724,11 @@ export const LITE_TOOLS = [
 /** Herramientas que controlan el PC (se pueden desactivar todas con `pcControl: false`). */
 export const PC_TOOLS = TOOLS.filter((t) => t.category === "pc").map((t) => t.name);
 
-/** Programación: archivos, proyecto, Git y comprobaciones, sin los controles generales del PC. */
-export const CODE_TOOLS = [
-	"project",
-	"read_file",
-	"write_file",
-	"list_dir",
-	"read_file_system",
-	"write_file_system",
-	"list_dir_system",
-	"search_web",
-	"fetch_url",
-	"calculator",
-	"get_time",
-	"memory_search",
-	"memory_add",
-	"use_skill",
-	"git",
-	"exec",
-	"terminal",
-	"claude_code",
-	"delegate",
-];
+/**
+ * Solo funcionan en Windows (`requireWindows` en pc.ts): fuera de él el modelo ni las ve, para que
+ * no pierda pasos intentándolo. pc_open y pc_system sí funcionan en Linux y macOS.
+ */
+export const WINDOWS_ONLY_TOOLS = ["pc_screenshot", "pc_keyboard", "pc_mouse", "pc_media", "pc_windows", "pc_processes", "pc_clipboard", "pc_power"];
 
 /** Planear: investigar y proponer sin cambiar archivos, memoria, recordatorios ni ejecutar comandos. */
 export const PLAN_TOOLS = [
@@ -767,22 +750,32 @@ export const PLAN_TOOLS = [
 ];
 
 /**
- * Herramientas del modo CodeHacking (pentesting autorizado). Todas están también en LITE_TOOLS,
- * así que funcionan con modelos locales pequeños. La terminal es la clave: en la MV de Kali es
- * `bash`, con acceso directo a nmap, nikto, sqlmap, etc.
+ * Herramientas del modo CodeHacking (programación y pentesting autorizado), sin los controles
+ * generales del PC. La terminal es la clave: en la MV de Kali es `bash`, con acceso directo a nmap,
+ * nikto, sqlmap, etc. Es una lista elegida a propósito: no pasa por el perfil lite ni el modo ahorro.
  */
 export const HACKING_TOOLS = [
+	"project",
+	"read_file",
+	"write_file",
+	"list_dir",
+	"read_file_system",
+	"write_file_system",
+	"list_dir_system",
 	"terminal",
 	"exec",
+	"git",
+	"claude_code",
 	"browser",
 	"fetch_url",
 	"search_web",
 	"cve_search",
-	"read_file",
-	"write_file",
-	"list_dir",
+	"calculator",
+	"get_time",
 	"memory_search",
 	"memory_add",
+	"use_skill",
+	"delegate",
 ];
 
 /** Las herramientas de solo lectura al planear, según el modo. */
@@ -934,13 +927,29 @@ export function describeToolUse(name: string, args: Record<string, unknown> = {}
 	}
 }
 
+/** Algunos proveedores rechazan descripciones más largas (OpenAI, por ejemplo). */
+const MAX_DESCRIPTION_CHARS = 1024;
+
+/** La descripción con sus ejemplos, los que quepan: es lo que más ayuda a un modelo pequeño a elegir. */
+function describeForModel(tool: ToolDefinition): string {
+	let text = tool.description;
+	let first = true;
+	for (const example of tool.examples ?? []) {
+		const next = `${text}${first ? "\nEjemplos:" : ""}\n- ${example}`;
+		if (next.length > MAX_DESCRIPTION_CHARS) break;
+		text = next;
+		first = false;
+	}
+	return text;
+}
+
 /** Conversión al formato ToolDef para el LLM */
 function toToolDef(tool: ToolDefinition): ToolDef {
 	return {
 		type: "function",
 		function: {
 			name: tool.name,
-			description: tool.description,
+			description: describeForModel(tool),
 			parameters: tool.parameters,
 		},
 	};

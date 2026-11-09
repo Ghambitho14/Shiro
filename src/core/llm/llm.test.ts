@@ -156,6 +156,25 @@ test("OpenAI streaming: une los trozos de tool_calls y transmite el texto", asyn
 	strictEqual(streamed, "En Lima llueve.");
 });
 
+test("Modo ahorro: recorta los resultados salvo use_skill, y no aplica con saverLimits false", async () => {
+	const tools: ToolDef[] = [...TOOLS, { type: "function", function: { name: "use_skill", description: "habilidad", parameters: { type: "object", properties: {} } } }];
+	const largo = "x".repeat(7000);
+	const lengthOf = async (tool: string, saverLimits?: boolean) => {
+		requests.length = 0;
+		let turn = 0;
+		handler = () =>
+			turn++ === 0
+				? { json: { message: { content: "", tool_calls: [{ function: { name: tool, arguments: {} } }] } } }
+				: { json: { message: { content: "Listo con el resultado." } } };
+		await createLLMClient(settings("ollama")).chatWithTools([{ role: "user", content: "x" }], tools, async () => ({ ok: true, content: largo }), { saverLimits });
+		const msgs = requests[1].body.messages as { role: string; content: string }[];
+		return msgs.find((m) => m.role === "tool")!.content.length;
+	};
+	ok((await lengthOf("get_weather")) < 4100);
+	strictEqual(await lengthOf("use_skill"), 7000);
+	strictEqual(await lengthOf("get_weather", false), 7000);
+});
+
 test("Si el modelo no soporta tools, cambia a modo texto automáticamente", async () => {
 	requests.length = 0;
 	handler = (_p, body) => {

@@ -72,7 +72,7 @@ export async function handleProjectsApi(req: IncomingMessage, res: ServerRespons
 	}
 
 	if (pathname === "/api/projects/pick-folder" && method === "POST") {
-		if (!canPickFolder(req)) return fail(400, "El selector de carpetas solo funciona con Shiro abierto en este mismo PC con Windows. Escribe la ruta.");
+		if (!canPickFolder(req)) return fail(400, "El selector de carpetas solo funciona con Aku abierto en este mismo PC con Windows. Escribe la ruta.");
 		try {
 			const path = await pickFolder("Elige la carpeta para el proyecto");
 			return reply(200, path ? { path } : { cancelled: true });

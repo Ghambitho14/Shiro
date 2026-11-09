@@ -59,7 +59,7 @@ export function normalizeUrl(input: string): string {
 	if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
 		throw new Error("Solo se pueden abrir direcciones web (http o https).");
 	}
-	if (isShiroUrl(parsed.href)) throw new Error("La web de Shiro no se abre dentro de su propio navegador.");
+	if (isShiroUrl(parsed.href)) throw new Error("La web de Aku no se abre dentro de su propio navegador.");
 	return parsed.href;
 }
 

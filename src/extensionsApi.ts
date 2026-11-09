@@ -11,6 +11,8 @@ import { COMMANDS } from "./commands.js";
 import {
 	EXTERNAL_SKILL_SOURCES,
 	SHIRO_SKILLS_DIR,
+	copyAllSkillsToShiro,
+	copySkillToShiro,
 	deleteOwnSkill,
 	findSkillById,
 	getEnabledSkills,
@@ -247,6 +249,16 @@ export async function handleExtensionsApi(
 			const fallback = String(d.filename ?? "habilidad").replace(/\.md$/i, "").replace(/^SKILL$/i, "habilidad");
 			const id = importOwnSkill(String(d.content ?? ""), fallback);
 			sendJson(res, 200, { id, ...skillsPayload() });
+			return true;
+		}
+		if (method === "POST" && pathname === "/api/skills/copy") {
+			const d = await body<{ id?: string; all?: boolean }>();
+			const results = d.all === true ? copyAllSkillsToShiro() : [copySkillToShiro(String(d.id ?? ""))];
+			const made = results.filter((r) => r.copied);
+			// La copia queda como estaba la original: apagada si no se usaba.
+			const off = made.filter((r) => !r.enabled).map((r) => r.id);
+			if (off.length) setConfig({ disabledSkills: [...new Set([...getConfig().disabledSkills, ...off])] });
+			sendJson(res, 200, { copied: made.length, existing: results.length - made.length, ...skillsPayload() });
 			return true;
 		}
 		if (method === "DELETE" && pathname === "/api/skills") {

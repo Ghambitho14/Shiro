@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { resolveTools, runAgent } from "./Agent.js";
 import { getConfig } from "../../config/config.js";
 import { activeModelTuning } from "../llm/providers.js";
-import { CODE_TOOLS, PC_TOOLS, PLAN_TOOLS, planToolsFor } from "../tools/ToolRegistry.js";
+import { HACKING_TOOLS, PC_TOOLS, PLAN_TOOLS, planToolsFor, WINDOWS_ONLY_TOOLS } from "../tools/ToolRegistry.js";
 import { isPlanToolCall, parseChatMode, parsePermissionMode } from "./chatMode.js";
 import type { LLMClient } from "../llm/LLMClient.js";
 
@@ -27,7 +27,9 @@ test("en la web o la terminal (con approver) sí se ofrece, también a modelos l
 });
 
 test("los modos y permisos se validan, y al planear las acciones mixtas se limitan a lectura", () => {
-	assert.equal(parseChatMode("code"), "code");
+	assert.equal(parseChatMode("hacking"), "hacking");
+	// El antiguo modo Code ahora es CodeHacking.
+	assert.equal(parseChatMode("code"), "hacking");
 	// Plan ya no es un modo: es un permiso que vale en cualquiera.
 	assert.equal(parseChatMode("plan"), "chat");
 	assert.equal(parseChatMode("cualquier cosa"), "chat");
@@ -45,18 +47,44 @@ test("los modos y permisos se validan, y al planear las acciones mixtas se limit
 	assert.equal(isPlanToolCall("terminal", { action: "write", text: "hola" }), false);
 });
 
-test("Code conserva sus herramientas y al planear solo se recibe lectura, en cualquier modo", () => {
-	const code = resolveTools(CODE_TOOLS, true, true, false, undefined, "code");
-	for (const tool of ["write_file", "git", "exec", "terminal", "delegate"]) assert.ok(code?.includes(tool), tool);
-	for (const mode of ["chat", "code"] as const) {
-		const plan = resolveTools(planToolsFor(mode), true, true, false, undefined, mode, true);
-		assert.deepEqual(plan, PLAN_TOOLS);
-	}
+test("CodeHacking programa, hackea y usa habilidades; al planear solo se recibe lectura, en cualquier modo", () => {
+	const all = resolveTools(HACKING_TOOLS, true, true, false, undefined, "hacking");
+	for (const tool of ["write_file", "git", "exec", "terminal", "delegate", "cve_search", "browser", "use_skill"]) assert.ok(all?.includes(tool), tool);
+	const chatPlan = resolveTools(planToolsFor("chat"), true, true, false, undefined, "chat", true);
+	assert.deepEqual(chatPlan, PLAN_TOOLS);
 	const hacking = resolveTools(planToolsFor("hacking"), true, true, false, undefined, "hacking", true);
 	assert.ok(hacking?.includes("cve_search"));
 	for (const tool of ["write_file", "write_file_system", "memory_add", "exec", "terminal", "git", "claude_code"]) {
 		assert.equal(hacking?.includes(tool), false, tool);
 	}
+});
+
+test("fuera de Windows no se ofrecen las herramientas que solo funcionan ahí", (t) => {
+	const real = Object.getOwnPropertyDescriptor(process, "platform")!;
+	t.after(() => Object.defineProperty(process, "platform", real));
+	Object.defineProperty(process, "platform", { ...real, value: "linux" });
+	const tools = resolveTools(HACKING_TOOLS, true, true, false, undefined, "hacking")!;
+	assert.ok(tools.includes("terminal"));
+	const chat = resolveTools(undefined, false, true, false)!;
+	for (const tool of WINDOWS_ONLY_TOOLS) assert.equal(chat.includes(tool), false, tool);
+	if (getConfig().pcControl) for (const tool of ["pc_open", "pc_system", "browser", "terminal"]) assert.ok(chat.includes(tool), tool);
+});
+
+test("los límites del modo ahorro solo se piden en Chat", async () => {
+	const seen: unknown[] = [];
+	const llm: LLMClient = {
+		chat: async () => "ok",
+		chatWithTools: async (_m, _d, _e, opts) => {
+			seen.push(opts?.saverLimits);
+			return "Respuesta de prueba.";
+		},
+		getConfig: () => ({ provider: "ollama", model: "qwen3:8b", baseUrl: "http://localhost:11434", local: true }),
+	};
+	const base = { llm, agentName: "Shiro", mcp: false, approver: async () => true };
+	await runAgent("hola", { ...base, mode: "chat" });
+	await runAgent("hola", { ...base, mode: "hacking", allowedTools: HACKING_TOOLS });
+	await runAgent("hola", { ...base, mode: "chat", permissions: "plan", allowedTools: PLAN_TOOLS });
+	assert.deepEqual(seen, [true, false, false]);
 });
 
 test("Más razonamiento llega al modelo solo si se pidió", async () => {
@@ -69,13 +97,13 @@ test("Más razonamiento llega al modelo solo si se pidió", async () => {
 		},
 		getConfig: () => ({ provider: "ollama", model: "qwen3:8b", baseUrl: "http://localhost:11434", local: true }),
 	};
-	const base = { llm, agentName: "Shiro", mode: "code" as const, allowedTools: CODE_TOOLS, mcp: false, approver: async () => true };
+	const base = { llm, agentName: "Shiro", mode: "hacking" as const, allowedTools: HACKING_TOOLS, mcp: false, approver: async () => true };
 	await runAgent("hola", base);
 	await runAgent("hola", { ...base, thinking: "high" });
 	assert.deepEqual(seen, [undefined, "high"]);
 });
 
-test("el modo ahorro no quita a Code las herramientas de programación", async () => {
+test("el modo ahorro no quita a CodeHacking las herramientas de programación", async () => {
 	let offered: string[] = [];
 	const llm: LLMClient = {
 		chat: async () => "ok",
@@ -88,8 +116,8 @@ test("el modo ahorro no quita a Code las herramientas de programación", async (
 	const out = await runAgent("hola", {
 		llm,
 		agentName: "Shiro",
-		mode: "code",
-		allowedTools: CODE_TOOLS,
+		mode: "hacking",
+		allowedTools: HACKING_TOOLS,
 		mcp: false,
 		approver: async () => true,
 	});

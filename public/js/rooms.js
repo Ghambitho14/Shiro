@@ -2,9 +2,9 @@
 import { icon } from "./icons.js";
 import { api } from "./api.js";
 import { agentAvatar, loadAgents } from "./agents.js";
-import { $, el, openMenu, toast } from "./ui.js";
+import { $, confirmDialog, el, openMenu, toast } from "./ui.js";
 import { refs, state } from "./state.js";
-import { buildUser, contentParts, renderThread, replaceText, serialize } from "./messages.js";
+import { buildUser, contentParts, fromServer, renderThread, replaceText, scrollToBottom, serialize } from "./messages.js";
 import { ensureSession, runAssistant } from "./chat.js";
 import { openChat, paintSidebar, setDocTitle, upsertSession } from "./sidebar.js";
 import { settingsDlg } from "./settings.js";
@@ -39,9 +39,59 @@ export async function roomAction(action, agentId) {
 	}
 }
 
+/** Hay algo hablado desde el último cierre (una pregunta y su respuesta) que se pueda resumir. */
+function canCloseChat() {
+	if (!state.activeId) return false;
+	let user = false;
+	let reply = false;
+	for (let i = state.messages.length - 1; i >= 0; i--) {
+		const m = state.messages[i];
+		if (m.summary) break;
+		if (m.role === "user") user = true;
+		else if (!m.streaming && !m.error && String(m.content).trim()) reply = true;
+	}
+	return user && reply;
+}
+
+/** «Cerrar conversación»: el modelo resume el chat, se guarda como recuerdo y desde ahí solo se le manda el resumen. */
+async function closeConversation(btn) {
+	if (state.busy || state.closing) return toast("Espera a que termine la respuesta.", "info");
+	const ok = await confirmDialog({
+		title: "Cerrar conversación",
+		text: `${state.name} resumirá este chat y guardará el resumen en su memoria. Podrás seguir leyéndolo y escribiendo aquí, pero ${state.name} solo recibirá el resumen y lo nuevo.`,
+		ok: "Resumir y cerrar",
+	});
+	if (!ok) return;
+	const id = state.activeId;
+	state.closing = true;
+	btn.disabled = true;
+	$("span", btn).textContent = "Resumiendo…";
+	// Ocupado (no se envía nada mientras resume), sin el botón de parar: el servidor seguiría igual.
+	state.busy = true;
+	try {
+		await persist(id);
+		const d = await api(`/api/chat-sessions/${encodeURIComponent(id)}/close`, { method: "POST" });
+		upsertSession(d.session);
+		paintSidebar();
+		if (state.activeId === id) {
+			state.messages = (d.session.messages || []).map(fromServer);
+			renderThread();
+			scrollToBottom(true);
+		}
+		toast("Resumen guardado en la memoria.", "success");
+	} catch (err) {
+		toast(`No pude cerrar la conversación: ${err.message}`, "error", 6000);
+	} finally {
+		state.closing = false;
+		state.busy = false;
+		paintRoomBar();
+	}
+}
+
 export function paintRoomBar() {
 	const room = state.room;
-	roomBar.hidden = !room && !state.agents.length;
+	const closable = canCloseChat() || state.closing;
+	roomBar.hidden = !room && !state.agents.length && !closable;
 	roomBar.innerHTML = "";
 	if (roomBar.hidden) return;
 	for (const p of room?.participants || []) {
@@ -64,6 +114,15 @@ export function paintRoomBar() {
 		$("span", add).textContent = room ? "Sumar agente" : "Hablar con un agente";
 		add.onclick = () => openMenu(add, others.map((a) => ({ label: a.name, onClick: () => roomAction("add", a.id) })));
 		roomBar.append(add);
+	}
+	if (closable) {
+		const close = el("button", "room-chip add close-chat", `${icon("archive", "sm")}<span></span>`);
+		close.type = "button";
+		close.title = "Resume este chat, guarda el resumen en la memoria y desde ahí solo manda el resumen al modelo";
+		$("span", close).textContent = state.closing ? "Resumiendo…" : "Cerrar conversación";
+		close.disabled = state.closing;
+		close.onclick = () => closeConversation(close);
+		roomBar.append(close);
 	}
 }
 

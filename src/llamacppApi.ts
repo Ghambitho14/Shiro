@@ -138,7 +138,7 @@ export async function handleLlamaCppApi(req: IncomingMessage, res: ServerRespons
 	}
 
 	if (pathname === "/api/llamacpp/pick-folder" && method === "POST") {
-		if (!canPickFolder(req)) return fail(400, "El selector de carpetas solo funciona con Shiro abierto en este mismo PC con Windows. Escribe la ruta.");
+		if (!canPickFolder(req)) return fail(400, "El selector de carpetas solo funciona con Aku abierto en este mismo PC con Windows. Escribe la ruta.");
 		try {
 			const path = await pickFolder("Elige una carpeta con modelos GGUF");
 			return reply(200, path ? { path } : { cancelled: true });

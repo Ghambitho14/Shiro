@@ -125,7 +125,7 @@ export function mountLlamaCppPanel(container, ctx) {
 		const error = ins.phase === "error" ? `<div class="notice bad">${icon("alert", "sm")}<span>${escapeHtml(ins.error || "La descarga falló.")}</span></div>` : "";
 		const head = installed
 			? `<div class="llama-head"><strong>llama.cpp ${escapeHtml(installed.tag)}</strong><span class="chip">${escapeHtml(installed.label)}${installed.variant.startsWith("cuda-") ? ` ${escapeHtml(installed.variant.slice(5))}` : ""}</span></div>`
-			: `<div class="notice warn">${icon("download", "sm")}<span>Para usar archivos GGUF, Shiro descarga una vez llama.cpp (el programa oficial de ggml-org en GitHub). Después funciona sin internet.</span></div>`;
+			: `<div class="notice warn">${icon("download", "sm")}<span>Para usar archivos GGUF, Aku descarga una vez llama.cpp (el programa oficial de ggml-org en GitHub). Después funciona sin internet.</span></div>`;
 		box.innerHTML = `${head}${error}
 			<div class="actions-row">
 				<select class="select llama-backend" data-f="backend" aria-label="Versión de llama.cpp">${options(BACKEND_OPTIONS, st.backendChoice)}</select>

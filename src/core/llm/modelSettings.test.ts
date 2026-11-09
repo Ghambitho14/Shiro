@@ -110,6 +110,9 @@ test("modo ahorro: automático en locales y OpenCode, no en OpenRouter; limita p
 	assert.equal(saverOn(), true);
 	assert.equal(getMaxToolIterations(), 4);
 	assert.ok(normalizeToolResult("x".repeat(10_000)).length < 4100);
+	// CodeHacking y Planear no aplican sus límites aunque esté encendido.
+	assert.equal(getMaxToolIterations(undefined, false), 10);
+	assert.equal(normalizeToolResult("x".repeat(10_000), undefined, false).length, 10_000);
 	// En automático, la nube "normal" lo tiene apagado; OpenCode encendido.
 	assert.equal(saverOn({ provider: "openrouter", model: "openai/gpt-4o-mini" }), false);
 	assert.equal(saverOn({ provider: "opencode-go", model: "glm-5.3-flash" }), true);

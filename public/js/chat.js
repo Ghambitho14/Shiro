@@ -3,12 +3,13 @@ import * as projects from "./projects.js";
 import { icon } from "./icons.js";
 import { answerApproval, api, streamChat } from "./api.js";
 import { CommandPalette } from "./commands.js";
-import { $, $$, el, notifySystem, prefs, toast } from "./ui.js";
+import { $, $$, el, notifySystem, openMenu, prefs, toast } from "./ui.js";
 import { input, messagesBox, refs, state } from "./state.js";
 import { buildAssistant, buildContent, buildUser, inProjectHome, markLast, nearBottom, paintAssistant, scrollToBottom, updateEmpty } from "./messages.js";
 import { persist, setRoom } from "./rooms.js";
 import { newChat, paintSidebar, panels, setRoute } from "./sidebar.js";
 import { readAloud, stopReading, voice as voiceMode } from "./voiceMode.js";
+import { refreshContextMeter } from "./contextMeter.js";
 
 // ───────────────────────────── composer ─────────────────────────────
 
@@ -80,6 +81,66 @@ export async function addFiles(files) {
 	paintAttachments();
 	paintComposer();
 	input.focus();
+}
+
+const FOLDER_MAX_FILES = 200;
+const FOLDER_MAX_CHARS = 200_000;
+const FOLDER_MAX_FILE_BYTES = 100_000;
+const FOLDER_SKIP_DIRS = /(^|\/)(node_modules|\.git|\.next|\.venv|venv|__pycache__|dist|build|target|vendor)\//i;
+/** Claves y credenciales: nunca salen de la carpeta hacia el modelo. */
+const FOLDER_SECRET = /(^|\/)(\.env(\.[^/]*)?|\.npmrc|\.netrc|id_rsa|id_ed25519|credentials(\.[^/]*)?|secrets?\.[^/]*|[^/]*\.(pem|key|p12|pfx))$/i;
+const FOLDER_TEXT_NAME = /(^|\/)(dockerfile|makefile|readme|license|\.gitignore|\.dockerignore)$/i;
+
+/**
+ * Añade una carpeta como un solo adjunto: se lee aquí, en el navegador, con cada archivo bajo su ruta.
+ * Solo texto: sin carpetas generadas, binarios ni archivos con claves, y dentro de un tope.
+ */
+export async function addFolder(files) {
+	if (!files.length) return;
+	if (state.attachments.length >= 6) {
+		toast("Máximo 6 archivos por mensaje.", "error");
+		return;
+	}
+	const name = (files[0].webkitRelativePath || files[0].name).split("/")[0];
+	const parts = [];
+	const skipped = { secret: 0, other: 0, limit: 0 };
+	let chars = 0;
+	for (const f of files) {
+		const path = f.webkitRelativePath || f.name;
+		if (FOLDER_SKIP_DIRS.test(path)) continue;
+		if (FOLDER_SECRET.test(path)) {
+			skipped.secret++;
+			continue;
+		}
+		if (!(f.type.startsWith("text/") || TEXT_EXT.test(path) || FOLDER_TEXT_NAME.test(path))) {
+			skipped.other++;
+			continue;
+		}
+		if (f.size > FOLDER_MAX_FILE_BYTES || parts.length >= FOLDER_MAX_FILES || chars + f.size > FOLDER_MAX_CHARS) {
+			skipped.limit++;
+			continue;
+		}
+		try {
+			const text = await f.text();
+			parts.push(`--- ${path} ---\n${text}`);
+			chars += text.length;
+		} catch {
+			skipped.other++;
+		}
+	}
+	if (!parts.length) {
+		toast(`No encontré archivos de texto que pueda leer en ${name}.`, "error");
+		return;
+	}
+	state.attachments.push({ kind: "file", name: `${name}/ (${parts.length} ${parts.length === 1 ? "archivo" : "archivos"})`, text: parts.join("\n\n") });
+	paintAttachments();
+	paintComposer();
+	input.focus();
+	const notes = [];
+	if (skipped.secret) notes.push(`${skipped.secret} con posibles claves`);
+	if (skipped.limit) notes.push(`${skipped.limit} por tamaño`);
+	if (skipped.other) notes.push(`${skipped.other} que no son texto`);
+	toast(`Añadí ${parts.length} de ${name}${notes.length ? `; omití ${notes.join(", ")}` : ""}.`);
 }
 
 export function paintAttachments() {
@@ -288,9 +349,10 @@ export async function runAssistant({ voice = false, hooks = {} } = {}) {
 					if (sessionId === state.activeId) setRoom(evt.room);
 					if (evt.openVoice && !voice) setTimeout(() => voiceMode.open(), 0);
 				},
-				onDone: ({ content, agent, usage }) => {
+				onDone: ({ content, agent, usage, context }) => {
 					if (typeof content === "string" && content) m.content = content;
 					if (usage?.turns) m.usage = usage;
+					if (context?.used) m.context = context;
 					// Las órdenes de sala responden a nombre de un agente (o del asistente: null).
 					if (agent !== undefined) {
 						setMessageAgent(m, agent);
@@ -336,6 +398,7 @@ export async function runAssistant({ voice = false, hooks = {} } = {}) {
 	setBusy(false);
 	markLast();
 	hooks.onDone?.(m);
+	if (list === state.messages) refreshContextMeter();
 	await persist(sessionId, list);
 	if (!voice && prefs.autoRead && m.content && !m.error) readAloud(m);
 }
@@ -376,9 +439,17 @@ export function initComposer() {
 	// Menú de comandos al escribir "/" (public/js/commands.js).
 	new CommandPalette(input, $("#composer"), { onSubmit: () => $("#composer").requestSubmit() });
 	$("#stop-btn").onclick = () => stopGeneration();
-	$("#attach-btn").onclick = () => $("#file-input").click();
+	$("#attach-btn").onclick = (e) =>
+		openMenu(e.currentTarget, [
+			{ label: "Añadir archivos", icon: "file", onClick: () => $("#file-input").click() },
+			{ label: "Agregar carpeta", icon: "folder", onClick: () => $("#folder-input").click() },
+		]);
 	$("#file-input").onchange = (e) => {
 		addFiles([...e.target.files]);
+		e.target.value = "";
+	};
+	$("#folder-input").onchange = (e) => {
+		addFolder([...e.target.files]);
 		e.target.value = "";
 	};
 	input.addEventListener("paste", (e) => {

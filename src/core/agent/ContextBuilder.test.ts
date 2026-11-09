@@ -39,6 +39,15 @@ test("el system prompt no repite la conversación (va aparte, como mensajes)", (
 	strictEqual(/Eventos recientes|Memoria a largo plazo/.test(system), false);
 });
 
+test("buildContext: el resumen de «Cerrar conversación» va en el system prompt y cuenta como memoria", () => {
+	const without = buildContext({ goal: "sigue", agentName: "A", tokenBudget: 4000 });
+	strictEqual(without.system.includes("Lo que ya se habló en este chat"), false);
+	const withSummary = buildContext({ goal: "sigue", agentName: "A", tokenBudget: 4000, chatSummary: "- Jhon usa LM Studio." });
+	strictEqual(withSummary.system.includes("## Lo que ya se habló en este chat"), true);
+	strictEqual(withSummary.system.includes("- Jhon usa LM Studio."), true);
+	strictEqual(withSummary.sections.memory > without.sections.memory, true);
+});
+
 test("buildContext no duplica el manifiesto de tools (van por la API)", () => {
 	const out = buildContext({
 		goal: "List files",
@@ -141,15 +150,24 @@ test("planear explica el solo lectura incluso si no hay herramientas", () => {
 	strictEqual(system.includes("«Preguntar» o «Automático»"), true);
 });
 
-test("planear sustituye al bloque del modo: en Code no dice que puede cambiar cosas", () => {
-	const { system } = buildContext({ goal: "Haz un plan", agentName: "Shiro", tokenBudget: 4000, mode: "code", planning: true });
+test("planear en CodeHacking no dice que puede cambiar cosas, pero conserva el alcance y la metodología", () => {
+	const { system } = buildContext({ goal: "Haz un plan", agentName: "Shiro", tokenBudget: 4000, mode: "hacking", planning: true });
 	strictEqual(system.includes("Planear (solo lectura)"), true);
-	strictEqual(system.includes("Modo Code (programación)"), false);
+	strictEqual(system.includes("Modo CodeHacking"), false);
+	strictEqual(system.includes("Planear en CodeHacking"), true);
+	strictEqual(system.includes("confirma que el objetivo"), true);
+	strictEqual(system.includes("Metodología"), true);
 });
 
-test("Code pide leer antes de cambiar y comprobar el resultado", () => {
-	const { system } = buildContext({ goal: "Arregla el fallo", agentName: "Shiro", tokenBudget: 4000, mode: "code" });
-	strictEqual(system.includes("Modo Code (programación)"), true);
+test("planear en Chat no añade nada de pentesting", () => {
+	const { system } = buildContext({ goal: "Haz un plan", agentName: "Shiro", tokenBudget: 4000, mode: "chat", planning: true });
+	strictEqual(system.includes("Planear (solo lectura)"), true);
+	strictEqual(system.includes("Planear en CodeHacking"), false);
+});
+
+test("CodeHacking pide leer antes de cambiar y comprobar el resultado", () => {
+	const { system } = buildContext({ goal: "Arregla el fallo", agentName: "Shiro", tokenBudget: 4000, mode: "hacking" });
+	strictEqual(system.includes("Modo CodeHacking"), true);
 	strictEqual(system.includes("Antes de cambiar algo"), true);
 	strictEqual(system.includes("Nunca digas que algo funciona"), true);
 });

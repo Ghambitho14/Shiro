@@ -2,13 +2,14 @@
 <html lang="es">
 	<head>
 		<meta charset="utf-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-		<title>Shiro</title>
-		<meta name="description" content="Shiro, tu asistente personal con IA" />
+		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+		<title>Aku</title>
+		<meta name="description" content="Aku, tu asistente personal con IA" />
 		<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
 		<meta name="theme-color" content="#212121" media="(prefers-color-scheme: dark)" />
-		<link rel="icon" href="/icons/icon-64.png" />
-		<link rel="apple-touch-icon" href="/icons/icon-192.png" />
+		<!-- ?v=aku: el navegador guarda el ícono por su dirección; cambiarla le hace bajar el de Aku. -->
+		<link rel="icon" href="/icons/icon-64.png?v=aku" />
+		<link rel="apple-touch-icon" href="/icons/icon-192.png?v=aku" />
 		<link rel="manifest" href="/manifest.webmanifest" />
 		<script>
 			// Tema antes de pintar (evita el parpadeo blanco en modo oscuro).
@@ -33,7 +34,7 @@
 				<div class="sb-top">
 					<div class="sb-brand">
 						<img src="/icons/icon-64.png" alt="" />
-						<span id="brand-name">Shiro</span>
+						<span id="brand-name">Aku</span>
 					</div>
 					<button class="icon-btn" id="sb-close" title="Cerrar barra lateral" aria-label="Cerrar barra lateral" data-icon="panel"></button>
 				</div>
@@ -72,20 +73,19 @@
 					<button class="icon-btn show-when-collapsed" id="top-new" title="Nuevo chat" aria-label="Nuevo chat" data-icon="edit"></button>
 					<button class="model-btn" id="model-btn" aria-haspopup="menu" title="Cambiar de modelo">
 						<span class="status-dot" id="status-dot"></span>
-						<span id="model-assistant">Shiro</span>
+						<span id="model-assistant">Aku</span>
 						<span class="model-name" id="model-name">…</span>
 						<span data-icon="chevronDown" data-size="sm"></span>
 					</button>
-					<div class="mode-seg" id="mode-seg" role="tablist" aria-label="Modo de Shiro">
+					<div class="mode-seg" id="mode-seg" role="tablist" aria-label="Modo de Aku">
 						<button type="button" class="mode-opt active" data-mode="chat" role="tab" aria-selected="true" title="Chat normal"><span data-icon="sparkles" data-size="sm"></span><span>Chat</span></button>
-						<button type="button" class="mode-opt" data-mode="code" role="tab" aria-selected="false" title="Code: lee, modifica y comprueba código"><span data-icon="braces" data-size="sm"></span><span>Code</span></button>
-						<button type="button" class="mode-opt" data-mode="hacking" role="tab" aria-selected="false" title="CodeHacking: pruebas de seguridad (pentesting) sobre tus propios sistemas"><span data-icon="shield" data-size="sm"></span><span>CodeHacking</span></button>
+						<button type="button" class="mode-opt" data-mode="hacking" role="tab" aria-selected="false" title="CodeHacking: programar y probar la seguridad (pentesting) de tus propios sistemas"><span data-icon="shield" data-size="sm"></span><span>CodeHacking</span></button>
 					</div>
 					<button class="crumb-btn" id="project-crumb" hidden title="Ir a la página del proyecto"><span data-icon="folder" data-size="sm"></span><span class="crumb-name"></span></button>
 					<div class="spacer"></div>
-					<button class="icon-btn" id="browser-btn" title="Navegador de Shiro" aria-label="Navegador" aria-pressed="false" data-icon="globe"></button>
+					<button class="icon-btn" id="browser-btn" title="Navegador de Aku" aria-label="Navegador" aria-pressed="false" data-icon="globe"></button>
 					<button class="icon-btn" id="terminal-btn" title="Terminal" aria-label="Terminal" aria-pressed="false" data-icon="terminal"></button>
-					<button class="icon-btn" id="office-btn" title="Oficina: los ayudantes de Shiro" aria-label="Oficina" aria-pressed="false" data-icon="users"></button>
+					<button class="icon-btn" id="office-btn" title="Oficina: los ayudantes de Aku" aria-label="Oficina" aria-pressed="false" data-icon="users"></button>
 					<button class="icon-btn" id="theme-btn" title="Cambiar tema" aria-label="Cambiar tema" data-icon="moon"></button>
 					<button class="icon-btn" id="chat-menu-btn" title="Opciones del chat" aria-label="Opciones del chat" data-icon="dots"></button>
 				</header>
@@ -118,19 +118,20 @@
 							<label class="visually-hidden" for="input">Mensaje</label>
 							<textarea id="input" rows="1" placeholder="Pregunta o pide lo que quieras" enterkeyhint="send"></textarea>
 							<div class="composer-bar">
-								<button type="button" class="icon-btn" id="attach-btn" title="Adjuntar imágenes o archivos de texto" aria-label="Adjuntar" data-icon="plus"></button>
+								<button type="button" class="icon-btn" id="attach-btn" title="Añadir archivos o una carpeta" aria-label="Añadir archivos o una carpeta" aria-haspopup="menu" data-icon="plus"></button>
 								<button type="button" class="composer-chip" id="perm-btn" aria-haspopup="menu"><span id="perm-icon" data-size="sm"></span><span id="perm-label">Preguntar</span><span data-icon="chevronDown" data-size="sm"></span></button>
 								<button type="button" class="composer-chip" id="reason-btn" aria-pressed="false"><span data-icon="brain" data-size="sm"></span><span class="chip-text">Más razonamiento</span></button>
+								<button type="button" class="composer-chip ctx-btn" id="ctx-btn" aria-haspopup="dialog" hidden><svg class="ctx-ring" viewBox="0 0 20 20" aria-hidden="true"><circle class="ctx-ring-bg" cx="10" cy="10" r="8"></circle><circle class="ctx-ring-fg" id="ctx-ring" cx="10" cy="10" r="8"></circle></svg><span class="chip-text" id="ctx-label"></span></button>
 								<span class="composer-hint" id="dictate-hint"><span class="rec-dot"></span><span id="dictate-text">Escuchando…</span></span>
 								<div class="spacer"></div>
 								<button type="button" class="icon-btn dictate-btn" id="dictate-btn" title="Dictar (tu voz se escribe en el cuadro)" aria-label="Dictar" data-icon="mic"></button>
-								<button type="button" class="round-btn voice-btn" id="voice-btn" title="Modo voz: habla con Shiro" aria-label="Modo voz" data-icon="voice"></button>
+								<button type="button" class="round-btn voice-btn" id="voice-btn" title="Modo voz: habla con Aku" aria-label="Modo voz" data-icon="voice"></button>
 								<button type="submit" class="round-btn send-btn" id="send-btn" title="Enviar (Enter)" aria-label="Enviar" data-icon="arrowUp" hidden></button>
 								<button type="button" class="round-btn stop-btn" id="stop-btn" title="Detener (Esc)" aria-label="Detener" data-icon="stop" hidden></button>
 							</div>
 						</form>
 						<div class="suggestions" id="suggestions"></div>
-						<div class="disclaimer">Shiro puede equivocarse. Antes de acciones delicadas en tu PC te pide permiso.</div>
+						<div class="disclaimer">Aku puede equivocarse. Antes de acciones delicadas en tu PC te pide permiso.</div>
 					</footer>
 
 					<section class="project-home" id="project-home" hidden aria-label="Proyecto">
@@ -191,7 +192,7 @@
 						<img id="browser-frame" alt="" draggable="false" hidden />
 						<div class="browser-empty" id="browser-empty">
 							<span data-icon="globe" data-size="lg"></span>
-							<p>Este es el navegador de Shiro. Escribe una dirección arriba, o pídele a Shiro que busque algo y míralo trabajar aquí.</p>
+							<p>Este es el navegador de Aku. Escribe una dirección arriba, o pídele a Aku que busque algo y míralo trabajar aquí.</p>
 						</div>
 						<div class="browser-loading" id="browser-loading" hidden></div>
 					</div>
@@ -225,7 +226,7 @@
 					<div class="office-desks" id="office-desks" role="list" aria-label="Escritorios de los ayudantes"></div>
 					<div class="office-empty" id="office-empty">
 						<span data-icon="users" data-size="lg"></span>
-						<p>Aquí trabajan los ayudantes de Shiro. Pídele algo grande, como «investiga estas tres cosas a la vez», y verás a cada uno en su escritorio.</p>
+						<p>Aquí trabajan los ayudantes de Aku. Pídele algo grande, como «investiga estas tres cosas a la vez», y verás a cada uno en su escritorio.</p>
 					</div>
 				</section>
 			</aside>
@@ -286,7 +287,7 @@
 								<input class="input" id="set-assistant-name" style="max-width: 200px" maxlength="40" />
 							</div>
 							<div class="set-row">
-								<div class="label"><strong>Usar herramientas</strong><span>Buscar en internet, leer archivos, recordatorios y controlar el PC. Si lo apagas, Shiro solo conversa.</span></div>
+								<div class="label"><strong>Usar herramientas</strong><span>Buscar en internet, leer archivos, recordatorios y controlar el PC. Si lo apagas, Aku solo conversa.</span></div>
 								<label class="switch"><input type="checkbox" id="set-autonomous" /><span class="track"></span></label>
 							</div>
 							<div class="set-row">
@@ -308,7 +309,7 @@
 					<section data-panel="model">
 						<div class="set-group">
 							<h3>Modelo de IA</h3>
-							<p class="set-desc">Es el "cerebro" de Shiro. Elige dónde funciona: en tu PC o en la nube.</p>
+							<p class="set-desc">Es el "cerebro" de Aku. Elige dónde funciona: en tu PC o en la nube.</p>
 							<div id="cfg-model-form"></div>
 						</div>
 						<div class="set-group" id="cfg-tuning-group" hidden>
@@ -319,7 +320,7 @@
 						</div>
 						<div class="set-group">
 							<div class="set-row">
-								<div class="label"><strong>Visión (ver imágenes y la pantalla)</strong><span id="vision-desc">Si el modelo puede ver imágenes, Shiro puede mirar tu pantalla para hacer clic donde haga falta.</span></div>
+								<div class="label"><strong>Visión (ver imágenes y la pantalla)</strong><span id="vision-desc">Si el modelo puede ver imágenes, Aku puede mirar tu pantalla para hacer clic donde haga falta.</span></div>
 								<select class="select" id="set-vision" style="max-width: 190px">
 									<option value="auto">Automático</option>
 									<option value="on">Sí, puede ver</option>
@@ -365,7 +366,7 @@
 							</div>
 						</div>
 						<div class="set-group">
-							<h3>Voz de Shiro</h3>
+							<h3>Voz de Aku</h3>
 							<div class="set-row">
 								<div class="label"><strong>Motor de voz</strong><span>El navegador usa las voces de Windows (Edge trae voces "naturales" muy buenas).</span></div>
 								<select class="select" id="set-tts-engine" style="max-width: 220px">
@@ -418,7 +419,7 @@
 					<section data-panel="pc">
 						<div class="set-group">
 							<div class="set-row">
-								<div class="label"><strong>Permitir que Shiro controle este PC</strong><span>Abrir programas y webs, música y volumen, ventanas, escribir, hacer clic, capturas de pantalla y apagar o bloquear el equipo.</span></div>
+								<div class="label"><strong>Permitir que Aku controle este PC</strong><span>Abrir programas y webs, música y volumen, ventanas, escribir, hacer clic, capturas de pantalla y apagar o bloquear el equipo.</span></div>
 								<label class="switch"><input type="checkbox" id="set-pc" /><span class="track"></span></label>
 							</div>
 							<div id="pc-platform-note"></div>
@@ -436,8 +437,8 @@
 							<p class="set-desc">Acciones sensibles: ejecutar comandos o programas, escribir con el teclado, hacer clic, leer el portapapeles, cerrar programas a la fuerza y apagar el equipo.</p>
 							<div class="choice-list" id="approval-choices">
 								<label class="choice"><input type="radio" name="approval" value="ask" /><div><strong>Preguntarme antes (recomendado)</strong><span>Verás una tarjeta para permitir o rechazar cada acción. En el teclado y el ratón puedes permitirlo para toda la conversación.</span></div></label>
-								<label class="choice"><input type="radio" name="approval" value="allow" /><div><strong>No preguntar nunca</strong><span>Más rápido, pero Shiro podrá hacer cualquier cosa sin avisar. Úsalo solo si confías en tu modelo.</span></div></label>
-								<label class="choice"><input type="radio" name="approval" value="deny" /><div><strong>Bloquear las acciones sensibles</strong><span>Shiro solo podrá hacer cosas inofensivas (abrir apps, volumen, consultar).</span></div></label>
+								<label class="choice"><input type="radio" name="approval" value="allow" /><div><strong>No preguntar nunca</strong><span>Más rápido, pero Aku podrá hacer cualquier cosa sin avisar. Úsalo solo si confías en tu modelo.</span></div></label>
+								<label class="choice"><input type="radio" name="approval" value="deny" /><div><strong>Bloquear las acciones sensibles</strong><span>Aku solo podrá hacer cosas inofensivas (abrir apps, volumen, consultar).</span></div></label>
 							</div>
 							<label class="field" style="margin-top: 14px"><span>Comandos que se pueden ejecutar sin preguntar</span><input class="input mono" id="set-allowlist" placeholder="git, npm, dir" /><small>Separados por comas. Solo la primera palabra del comando.</small></label>
 							<div class="actions-row"><button class="btn primary" id="pc-save">Guardar</button></div>
@@ -449,8 +450,8 @@
 						<div class="set-group">
 							<div class="panel-head">
 								<div>
-									<h3>Habilidades de Shiro</h3>
-									<p class="set-desc">Instrucciones especializadas que creas o instalas en Shiro (por ejemplo "cómo resumir mis correos" o "cómo escribo los informes"). Shiro las usa solo cuando encajan con lo que pides, o cuando escribes <code>/nombre</code> en el chat.</p>
+									<h3>Habilidades de Aku</h3>
+									<p class="set-desc">Instrucciones especializadas que creas o instalas en Aku (por ejemplo "cómo resumir mis correos" o "cómo escribo los informes"). Aku las usa solo cuando encajan con lo que pides, o cuando escribes <code>/nombre</code> en el chat.</p>
 								</div>
 								<button class="btn sm" id="skill-add" aria-haspopup="menu">Agregar habilidad<span data-icon="chevronDown" data-size="sm"></span></button>
 							</div>
@@ -471,7 +472,7 @@
 
 						<div class="set-group">
 							<h3>Usar habilidades de otras aplicaciones</h3>
-							<p class="set-desc">Shiro encuentra solo las habilidades que tengas instaladas en Claude Code, Codex, OpenCode u otros agentes, y las usa. Toca una fila para verlas y apagar las que no quieras.</p>
+							<p class="set-desc">Aku encuentra solo las habilidades que tengas instaladas en Claude Code, Codex, OpenCode u otros agentes, y las usa. Toca una fila para verlas y apagar las que no quieras.</p>
 							<div class="ext-list" id="skills-apps"></div>
 						</div>
 
@@ -487,7 +488,7 @@
 							<div class="panel-head">
 								<div>
 									<h3>Servidores MCP</h3>
-									<p class="set-desc">Conecta a Shiro con otras aplicaciones y servicios (el navegador, tus archivos, GitHub, Notion, bases de datos…) mediante el protocolo MCP. Sus herramientas aparecen en el chat y piden permiso antes de usarse.</p>
+									<p class="set-desc">Conecta a Aku con otras aplicaciones y servicios (el navegador, tus archivos, GitHub, Notion, bases de datos…) mediante el protocolo MCP. Sus herramientas aparecen en el chat y piden permiso antes de usarse.</p>
 								</div>
 								<button class="btn sm" id="mcp-add" aria-haspopup="menu">Agregar servidor<span data-icon="chevronDown" data-size="sm"></span></button>
 							</div>
@@ -532,8 +533,8 @@
 						</div>
 
 						<div class="set-group">
-							<h3>Shiro como servidor MCP</h3>
-							<p class="set-desc">Al revés: OpenCode, Claude Code o Cursor pueden usar la memoria, los recordatorios y la búsqueda web de Shiro. Añade esto a su configuración de MCP:</p>
+							<h3>Aku como servidor MCP</h3>
+							<p class="set-desc">Al revés: OpenCode, Claude Code o Cursor pueden usar la memoria, los recordatorios y la búsqueda web de Aku. Añade esto a su configuración de MCP:</p>
 							<div class="snippet"><pre id="mcp-self-snippet"></pre><button class="btn sm" id="mcp-self-copy"><span data-icon="copy" data-size="sm"></span>Copiar</button></div>
 						</div>
 					</section>
@@ -542,17 +543,17 @@
 					<section data-panel="profile">
 						<div class="set-group">
 							<h3>Sobre ti</h3>
-							<p class="set-desc">Shiro usa esto en todas las conversaciones para responderte mejor.</p>
+							<p class="set-desc">Aku usa esto en todas las conversaciones para responderte mejor.</p>
 							<div class="grid-2">
 								<label class="field"><span>¿Cómo quieres que te llame?</span><input class="input" id="profile-name" maxlength="60" /></label>
 								<label class="field"><span>Idioma de las respuestas</span><input class="input" id="profile-lang" placeholder="Español" maxlength="40" /></label>
 							</div>
-							<label class="field"><span>¿Qué debería saber Shiro de ti?</span><textarea class="textarea" id="profile-about" placeholder="A qué te dedicas, tus gustos, tu ciudad…" maxlength="1500"></textarea></label>
+							<label class="field"><span>¿Qué debería saber Aku de ti?</span><textarea class="textarea" id="profile-about" placeholder="A qué te dedicas, tus gustos, tu ciudad…" maxlength="1500"></textarea></label>
 							<label class="field"><span>¿Cómo quieres que responda?</span><textarea class="textarea" id="profile-extra" placeholder="Directo y breve, con humor, explícame como a principiante…" maxlength="1500"></textarea></label>
 							<div class="actions-row"><button class="btn primary" id="profile-save">Guardar</button></div>
 						</div>
 						<div class="set-group">
-							<h3>Instrucciones de Shiro</h3>
+							<h3>Instrucciones de Aku</h3>
 							<p class="set-desc">Lo que lee antes de cada respuesta, en todos los chats (web, terminal, WhatsApp y Telegram). Todo viene con un texto por defecto: cámbialo como quieras y, si algo sale mal, vuelve al original con un clic.</p>
 							<div class="ext-list" id="prompt-list"></div>
 						</div>
@@ -571,7 +572,7 @@
 					<section data-panel="connections">
 						<div class="set-group">
 							<h3>WhatsApp</h3>
-							<p class="set-desc">Habla con Shiro desde tu móvil. Escanea el código desde WhatsApp → Dispositivos vinculados.</p>
+							<p class="set-desc">Habla con Aku desde tu móvil. Escanea el código desde WhatsApp → Dispositivos vinculados.</p>
 							<div id="wa-status" class="notice">Consultando…</div>
 							<div class="qr-box" id="wa-qr" hidden></div>
 							<div class="actions-row">
@@ -581,7 +582,7 @@
 						</div>
 						<div class="set-group">
 							<h3>Telegram</h3>
-							<p class="set-desc">Habla con Shiro desde Telegram. En Telegram busca <b>@BotFather</b>, escríbele <code>/newbot</code>, elige un nombre y copia el token que te da. Por seguridad, Shiro solo responde a los chats que autorices aquí.</p>
+							<p class="set-desc">Habla con Aku desde Telegram. En Telegram busca <b>@BotFather</b>, escríbele <code>/newbot</code>, elige un nombre y copia el token que te da. Por seguridad, Aku solo responde a los chats que autorices aquí.</p>
 							<div id="tg-status" class="notice">Consultando…</div>
 							<label class="field"><span>Token del bot</span><input class="input mono" id="tg-token" type="password" autocomplete="off" placeholder="123456789:AAH…" /><small id="tg-token-hint"></small></label>
 							<div class="actions-row">
@@ -592,7 +593,7 @@
 						</div>
 						<div class="set-group">
 							<h3>Instalar como aplicación</h3>
-							<p class="set-desc">Para abrir Shiro en su propia ventana usa <code>npm run app</code>. Con <code>npm run app -- --acceso-directo</code> se crea un icono en el escritorio. En Edge o Chrome también puedes usar el menú ⋯ → Aplicaciones → Instalar Shiro.</p>
+							<p class="set-desc">Para abrir Aku en su propia ventana usa <code>npm run app</code>. Con <code>npm run app -- --acceso-directo</code> se crea un icono en el escritorio. En Edge o Chrome también puedes usar el menú ⋯ → Aplicaciones → Instalar Aku.</p>
 						</div>
 					</section>
 				</div>
@@ -627,5 +628,6 @@
 		<div class="drop-overlay" id="drop-overlay"><span data-icon="paperclip"></span>Suelta aquí para adjuntar</div>
 		<div class="toasts" id="toasts" aria-live="assertive"></div>
 		<input type="file" id="file-input" multiple hidden accept="image/*,.txt,.md,.csv,.json,.log,.xml,.yml,.yaml,.ini,.js,.ts,.py,.html,.css,.java,.c,.cpp,.cs,.go,.rs,.php,.rb,.sh,.ps1,.sql" />
+		<input type="file" id="folder-input" webkitdirectory multiple hidden />
 	</body>
 </html>

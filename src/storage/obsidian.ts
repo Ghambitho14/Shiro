@@ -60,7 +60,7 @@ export function checkVault(vault: string): { ok: true; warning?: string } | { ok
 		return { ok: false, error: `No puedo escribir en ${root}: ${err instanceof Error ? err.message : String(err)}` };
 	}
 	if (!existsSync(join(path, ".obsidian"))) {
-		return { ok: true, warning: "Esa carpeta no parece una bóveda de Obsidian (no tiene .obsidian), pero Shiro puede usarla igual." };
+		return { ok: true, warning: "Esa carpeta no parece una bóveda de Obsidian (no tiene .obsidian), pero Aku puede usarla igual." };
 	}
 	return { ok: true };
 }
@@ -218,7 +218,7 @@ export function writeRemindersNote(vault: string, reminders: NoteReminder[]): vo
 	const lines = [
 		"# Recordatorios",
 		"",
-		"_Lista que mantiene Shiro. Para cambiar un recordatorio, pídeselo a Shiro: editar esta nota no lo cambia._",
+		"_Lista que mantiene Aku. Para cambiar un recordatorio, pídeselo a Aku: editar esta nota no lo cambia._",
 		"",
 		"## Pendientes",
 		...(pending.length ? pending.map((r) => `- [ ] ${fmt(r)}`) : ["_Ninguno_"]),

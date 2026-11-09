@@ -24,7 +24,7 @@ export type GgufModel = {
 export const MODELS_DIR = join(DATA_DIR, "models");
 
 export const SOURCE_LABELS: Record<GgufSource, string> = {
-	shiro: "Shiro",
+	shiro: "Aku",
 	lmstudio: "LM Studio",
 	ollama: "Ollama",
 	carpeta: "Carpeta",

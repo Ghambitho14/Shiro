@@ -1,5 +1,5 @@
 // Los botones de la caja de escribir: cómo trabaja el agente (permisos, también planear) y si razona más.
-// Valen en cualquier modo (Chat, Code, CodeHacking) y van en cada petición; el servidor los valida.
+// Valen en cualquier modo (Chat, CodeHacking) y van en cada petición; el servidor los valida.
 import { icon, setIcon } from "./icons.js";
 import { $, el, prefs, savePrefs, showMenu, closeMenu } from "./ui.js";
 import { state } from "./state.js";
@@ -53,7 +53,7 @@ export function paintPermissions() {
 	reason.classList.toggle("muted", fixed);
 	reason.setAttribute("aria-pressed", String(on));
 	reason.title = fixed
-		? "Con este modelo Shiro no puede elegir cuánto piensa: se queda como venga."
+		? "Con este modelo Aku no puede elegir cuánto piensa: se queda como venga."
 		: on
 			? "Encendido: el modelo piensa al máximo antes de responder (tarda más y gasta más)."
 			: "Pide al modelo que piense al máximo antes de responder. Apagado usa lo de Ajustes → Modelo.";

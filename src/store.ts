@@ -4,7 +4,7 @@ import { DATA_DIR } from "./config/config.js";
 
 const STATE_FILE = join(DATA_DIR, "state.json");
 
-const DEFAULT_NAME = "Shiro";
+const DEFAULT_NAME = "Aku";
 
 export type State = { name: string };
 

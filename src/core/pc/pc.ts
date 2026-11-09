@@ -369,7 +369,55 @@ function Wait-Win([string]$query) {
 export type WindowAction = "list" | "focus" | "minimize" | "maximize" | "restore" | "close" | "show_desktop";
 type WindowInfo = { app: string; title: string; active?: boolean };
 
-export async function windowAction(action: WindowAction, title?: string, selfName = "Shiro"): Promise<string> {
+/**
+ * Trae al frente la ventana de Aku (Edge o Chrome en modo app) si está abierta; true si la encontró.
+ * Su título es el nombre del asistente o «nombre · chat» (setDocTitle en sidebar.js): se compara
+ * exacto, para no confundirla con otra app cuyo nombre empiece igual.
+ */
+export async function focusOwnWindow(name: string, opts: { newChat?: boolean } = {}): Promise<boolean> {
+	if (!IS_WINDOWS || !name.trim()) return false;
+	const out = await runNative(
+		`${WINDOWS_PS}
+$n = $env:SHIRO_A_NAME
+$w = Get-Wins | Where-Object { ($_.App -eq 'msedge' -or $_.App -eq 'chrome') -and ($_.Title -eq $n -or $_.Title.StartsWith($n + ' · ')) } | Select-Object -First 1
+if ($w) {
+	[void][ShiroPc.Windows]::Focus($w.Id)
+	# «Nuevo chat» del ícono de la bandeja: el atajo de la web (Ctrl+Mayús+O).
+	if ($env:SHIRO_A_NEWCHAT -eq '1') { Start-Sleep -Milliseconds 200; [ShiroPc.Input]::Combo(@(0x11, 0x10, 0x4F)) }
+	'yes'
+} else { 'no' }`,
+		{ name: name.trim(), newChat: opts.newChat ? "1" : "0" },
+	);
+	return out.trim() === "yes";
+}
+
+/**
+ * Busca una ventana por su título exacto (esperando hasta `waitMs` a que aparezca), la pone abajo a la
+ * derecha encima de la barra de tareas, siempre encima, y la trae al frente. Es la cajita de voz de Aku.
+ */
+export async function pinWindowToCorner(title: string, width: number, height: number, waitMs = 0): Promise<boolean> {
+	if (!IS_WINDOWS) return false;
+	const out = await runNative(
+		`${WINDOWS_PS}
+$tries = [Math]::Max(1, [int]([int]$env:SHIRO_A_WAIT / 250))
+for ($i = 0; $i -lt $tries; $i++) {
+	$w = Get-Wins | Where-Object { $_.Title -ceq $env:SHIRO_A_TITLE } | Select-Object -First 1
+	if ($w) {
+		[ShiroPc.Windows]::PinCorner($w.Id, [int]$env:SHIRO_A_W, [int]$env:SHIRO_A_H, 12)
+		[void][ShiroPc.Windows]::Focus($w.Id)
+		'yes'
+		return
+	}
+	if ($i -lt $tries - 1) { Start-Sleep -Milliseconds 250 }
+}
+'no'`,
+		{ title, w: width, h: height, wait: waitMs },
+		waitMs + 20_000,
+	);
+	return out.trim() === "yes";
+}
+
+export async function windowAction(action: WindowAction, title?: string, selfName = "Aku"): Promise<string> {
 	requireWindows();
 	if (action === "list") {
 		const out = await runNative(
@@ -412,7 +460,7 @@ switch ($env:SHIRO_A_ACTION) {
 
 // ─────────────────────────── Teclado ───────────────────────────
 
-export async function keyboardAction(opts: { text?: string; keys?: string; window?: string }, selfName = "Shiro"): Promise<string> {
+export async function keyboardAction(opts: { text?: string; keys?: string; window?: string }, selfName = "Aku"): Promise<string> {
 	requireWindows();
 	const text = opts.text ?? "";
 	const keys = opts.keys?.trim() ?? "";
@@ -525,7 +573,7 @@ if ($env:SHIRO_A_NAME) { $ps = $ps | Where-Object { $_.ProcessName -like ('*' + 
 	}
 	const clean = (name ?? "").trim().replace(/\.exe$/i, "");
 	if (!clean || !/^[\w .()+-]+$/.test(clean)) throw new PcError("Indica el nombre exacto del proceso (por ejemplo: chrome, spotify).");
-	if (PROTECTED_PROCESSES.has(clean.toLowerCase())) throw new PcError(`No cierro "${clean}": es un proceso del sistema o del propio Shiro.`);
+	if (PROTECTED_PROCESSES.has(clean.toLowerCase())) throw new PcError(`No cierro "${clean}": es un proceso del sistema o del propio Aku.`);
 	const out = await runPowerShell(
 		String.raw`
 $ps = @(Get-Process | Where-Object { $_.ProcessName -eq $env:SHIRO_A_NAME })
@@ -633,10 +681,10 @@ export async function powerAction(action: PowerAction, delayMinutes?: number): P
 			]);
 			return "Suspendo el equipo en 3 segundos.";
 		case "shutdown":
-			await run("shutdown.exe", ["/s", "/t", seconds, "/c", "Shiro: apagado programado"]);
+			await run("shutdown.exe", ["/s", "/t", seconds, "/c", "Aku: apagado programado"]);
 			return `El equipo se apagará ${when}. Para evitarlo, pide cancelar el apagado.`;
 		case "restart":
-			await run("shutdown.exe", ["/r", "/t", seconds, "/c", "Shiro: reinicio programado"]);
+			await run("shutdown.exe", ["/r", "/t", seconds, "/c", "Aku: reinicio programado"]);
 			return `El equipo se reiniciará ${when}. Para evitarlo, pide cancelar el reinicio.`;
 		case "logoff":
 			runDetached("powershell.exe", ["-NoProfile", "-Command", "Start-Sleep -Seconds 3; shutdown.exe /l"]);

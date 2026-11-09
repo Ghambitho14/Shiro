@@ -27,6 +27,7 @@ RUN npm ci && npm cache clean --force
 COPY src ./src
 COPY public ./public
 COPY bin ./bin
+COPY skills ./skills
 
 # Se ejecuta como el usuario "node" (uid 1000): los archivos de ./data montados
 # desde el servidor siguen siendo del usuario normal, no de root.

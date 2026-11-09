@@ -20,9 +20,15 @@ function installedBrowsers(): string[] {
 	return candidates.filter((p) => p && existsSync(p));
 }
 
-/** Ruta de Edge o Chrome instalados (para abrir Shiro en su propia ventana con --app). */
-export function findInstalledBrowser(): string | null {
-	return installedBrowsers()[0] ?? null;
+/**
+ * Ruta de Edge o Chrome instalados (para abrir Shiro en su propia ventana con --app). Con
+ * `prefer: "chrome"`, Chrome si está: la cajita de voz lo usa porque el dictado de Edge (servicio de
+ * Microsoft) da error "network" en algunos equipos y el de Chrome (Google) funciona.
+ */
+export function findInstalledBrowser(prefer?: "chrome"): string | null {
+	const all = installedBrowsers();
+	if (prefer === "chrome") return all.find((p) => !/edge/i.test(p)) ?? all[0] ?? null;
+	return all[0] ?? null;
 }
 
 /** Chrome que descargó puppeteer (lo usa la conexión de WhatsApp) en ~/.cache/puppeteer. */

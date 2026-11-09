@@ -52,5 +52,5 @@ export async function runMcpServer(): Promise<void> {
 	});
 
 	await server.connect(new StdioServerTransport());
-	console.error(`Shiro MCP listo (${MCP_TOOLS.length} herramientas)`);
+	console.error(`Aku MCP listo (${MCP_TOOLS.length} herramientas)`);
 }

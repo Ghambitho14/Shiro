@@ -233,6 +233,7 @@ export const projectSchema = z
 export const useSkillSchema = z.object({
 	name: z.string().trim().max(200).optional(),
 	file: z.string().trim().max(500).optional(),
+	offset: z.number().int().min(0).optional(),
 });
 
 export const toolSchemas: Record<string, z.ZodType<Record<string, unknown>>> = {

@@ -1,12 +1,16 @@
 /**
  * Modo ahorro: solo se le ofrecen al modelo las herramientas que parecen hacer falta para lo que
  * pidió el usuario (palabras clave, sin modelo). Cada herramienta ocupa tokens en cada vuelta, y
- * todas juntas son unos 4.800. Las de servidores MCP y las desconocidas se dejan siempre.
+ * todas juntas son unos 5.600. Las de servidores MCP y las desconocidas se dejan siempre.
  */
 import { normalizeText } from "../agents/text.js";
 
-/** Siempre disponibles: baratas y útiles para casi cualquier pregunta. */
-const ALWAYS = ["calculator", "get_time", "search_web", "fetch_url", "memory_search", "memory_add", "use_skill", "project", "delegate"];
+/**
+ * Siempre disponibles: baratas y útiles para casi cualquier pregunta. Incluye la terminal porque
+ * varias habilidades la necesitan (buscar-en-pc) y lo que se le pide no siempre trae una palabra
+ * clave. Sigue pidiendo permiso y solo está si el control del PC está permitido (`resolveTools`).
+ */
+const ALWAYS = ["calculator", "get_time", "search_web", "fetch_url", "memory_search", "memory_add", "use_skill", "project", "delegate", "terminal"];
 
 /** Grupos que solo entran si el mensaje habla de ello. `words` se mira sobre el texto sin tildes. */
 const GROUPS: { tools: string[]; words: RegExp; raw?: RegExp }[] = [
@@ -21,9 +25,9 @@ const GROUPS: { tools: string[]; words: RegExp; raw?: RegExp }[] = [
 	},
 	{ tools: ["get_weather"], words: /\b(clima|tiempo hace|temperatura|llueve|lluvia|llover|pronostico|calor|frio|grados)\b/ },
 	{
-		tools: ["pc_open", "pc_screenshot", "pc_keyboard", "pc_mouse", "pc_media", "pc_windows", "pc_processes", "pc_clipboard", "pc_system", "pc_power", "exec", "terminal"],
+		tools: ["pc_open", "pc_screenshot", "pc_keyboard", "pc_mouse", "pc_media", "pc_windows", "pc_processes", "pc_clipboard", "pc_system", "pc_power", "exec"],
 		words:
-			/\b(pc|computador\w*|ordenador|equipo|windows|abr\w*|cierr\w*|cerrar|ventanas?|volumen|musica|cancion\w*|reproduc\w*|pausa|siguiente|spotify|youtube|videos?|captura\w*|pantalla|ves|mira|apag\w*|reinici\w*|suspend\w*|bloque\w*|teclado|teclas?|raton|mouse|clic|procesos?|portapapeles|copi\w*|peg\w*|comandos?|terminal|powershell|consola|contrasen\w*|sudo|ssh|claude|instal\w*|ejecut\w*|bateria|ram|cpu|disco|aplicacion\w*|apps?)\b/,
+			/\b(pc|compu|computador\w*|ordenador|laptop|portatil|equipo|windows|abr\w*|cierr\w*|cerrar|ventanas?|volumen|sonido|audio|silenci\w*|altavoc\w*|parlantes?|bocinas?|musica|cancion\w*|reproduc\w*|paus\w*|play|reanud\w*|siguiente|spotify|youtube|videos?|captura\w*|pantalla|ves|mira|apag\w*|reinici\w*|suspend\w*|bloque\w*|teclado|teclas?|raton|mouse|clic|procesos?|portapapeles|copi\w*|peg\w*|comandos?|terminal|powershell|consola|contrasen\w*|sudo|ssh|claude|instal\w*|ejecut\w*|bateria|ram|cpu|disco|aplicacion\w*|apps?)\b/,
 	},
 	{
 		tools: ["browser"],

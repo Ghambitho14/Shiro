@@ -3,6 +3,12 @@
 // con mezcla aditiva y un halo (bloom) barato. Reacciona a la fase del modo voz y al volumen.
 
 const TAU = Math.PI * 2;
+/**
+ * El lienzo es más grande que el botón (app.css: `.orb canvas`, 1,6 veces) y su borde se difumina
+ * con una máscara redonda desde el 80 % del radio. Así el halo y las espigas se apagan antes del
+ * borde: si llegaban encendidos, se veía el cuadrado del lienzo.
+ */
+const EDGE_FADE_START = 0.8;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 
@@ -244,6 +250,7 @@ export class HoloOrb {
 		this.last = 0;
 		this.W = 0;
 		this.H = 0;
+		this.S = 0; // tamaño del botón en píxeles del lienzo
 		this.dpr = 1;
 		this.reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)");
 
@@ -272,10 +279,13 @@ export class HoloOrb {
 	}
 
 	resize() {
-		const w = this.host.clientWidth;
-		const h = this.host.clientHeight;
-		if (!w || !h) return;
+		// El lienzo mide lo que diga el CSS (más que el botón); la esfera se mide con el botón.
+		const w = this.canvas.clientWidth;
+		const h = this.canvas.clientHeight;
+		const size = Math.min(this.host.clientWidth, this.host.clientHeight);
+		if (!w || !h || !size) return;
 		this.dpr = Math.min(window.devicePixelRatio || 1, 2);
+		this.S = size * this.dpr;
 		this.W = this.canvas.width = Math.round(w * this.dpr);
 		this.H = this.canvas.height = Math.round(h * this.dpr);
 		this.glow.width = Math.max(1, Math.round(this.W / 4));
@@ -315,7 +325,7 @@ export class HoloOrb {
 		const energy = clamp(cur.energy + lvl * 0.5, 0, 1.2);
 		const ox = W / 2;
 		const oy = H / 2;
-		const R = Math.min(W, H) * 0.34 * (1 + 0.025 * Math.sin(t * 1.3) + 0.1 * lvl);
+		const R = this.S * 0.34 * (1 + 0.025 * Math.sin(t * 1.3) + 0.1 * lvl);
 
 		// Paleta del momento (amarillo ↔ azul, y rojizo al pedir permiso); cambia con un fundido.
 		const tones = PALETTES.gold.map((c, i) => {
@@ -446,11 +456,13 @@ export class HoloOrb {
 		}
 
 		// Espigas en el borde; se alargan con la voz.
+		// Tope: con la perspectiva, una punta puede verse hasta F/(F−1) veces más lejos del centro;
+		// así nunca pasa de donde empieza a difuminarse el borde del lienzo.
+		const reach = ((Math.min(W, H) / 2 / R) * EDGE_FADE_START * (F - 1)) / F;
 		ctx.strokeStyle = tones[2];
 		for (const sp of scene.spikes) {
 			const [dx, dy, dz] = sp.d;
-			// Tope para no salirse del canvas (que mide ~1.47 radios desde el centro).
-			const len = Math.min(1.34 - sp.inner, sp.len * (0.5 + energy * 0.7 + lvl * 1.6) * (0.8 + 0.2 * Math.sin(t * 3 + sp.ph)));
+			const len = Math.max(0, Math.min(reach - sp.inner, sp.len * (0.5 + energy * 0.7 + lvl * 1.6) * (0.8 + 0.2 * Math.sin(t * 3 + sp.ph))));
 			project(dx * sp.inner, dy * sp.inner, dz * sp.inner);
 			const x0 = px;
 			const y0 = py;

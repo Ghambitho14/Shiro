@@ -200,6 +200,26 @@ namespace ShiroPc {
 		[DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
 		[DllImport("user32.dll")] static extern bool PostMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
 		[DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h, int attr, out int value, int size);
+		[DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
+		[DllImport("user32.dll")] static extern bool SystemParametersInfo(uint action, uint param, ref Rect r, uint winIni);
+		[DllImport("user32.dll")] static extern uint GetDpiForWindow(IntPtr h);
+		[StructLayout(LayoutKind.Sequential)] struct Rect { public int Left, Top, Right, Bottom; }
+
+		/**
+		 * Abajo a la derecha del área de trabajo (encima de la barra de tareas) y siempre encima.
+		 * Medidas en píxeles lógicos: se escalan con el DPI de la ventana (la cajita de voz de Aku).
+		 */
+		public static void PinCorner(long hwnd, int width, int height, int margin) {
+			Input.DpiAware();
+			var h = new IntPtr(hwnd);
+			var r = new Rect();
+			SystemParametersInfo(0x30, 0, ref r, 0);
+			double s = 1;
+			try { uint dpi = GetDpiForWindow(h); if (dpi > 0) s = dpi / 96.0; } catch { }
+			int w = (int)(width * s), ht = (int)(height * s), m = (int)(margin * s);
+			if (IsIconic(h)) ShowWindow(h, 9);
+			SetWindowPos(h, new IntPtr(-1), r.Right - w - m, r.Bottom - ht - m, w, ht, 0x0040);
+		}
 
 		/** Ventanas como las de Alt+Tab: "hwnd|pid|título". */
 		public static string[] List() {

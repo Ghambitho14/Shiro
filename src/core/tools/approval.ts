@@ -124,7 +124,7 @@ export function describeRiskyAction(tool: string, args: Record<string, unknown>)
 			return externalReadInThisResponse() ? `Guardar en tu memoria: "${str(args.content).slice(0, 400)}"${AFTER_WEB}` : null;
 		case "write_file":
 			return externalReadInThisResponse()
-				? `Escribir el archivo ${str(args.path)} en la carpeta de Shiro (${str(args.content).length} caracteres)${AFTER_WEB}`
+				? `Escribir el archivo ${str(args.path)} en la carpeta de Aku (${str(args.content).length} caracteres)${AFTER_WEB}`
 				: null;
 		case "write_file_system":
 			return `Escribir el archivo ${str(args.path)} (${str(args.content).length} caracteres)`;

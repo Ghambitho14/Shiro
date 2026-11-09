@@ -70,7 +70,7 @@ export async function pollNotifications() {
 		const { notifications = [] } = await api("/api/notifications");
 		for (const n of notifications) {
 			toast(`Recordatorio: ${n.title}`, "bell", 12000);
-			notifySystem(`⏰ ${n.title}`, n.description || "Recordatorio de Shiro");
+			notifySystem(`⏰ ${n.title}`, n.description || "Recordatorio de Aku");
 			if (voice.active || prefs.autoRead) {
 				const sp = voice.speaker || new Speaker(ttsSettings);
 				sp.speak(`Recordatorio: ${n.title}`);

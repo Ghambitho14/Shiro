@@ -41,6 +41,8 @@ export type ChatOptions = {
 	sessionId?: string;
 	/** Cuánto piensa en esta respuesta, si no es lo de Ajustes → Modelo («Más razonamiento» del chat). */
 	thinking?: ThinkingLevel;
+	/** false: esta respuesta no aplica los límites del modo ahorro (CodeHacking y Planear). */
+	saverLimits?: boolean;
 };
 
 export interface LLMClient {

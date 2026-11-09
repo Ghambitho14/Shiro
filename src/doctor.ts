@@ -32,7 +32,7 @@ const PROBE_TOOL: ToolDef = {
 export async function runDoctor(opts: { fix?: boolean } = {}): Promise<boolean> {
 	let s = resolveLLMSettings();
 	const preset = PROVIDER_PRESETS[s.provider];
-	console.log(`\n  Shiro doctor — ${preset.label}`);
+	console.log(`\n  Aku doctor — ${preset.label}`);
 	if (!preset.managed) info(`URL: ${s.baseUrl}`);
 	info(`Modelo: ${s.model || "(sin elegir)"}`);
 	if (s.apiKey) info(`API key: ${maskKey(s.apiKey)}`);
@@ -92,7 +92,7 @@ export async function runDoctor(opts: { fix?: boolean } = {}): Promise<boolean> 
 		} else if (parseTextToolCalls(r.content, new Set(["get_time"])).length) {
 			ok("Usa herramientas escribiéndolas como texto (compatible)");
 		} else {
-			bad("El modelo no llamó a la herramienta. Con este modelo Shiro usará herramientas con menos fiabilidad.");
+			bad("El modelo no llamó a la herramienta. Con este modelo Aku usará herramientas con menos fiabilidad.");
 			info("Sugerencia: prueba un modelo con buen soporte de tools (qwen3, llama3.1+, mistral-nemo, gpt-oss).");
 		}
 	} catch (err) {

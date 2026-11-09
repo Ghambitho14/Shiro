@@ -8,6 +8,7 @@ import { currentStorage } from "../storage/storage.js";
 import { chatBackendFor, createMemoryBackend, type ChatBackend } from "./backends.js";
 import type { ContentPart } from "../core/agent/Types.js";
 import type { ResponseUsage } from "../core/llm/LLMClient.js";
+import { sanitizeContextReport, type ContextReport } from "../core/agent/contextUsage.js";
 import { getMessagePreview } from "../core/agent/contentUtils.js";
 import { CHAT_MODES, type ChatMode } from "../core/agent/chatMode.js";
 
@@ -27,8 +28,15 @@ export type ChatMessage = {
 	agentName?: string;
 	/** Respuestas del asistente: tokens que gastó (leídos, escritos, pensando y vueltas con el modelo). */
 	usage?: ResponseUsage;
+	/** Respuestas del asistente: cuánto contexto del modelo ocupó y en qué (medidor de la web). */
+	context?: ContextReport;
 	/** En mensajes del usuario: modo usado; al abrir el chat se recupera el del último. */
 	mode?: ChatMode;
+	/**
+	 * Resumen de «Cerrar conversación» (closeChat.ts). Lo anterior se sigue guardando y viendo, pero al
+	 * modelo solo le llegan este resumen y lo que viene después (`compactConversation`).
+	 */
+	summary?: true;
 };
 
 export type ChatSessionMeta = {
@@ -74,16 +82,23 @@ function isContentPartArray(raw: unknown): raw is ContentPart[] {
 }
 
 /** Datos extra de cada mensaje que guarda la web: hora, herramientas usadas y, en salas, qué agente habló. */
-function sanitizeMeta(item: Record<string, unknown>): Pick<ChatMessage, "ts" | "tools" | "agent" | "agentName" | "usage" | "mode"> {
-	const out: Pick<ChatMessage, "ts" | "tools" | "agent" | "agentName" | "usage" | "mode"> = {};
-	if (item.role === "user" && typeof item.mode === "string" && (CHAT_MODES as readonly string[]).includes(item.mode)) {
-		out.mode = item.mode as ChatMode;
+function sanitizeMeta(item: Record<string, unknown>): Pick<ChatMessage, "ts" | "tools" | "agent" | "agentName" | "usage" | "context" | "mode" | "summary"> {
+	const out: Pick<ChatMessage, "ts" | "tools" | "agent" | "agentName" | "usage" | "context" | "mode" | "summary"> = {};
+	if (item.role === "assistant" && item.summary === true) out.summary = true;
+	if (item.role === "user" && typeof item.mode === "string") {
+		// Los chats del antiguo modo Code se abren en CodeHacking, que es el mismo.
+		const mode = item.mode === "code" ? "hacking" : item.mode;
+		if ((CHAT_MODES as readonly string[]).includes(mode)) out.mode = mode as ChatMode;
 	}
 	if (item.role === "assistant" && item.usage && typeof item.usage === "object") {
 		const u = item.usage as Record<string, unknown>;
 		const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.min(Math.round(v), 1e9) : 0);
 		const usage = { input: n(u.input), output: n(u.output), reasoning: n(u.reasoning), turns: n(u.turns) };
 		if (usage.turns) out.usage = usage;
+	}
+	if (item.role === "assistant") {
+		const context = sanitizeContextReport(item.context);
+		if (context) out.context = context;
 	}
 	if (typeof item.ts === "number" && Number.isFinite(item.ts)) out.ts = item.ts;
 	if (item.role === "assistant" && typeof item.agent === "string" && /^[a-z0-9][a-z0-9-]{0,39}$/.test(item.agent)) {
@@ -134,6 +149,16 @@ export function sanitizeMessages(input: unknown): ChatMessage[] {
 		.filter((m): m is ChatMessage => m !== null);
 }
 
+/**
+ * Lo que el modelo ve de un chat cerrado con «Cerrar conversación»: el último resumen (aparte: va en
+ * el system prompt) y los mensajes de después. Sin resumen, el chat entero.
+ */
+export function compactConversation<T extends { summary?: true; content: string | ContentPart[] }>(messages: T[]): { summary?: string; messages: T[] } {
+	let i = messages.length - 1;
+	while (i >= 0 && !messages[i].summary) i--;
+	if (i < 0) return { messages };
+	return { summary: getMessagePreview(messages[i].content), messages: messages.slice(i + 1) };
+}
 
 // ───────────────────────────── almacén ─────────────────────────────
 

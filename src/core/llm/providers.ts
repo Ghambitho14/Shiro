@@ -79,7 +79,7 @@ export const PROVIDER_PRESETS: Record<LLMProvider, ProviderPreset> = {
 	gguf: {
 		label: "llama.cpp integrado (archivos GGUF)",
 		title: "Archivos GGUF",
-		hint: "Lo más fácil: Shiro abre el modelo él solo, sin instalar nada más. Usa los que ya bajaste con LM Studio u Ollama.",
+		hint: "Lo más fácil: Aku abre el modelo él solo, sin instalar nada más. Usa los que ya bajaste con LM Studio u Ollama.",
 		group: "pc",
 		dialect: "openai",
 		// La de verdad la pone el motor al arrancar (puerto libre): ver currentLlamaServer().
@@ -126,7 +126,7 @@ export const PROVIDER_PRESETS: Record<LLMProvider, ProviderPreset> = {
 		needsApiKey: true,
 		apiKeyEnv: "OPENROUTER_API_KEY",
 		keyUrl: "https://openrouter.ai/keys",
-		extraHeaders: { "HTTP-Referer": "https://github.com/Ghambitho14/Shiro", "X-Title": "Shiro" },
+		extraHeaders: { "HTTP-Referer": "https://github.com/Ghambitho14/Shiro", "X-Title": "Aku" },
 	},
 	opencode: {
 		label: "OpenCode Zen (nube)",
@@ -286,7 +286,7 @@ export function resolveLLMSettings(ref?: ModelRef): LLMSettings {
 		const info = lookupModel(preset.catalog, model);
 		const api = info?.api ?? guessApi(preset.catalog, model);
 		if (api === "google") {
-			unsupported = `El modelo "${model}" usa el formato de Google, que Shiro todavía no habla. Elige otro modelo de ${preset.label}.`;
+			unsupported = `El modelo "${model}" usa el formato de Google, que Aku todavía no habla. Elige otro modelo de ${preset.label}.`;
 		} else {
 			dialect = api === "messages" ? "anthropic" : api === "responses" ? "responses" : "openai";
 		}

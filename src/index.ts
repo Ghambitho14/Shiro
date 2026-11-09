@@ -35,13 +35,13 @@ function buildExeHelp(name: string): string {
 	return `
 ${name} v${APP_VERSION}
 
-  Shiro.exe                    Abre ${name} en su propia ventana (doble clic)
-  Shiro.exe --acceso-directo   Lo mismo y crea un icono en el escritorio
-  Shiro.exe web                Solo el servidor web (http://127.0.0.1:1406)
-  Shiro.exe tui                Chat en la terminal
-  Shiro.exe wa                 Puente de WhatsApp
-  Shiro.exe doctor             Comprueba que el modelo responde
-  Shiro.exe mcp                ${name} como servidor MCP (OpenCode, Claude Code, Cursor...)
+  Aku.exe                    Abre ${name} en su propia ventana (doble clic)
+  Aku.exe --acceso-directo   Lo mismo y crea un icono en el escritorio
+  Aku.exe web                Solo el servidor web (http://127.0.0.1:1406)
+  Aku.exe tui                Chat en la terminal
+  Aku.exe wa                 Puente de WhatsApp
+  Aku.exe doctor             Comprueba que el modelo responde
+  Aku.exe mcp                ${name} como servidor MCP (OpenCode, Claude Code, Cursor...)
 
 La configuración está en la ventana de ${name}: Ajustes, abajo a la izquierda.
 `.trim();
@@ -52,7 +52,7 @@ async function main(): Promise<void> {
 	if (argv[0] === "--") argv = argv.slice(1);
 	// Shiro.exe con doble clic (o solo con opciones como --acceso-directo): abre la ventana.
 	if (IS_EXE && (!argv[0] || argv[0].startsWith("--acceso") || argv[0] === "--shortcut")) argv = ["app", ...argv];
-	if (IS_EXE) process.title = "Shiro";
+	if (IS_EXE) process.title = "Aku";
 	const arg = argv[0];
 
 	if (!arg || arg === "--help" || arg === "-h" || arg === "ayuda" || arg === "help") {
@@ -105,8 +105,8 @@ async function main(): Promise<void> {
 	}
 
 	if (REMOVED.has(arg)) {
-		console.log(`\n  "${arg}" ya no existe: ahora todo se configura en la ventana de Shiro.`);
-		console.log(`  Ábrela con: ${IS_EXE ? "Shiro.exe" : "npm start"}   → Ajustes (abajo a la izquierda)\n`);
+		console.log(`\n  "${arg}" ya no existe: ahora todo se configura en la ventana de Aku.`);
+		console.log(`  Ábrela con: ${IS_EXE ? "Aku.exe" : "npm start"}   → Ajustes (abajo a la izquierda)\n`);
 		process.exitCode = 1;
 		return;
 	}

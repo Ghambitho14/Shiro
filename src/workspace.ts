@@ -4,9 +4,32 @@ import { DATA_DIR, getConfig, setConfig } from "./config/config.js";
 import { DEFAULT_SYSTEM_PROMPT } from "./core/soul/defaultPrompt.js";
 import { OBSIDIAN_FOLDER, frontValue, normalizeHeading, obsidianRoot, parseFrontmatter, yamlValue } from "./storage/obsidian.js";
 import { currentStorage, type StorageSettings } from "./storage/storage.js";
+import { readAppFile } from "./runtime.js";
 
 /** Workspace en este equipo. Las habilidades propias (skills/) viven siempre aquí. */
 export const LOCAL_WORKSPACE_DIR = join(DATA_DIR, "workspace");
+
+/** Habilidades que trae Shiro (carpeta skills/ del proyecto). Lista fija: en el .exe no se puede leer la carpeta. */
+export const BUNDLED_SKILLS = ["investigar-web", "buscar-en-pc", "pentest-reconocimiento", "pentest-vulnerabilidades", "pentest-informe"];
+
+let bundledSeeded = false;
+
+/**
+ * Pone las habilidades de Shiro en este equipo si faltan, una vez por arranque. Nunca pisa una que
+ * exista (pudo editarse). Una que se borre vuelve al arrancar: para quitarla, se apaga en Ajustes.
+ */
+export function seedBundledSkills(): void {
+	if (bundledSeeded) return;
+	bundledSeeded = true;
+	for (const name of BUNDLED_SKILLS) {
+		const dir = join(LOCAL_WORKSPACE_DIR, "skills", name);
+		if (existsSync(dir)) continue;
+		const text = readAppFile(`skills/${name}/SKILL.md`);
+		if (!text) continue;
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(join(dir, "SKILL.md"), text);
+	}
+}
 
 /** Carpeta de las notas de memoria (SOUL.md, MEMORY.md…) y de write_file para unos ajustes. */
 export function workspaceDirFor(s: StorageSettings): string {
@@ -236,6 +259,7 @@ export function ensureWorkspace(): void {
 	adoptLegacySettings(dir);
 	for (const [file, template] of Object.entries(NOTE_TEMPLATES)) writeIfMissing(join(dir, file), template);
 	ensureDir(join(LOCAL_WORKSPACE_DIR, "skills"));
+	seedBundledSkills();
 	removeUnused(dir);
 	if (dir !== LOCAL_WORKSPACE_DIR) backupVaultThrottled(dir);
 }
@@ -261,7 +285,7 @@ function adoptLegacySettings(dir: string): void {
 		}
 		rmSync(legacyProfile, { force: true });
 	} catch (err) {
-		console.error(`[Shiro] No pude pasar data/user-profile.json a ${PROFILE_NOTE}: ${err instanceof Error ? err.message : String(err)}`);
+		console.error(`[Aku] No pude pasar data/user-profile.json a ${PROFILE_NOTE}: ${err instanceof Error ? err.message : String(err)}`);
 	}
 }
 
@@ -465,7 +489,7 @@ export function buildMemoryGuide(s: StorageSettings = currentStorage()): string 
 	if (s.kind === "supabase") {
 		return `## Tu memoria\nTu memoria está en Supabase, compartida con la app del móvil y los otros equipos del usuario: tus recuerdos (memory_add y memory_search), MEMORY.md (lo importante y duradero, lo tienes más abajo), «Sobre mí», SOUL.md, TOOLS.md, tus instrucciones y los chats. Lo que aprendas aquí lo sabrás también desde el móvil.\n${save}`;
 	}
-	return `## Tu memoria\nTu memoria está en este equipo, en la carpeta de datos de Shiro: MEMORY.md (lo importante y duradero, lo tienes más abajo) y los recuerdos que guardas con memory_add. No usas Obsidian: si el usuario lo menciona, dile que puede elegir guardar tu memoria en su bóveda en Ajustes → Datos.\n${save}`;
+	return `## Tu memoria\nTu memoria está en este equipo, en la carpeta de datos de Aku: MEMORY.md (lo importante y duradero, lo tienes más abajo) y los recuerdos que guardas con memory_add. No usas Obsidian: si el usuario lo menciona, dile que puede elegir guardar tu memoria en su bóveda en Ajustes → Datos.\n${save}`;
 }
 /** Contenido de TOOLS.md (heurísticas de uso de herramientas). */
 export function readToolsGuide(): string | null {

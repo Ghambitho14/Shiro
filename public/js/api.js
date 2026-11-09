@@ -22,7 +22,7 @@ export async function authFetch(url, opts = {}) {
 	};
 	let r = await send();
 	if (r.status === 401 && !promptDeclined) {
-		const t = window.prompt("Shiro pide contraseña (se muestra en la consola donde lo iniciaste):");
+		const t = window.prompt("Aku pide contraseña (se muestra en la consola donde lo iniciaste):");
 		if (!t) promptDeclined = true;
 		if (t && t.trim()) {
 			try {
@@ -46,7 +46,7 @@ export async function api(url, opts = {}) {
 	try {
 		r = await authFetch(url, init);
 	} catch {
-		throw new Error("No hay conexión con Shiro. ¿Sigue abierta la consola donde lo iniciaste?");
+		throw new Error("No hay conexión con Aku. ¿Sigue abierta la consola donde lo iniciaste?");
 	}
 	const data = await r.json().catch(() => ({}));
 	if (!r.ok) {
@@ -73,7 +73,7 @@ export async function streamChat(body, handlers, signal) {
 		});
 	} catch (err) {
 		if (signal?.aborted) throw err;
-		throw new Error("No hay conexión con Shiro. ¿Sigue abierta la consola donde lo iniciaste?");
+		throw new Error("No hay conexión con Aku. ¿Sigue abierta la consola donde lo iniciaste?");
 	}
 	if (!r.ok) {
 		const j = await r.json().catch(() => ({}));
@@ -84,7 +84,7 @@ export async function streamChat(body, handlers, signal) {
 		const j = await r.json();
 		if (j.error) throw new Error(j.error);
 		if (j.room !== undefined) handlers.onRoom?.({ room: j.room, openVoice: j.openVoice });
-		handlers.onDone?.({ content: j.content || "", agent: j.agent, usage: j.usage });
+		handlers.onDone?.({ content: j.content || "", agent: j.agent, usage: j.usage, context: j.context });
 		return;
 	}
 	const reader = r.body.getReader();
@@ -121,7 +121,7 @@ export async function streamChat(body, handlers, signal) {
 					handlers.onRoom?.(evt);
 				} else if (evt.type === "done") {
 					finished = true;
-					handlers.onDone?.({ content: evt.content ?? full, agent: evt.agent, usage: evt.usage });
+					handlers.onDone?.({ content: evt.content ?? full, agent: evt.agent, usage: evt.usage, context: evt.context });
 				} else if (evt.type === "error") {
 					throw new Error(evt.message || "Error en la respuesta");
 				}

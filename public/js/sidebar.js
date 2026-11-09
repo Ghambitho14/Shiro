@@ -10,6 +10,7 @@ import { input, state } from "./state.js";
 import { contentParts, fromServer, inProjectHome, paintCrumb, renderThread, scrollToBottom, updateEmpty } from "./messages.js";
 import { paintAttachments, setStatus, stopGeneration } from "./chat.js";
 import { initPermissions, paintPermissions, permissionNote } from "./permissions.js";
+import { refreshContextMeter } from "./contextMeter.js";
 import { loadRoom, paintRoomBar, setRoom } from "./rooms.js";
 import { loadSettings, openSettings, paintSuggestions } from "./settings.js";
 import { openReminders } from "./reminders.js";
@@ -22,6 +23,11 @@ import { stopReading, voice } from "./voiceMode.js";
  * de ventanas del servidor reconoce la ventana de Shiro y no la cierra por error.
  */
 export function setDocTitle(chatTitle = "") {
+	// La cajita de voz se busca por su título fijo (pinWindowToCorner en pc.ts): no cambia con el chat.
+	if (state.mini) {
+		document.title = `${state.name} (voz)`;
+		return;
+	}
 	const t = chatTitle && chatTitle !== "Nueva sesión" ? chatTitle : "";
 	document.title = t ? `${state.name} · ${t}` : state.name;
 }
@@ -325,15 +331,16 @@ export function openSearch() {
 }
 // ───────────────────────────── barra superior ─────────────────────────────
 
-const CHAT_MODES = ["chat", "code", "hacking"];
+const CHAT_MODES = ["chat", "hacking"];
 const MODE_DISCLAIMERS = {
-	chat: "Shiro puede equivocarse. Antes de acciones delicadas en tu PC te pide permiso.",
-	code: "Modo Code: puede cambiar código y ejecutar comprobaciones; las acciones delicadas piden permiso.",
-	hacking: "CodeHacking: solo para sistemas tuyos o con permiso explícito. Las acciones delicadas piden permiso.",
+	chat: "Aku puede equivocarse. Antes de acciones delicadas en tu PC te pide permiso.",
+	hacking: "CodeHacking: programa y prueba solo sistemas tuyos o con permiso explícito. Las acciones delicadas piden permiso.",
 };
 
 /** Cambia el modo y toda su ayuda visual. Solo la elección del usuario se guarda como preferencia. */
 export function setMode(mode, { remember = false } = {}) {
+	// El antiguo modo Code (preferencias guardadas) ahora es CodeHacking.
+	if (mode === "code") mode = "hacking";
 	state.mode = CHAT_MODES.includes(mode) ? mode : "chat";
 	if (remember) {
 		prefs.mode = state.mode;
@@ -347,6 +354,8 @@ export function setMode(mode, { remember = false } = {}) {
 	});
 	for (const m of CHAT_MODES) $("#app").classList.toggle(`mode-${m}`, state.mode === m);
 	paintModeHints();
+	// El modo cambia las herramientas que se envían (si el chat aún no tiene una respuesta medida).
+	refreshContextMeter();
 }
 
 /** Lo que cambia según el modo y los permisos: el aviso, el texto de la caja y las sugerencias. */
@@ -414,7 +423,12 @@ export async function testModel(target) {
 
 /** Lo que antes se hacía al cargar la página (botones, eventos); app.js lo llama en orden. */
 export function initSidebar() {
-	initPermissions({ onChange: paintModeHints });
+	initPermissions({
+		onChange: () => {
+			paintModeHints();
+			refreshContextMeter();
+		},
+	});
 	$$("#mode-seg .mode-opt").forEach((b) => {
 		b.onclick = () => setMode(b.dataset.mode, { remember: true });
 	});
@@ -477,6 +491,17 @@ export function initSidebar() {
 				{ label: "Exportar como Markdown", icon: "download", onClick: () => exportChat(state.activeId) },
 				...projects.chatProjectItems(state.activeId, e.currentTarget),
 				{ label: "Eliminar chat", icon: "trash", danger: true, onClick: () => deleteChat(state.activeId) },
+				"sep",
+			);
+		}
+		// Con la barra estrecha estos botones no caben (app.css, mismo ancho): se pulsan desde aquí.
+		if ($(".topbar").clientWidth <= 480) {
+			const dark = document.documentElement.dataset.theme === "dark";
+			items.push(
+				{ label: "Navegador", icon: "globe", onClick: () => $("#browser-btn").click() },
+				{ label: "Terminal", icon: "terminal", onClick: () => $("#terminal-btn").click() },
+				{ label: "Oficina", icon: "users", onClick: () => $("#office-btn").click() },
+				{ label: dark ? "Tema claro" : "Tema oscuro", icon: dark ? "sun" : "moon", onClick: () => $("#theme-btn").click() },
 				"sep",
 			);
 		}

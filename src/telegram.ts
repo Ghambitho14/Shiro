@@ -79,7 +79,7 @@ async function tg<T>(token: string, method: string, body: Record<string, unknown
 function explain(err: unknown): string {
 	if (err instanceof TelegramError) {
 		if (err.code === 401 || err.code === 404) return "El token no es válido. Cópialo otra vez de @BotFather.";
-		if (err.code === 409) return "Otro programa está usando este bot (¿Shiro abierto dos veces?). Ciérralo y vuelve a conectar.";
+		if (err.code === 409) return "Otro programa está usando este bot (¿Aku abierto dos veces?). Ciérralo y vuelve a conectar.";
 		return err.message;
 	}
 	return err instanceof Error ? err.message : String(err);
@@ -201,7 +201,7 @@ async function handleMessage(token: string, msg: TgMessage): Promise<void> {
 		if (pending.has(chatId) || pending.size >= MAX_PENDING) return;
 		pending.set(chatId, { id: chatId, name: chatName(msg.chat), username: msg.chat.username, at: new Date().toISOString() });
 		console.log(`  [Telegram] Solicitud de ${chatName(msg.chat)}: autorízala en Ajustes → Conexiones.`);
-		await send(token, msg.chat.id, "Hola. Este asistente es privado. Si eres su dueño, autoriza este chat en Shiro: Ajustes → Conexiones → Telegram.");
+		await send(token, msg.chat.id, "Hola. Este asistente es privado. Si eres su dueño, autoriza este chat en Aku: Ajustes → Conexiones → Telegram.");
 		return;
 	}
 	if (text === "/start") {

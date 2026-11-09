@@ -119,7 +119,7 @@ async function fetchReleases(): Promise<Release[]> {
 	if (releasesCache && Date.now() - releasesCache.at < 30 * 60_000) return releasesCache.releases;
 	let res: Response;
 	try {
-		res = await fetch(RELEASES_URL, { headers: { Accept: "application/vnd.github+json", "User-Agent": "Shiro" }, signal: AbortSignal.timeout(20_000) });
+		res = await fetch(RELEASES_URL, { headers: { Accept: "application/vnd.github+json", "User-Agent": "Aku" }, signal: AbortSignal.timeout(20_000) });
 	} catch {
 		throw new Error("No pude conectar con GitHub para ver las versiones de llama.cpp. Revisa la conexión a internet.");
 	}
@@ -178,7 +178,7 @@ async function downloadAsset(asset: ReleaseAsset, file: string, onBytes: (n: num
 		timer = setTimeout(() => ctrl.abort(), 60_000);
 	};
 	try {
-		const res = await fetch(asset.browser_download_url, { headers: { "User-Agent": "Shiro" }, signal: ctrl.signal });
+		const res = await fetch(asset.browser_download_url, { headers: { "User-Agent": "Aku" }, signal: ctrl.signal });
 		if (!res.ok || !res.body) throw new Error(`GitHub respondió ${res.status} al descargar ${asset.name}.`);
 		const hash = createHash("sha256");
 		const meter = new Transform({

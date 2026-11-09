@@ -42,7 +42,7 @@ function clip(text: string, max: number): string {
  */
 export async function executeDelegate(args: Record<string, unknown>): Promise<{ ok: boolean; content: string }> {
 	const ctx = currentAgentRun();
-	if (!ctx) return { ok: false, content: "delegate solo funciona dentro de una respuesta de Shiro." };
+	if (!ctx) return { ok: false, content: "delegate solo funciona dentro de una respuesta de Aku." };
 	if (ctx.subagent) return { ok: false, content: "Eres un ayudante: no puedes crear otros. Haz la tarea tú." };
 
 	const tasks = (Array.isArray(args.tasks) ? args.tasks : []) as TaskInput[];

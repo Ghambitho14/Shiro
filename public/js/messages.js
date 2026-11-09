@@ -6,9 +6,10 @@ import { escapeHtml, renderMarkdown } from "./markdown.js";
 import { agentAvatar, agentColor } from "./agents.js";
 import { $, $$, copyText, el, lightbox } from "./ui.js";
 import { input, messagesBox, refs, state, thread } from "./state.js";
-import { regenerate, startEdit } from "./rooms.js";
+import { paintRoomBar, regenerate, startEdit } from "./rooms.js";
 import { openProject } from "./sidebar.js";
 import { readAloud } from "./voiceMode.js";
+import { refreshContextMeter } from "./contextMeter.js";
 
 // ───────────────────────────── contenido de mensajes ─────────────────────────────
 
@@ -56,6 +57,8 @@ export function fromServer(m) {
 	if (m.mode) out.mode = m.mode;
 	if (m.agent) Object.assign(out, { agent: m.agent, agentName: m.agentName });
 	if (m.usage?.turns) out.usage = m.usage;
+	if (m.context?.used) out.context = m.context;
+	if (m.summary === true) out.summary = true;
 	if (Array.isArray(m.tools)) out.tools = m.tools.map((t, i) => ({ id: `h${i}`, name: t.name, label: t.label, status: t.ok === false ? "fail" : "ok", image: t.image }));
 	return out;
 }
@@ -66,6 +69,8 @@ export function serialize(m) {
 	if (m.mode) o.mode = m.mode;
 	if (m.agent) Object.assign(o, { agent: m.agent, agentName: m.agentName });
 	if (m.usage) o.usage = m.usage;
+	if (m.context) o.context = m.context;
+	if (m.summary) o.summary = true;
 	if (m.tools?.length) {
 		o.tools = m.tools.map((t) => ({ name: t.name, label: t.label, ok: t.status !== "fail", ...(t.image ? { image: t.image } : {}) }));
 	}
@@ -249,17 +254,34 @@ function paintUsage(m, r) {
 	box.title = parts.join(", ") + ".";
 }
 
+/** Resumen de «Cerrar conversación»: una tarjeta plegable; lo de arriba ya no le llega entero al modelo. */
+export function buildSummary(m) {
+	const root = el(
+		"div",
+		"msg chat-summary collapsed",
+		`<button type="button" class="summary-head">${icon("archive", "sm")}<span class="summary-title">Conversación cerrada · resumen guardado en la memoria</span>${icon("chevronDown", "sm")}</button>
+		<div class="summary-body"><p class="summary-hint"></p><div class="md"></div></div>`,
+	);
+	$(".summary-hint", root).textContent = `Si sigues escribiendo aquí, ${state.name} solo recibe este resumen y lo nuevo (los mensajes de arriba se quedan para que los leas).`;
+	$(".md", root).innerHTML = renderMarkdown(String(m.content));
+	$(".summary-head", root).onclick = () => root.classList.toggle("collapsed");
+	refs.set(m, { root });
+	return root;
+}
+
 export function renderThread() {
 	messagesBox.innerHTML = "";
-	for (const m of state.messages) messagesBox.append(m.role === "user" ? buildUser(m) : buildAssistant(m));
+	for (const m of state.messages) messagesBox.append(m.role === "user" ? buildUser(m) : m.summary ? buildSummary(m) : buildAssistant(m));
 	markLast();
 	updateEmpty();
+	refreshContextMeter();
 }
 
 export function markLast() {
 	$$(".msg.assistant.last", messagesBox).forEach((e) => e.classList.remove("last"));
-	const last = [...state.messages].reverse().find((m) => m.role === "assistant");
+	const last = [...state.messages].reverse().find((m) => m.role === "assistant" && !m.summary);
 	if (last) refs.get(last)?.root.classList.add("last");
+	paintRoomBar();
 }
 
 export function updateEmpty() {

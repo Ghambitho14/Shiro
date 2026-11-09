@@ -56,7 +56,7 @@ async function buildPayload(provider: LLMProvider, model: string) {
 	}
 	// En el formato Anthropic (Claude, MiniMax en OpenCode) Shiro no elige cuánto piensa.
 	const thinkingNote =
-		resolveLLMSettings({ provider, model }).dialect === "anthropic" ? "Con este modelo Shiro no puede elegir cuánto piensa: se queda como venga." : undefined;
+		resolveLLMSettings({ provider, model }).dialect === "anthropic" ? "Con este modelo Aku no puede elegir cuánto piensa: se queda como venga." : undefined;
 	return {
 		provider,
 		model,

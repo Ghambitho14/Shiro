@@ -425,7 +425,7 @@ function createTerminalPane(toast) {
 	function setAttention(attention) {
 		attentionBar.hidden = !attention;
 		if (!attention) return;
-		$("#term-attention-text").textContent = `«${attention.prompt}» Escríbela aquí: Shiro no la ve.`;
+		$("#term-attention-text").textContent = `«${attention.prompt}» Escríbela aquí: Aku no la ve.`;
 		// Que no acabe escrita por error en la caja del chat.
 		term?.focus();
 	}
@@ -611,6 +611,19 @@ export function initPanels({ toast }) {
 		if (prefs.width) dock.style.width = `${prefs.width}px`;
 	};
 
+	// En una ventana mediana no caben barra lateral, chat y panel: la barra se oculta mientras dure
+	// el panel, sin guardarlo como preferencia (en el teléfono el panel ya ocupa toda la pantalla).
+	let sidebarHiddenForDock = false;
+	const fitSidebar = () => {
+		if (!dock.hidden && !app.classList.contains("sb-collapsed") && window.matchMedia("(min-width: 861px) and (max-width: 1100px)").matches) {
+			app.classList.add("sb-collapsed");
+			sidebarHiddenForDock = true;
+		} else if (dock.hidden && sidebarHiddenForDock) {
+			app.classList.remove("sb-collapsed");
+			sidebarHiddenForDock = false;
+		}
+	};
+
 	function show(name, open) {
 		if (!els[name].hidden === open) return;
 		els[name].hidden = !open;
@@ -618,6 +631,7 @@ export function initPanels({ toast }) {
 		buttons[name].setAttribute("aria-pressed", String(open));
 		dock.hidden = Object.values(els).every((e) => e.hidden);
 		app.classList.toggle("dock-open", !dock.hidden);
+		fitSidebar();
 		panes[name].setActive(open);
 		prefs[name] = open;
 		savePrefs(prefs);

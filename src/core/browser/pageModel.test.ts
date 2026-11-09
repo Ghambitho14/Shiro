@@ -26,7 +26,7 @@ test("la web de Shiro no se abre en su propio navegador", () => {
 		ok(isShiroUrl(`http://${host}:${port}/api/chat-sessions`), host);
 	}
 	strictEqual(isShiroUrl(`http://192.168.1.10:${port}/`), false);
-	throws(() => normalizeUrl(`127.0.0.1:${port}/api/state`), /Shiro/);
+	throws(() => normalizeUrl(`127.0.0.1:${port}/api/state`), /Aku/);
 });
 
 test("formatSnapshot: elementos numerados, visibles primero, y aviso de texto recortado", () => {

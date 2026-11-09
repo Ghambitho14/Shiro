@@ -34,7 +34,7 @@ export function canListen() {
 	return sttEngine() === "server" ? sup.recorder : sup.browserStt;
 }
 
-export const NO_STT = "Este navegador no reconoce voz. Abre Shiro en Edge o Chrome, o configura un servidor Whisper en Ajustes → Voz.";
+export const NO_STT = "Este navegador no reconoce voz. Abre Aku en Edge o Chrome, o configura un servidor Whisper en Ajustes → Voz.";
 
 // Leer un mensaje en voz alta
 export const reader = { speaker: null, msg: null, btn: null };
@@ -121,6 +121,30 @@ export const voiceStatus = $("#voice-status");
 export const voiceTranscript = $("#voice-transcript");
 export const voiceApproval = $("#voice-approval");
 
+/**
+ * Dónde se ve el modo voz. Por defecto, la pantalla grande (orbe, texto y permisos). La cajita de voz de la
+ * bandeja (miniVoice.js) pone la suya con setVoiceView: ondas, texto de a poco y cerrar la ventana al terminar.
+ * `who` es "user" (lo que dijo el usuario, al momento) o "aku" (la respuesta, que va creciendo).
+ */
+const view = {
+	big: true,
+	transcript(text, who) {
+		voiceTranscript.textContent = who === "aku" && text.length > 320 ? `…${text.slice(-320)}` : text;
+	},
+	level: (l) => sphere.setLevel(l),
+	phase: () => {},
+	approval(node) {
+		if (node) voiceApproval.replaceChildren(node);
+		else voiceApproval.innerHTML = "";
+	},
+	mute: () => {},
+	closed: () => {},
+};
+
+export function setVoiceView(custom) {
+	Object.assign(view, custom);
+}
+
 export const voice = {
 	active: false,
 	muted: false,
@@ -148,14 +172,16 @@ export const voice = {
 		// Si termina de leer una frase y el modelo aún escribe, no dice "Hablando".
 		this.speaker.onIdle = () => this.active && state.busy && this.phase === "speaking" && this.set("thinking", "Pensando…");
 		this.paintTitle();
-		voiceTranscript.textContent = "";
-		voiceApproval.innerHTML = "";
-		$("#voice-overlay").hidden = false;
-		document.body.classList.add("voice-open");
-		sphere.start();
+		view.transcript("", "user");
+		view.approval(null);
+		if (view.big) {
+			$("#voice-overlay").hidden = false;
+			document.body.classList.add("voice-open");
+			sphere.start();
+		}
 		this.paintMute();
 		if (greet) {
-			voiceTranscript.textContent = greet;
+			view.transcript(greet, "aku");
 			this.speaker.speak(greet);
 			this.set("speaking", "Hablando… toca el círculo para interrumpir");
 			this.speaker.drain().then(() => this.active && this.loop());
@@ -177,10 +203,13 @@ export const voice = {
 		this.rec?.cancel();
 		this.speaker?.stop();
 		if (state.busy) stopGeneration();
-		$("#voice-overlay").hidden = true;
-		document.body.classList.remove("voice-open");
-		sphere.stop();
-		input.focus();
+		if (view.big) {
+			$("#voice-overlay").hidden = true;
+			document.body.classList.remove("voice-open");
+			sphere.stop();
+			input.focus();
+		}
+		view.closed();
 	},
 
 	set(phase, text) {
@@ -188,6 +217,7 @@ export const voice = {
 		orb.dataset.state = phase;
 		sphere.setState(phase);
 		voiceStatus.textContent = text;
+		view.phase(phase, text);
 	},
 
 	paintMute() {
@@ -195,6 +225,7 @@ export const voice = {
 		b.classList.toggle("muted", this.muted);
 		setIcon(b, this.muted ? "micOff" : "mic");
 		b.title = this.muted ? "Activar micrófono" : "Pausar micrófono";
+		view.mute(this.muted);
 	},
 
 	toggleMute() {
@@ -208,12 +239,12 @@ export const voice = {
 			engine: sttEngine(),
 			lang: prefs.lang,
 			mode: "turn",
-			onInterim: (t) => (voiceTranscript.textContent = t),
-			onLevel: (l) => sphere.setLevel(l),
+			onInterim: (t) => view.transcript(t, "user"),
+			onLevel: (l) => view.level(l),
 		});
 		return this.rec.listen().finally(() => {
 			this.rec = null;
-			sphere.setLevel(0);
+			view.level(0);
 		});
 	},
 
@@ -238,7 +269,7 @@ export const voice = {
 			}
 			if (!this.active) break;
 			if (!text || this.muted) continue;
-			voiceTranscript.textContent = text;
+			view.transcript(text, "user");
 			await this.respond(text);
 		}
 	},
@@ -251,8 +282,7 @@ export const voice = {
 			hooks: {
 				onDelta: (full) => {
 					splitter.update(full);
-					const plain = toSpeechText(full);
-					voiceTranscript.textContent = plain.length > 320 ? `…${plain.slice(-320)}` : plain;
+					view.transcript(toSpeechText(full), "aku");
 				},
 				onTool: (evt) => {
 					if (evt.phase === "start" && this.phase !== "speaking") this.set("thinking", `${evt.label}…`);
@@ -280,12 +310,12 @@ export const voice = {
 			`<div class="approval-summary"></div><div class="approval-actions" style="justify-content:center"><button class="btn primary" data-a="yes">Sí, hazlo</button>${evt.canRemember ? '<button class="btn" data-a="always">Sí, siempre en este chat</button>' : ""}<button class="btn" data-a="no">No</button></div>`,
 		);
 		$(".approval-summary", card).textContent = evt.summary;
-		voiceApproval.replaceChildren(card);
+		view.approval(card);
 		const finish = (approved, remember = false) => {
 			if (settled) return;
 			settled = true;
 			this.rec?.cancel();
-			voiceApproval.innerHTML = "";
+			view.approval(null);
 			decide(approved, remember);
 			this.set("thinking", approved ? "Hecho, sigo…" : "Vale, no lo hago.");
 		};

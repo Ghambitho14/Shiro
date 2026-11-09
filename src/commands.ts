@@ -82,7 +82,7 @@ function modelText(args: string[]): string {
 	const preset = PROVIDER_PRESETS[s.provider];
 	return `**Modelo:** ${s.model}
 - Proveedor: ${preset.label}
-${preset.managed ? "- Motor: llama.cpp integrado (lo abre Shiro con el archivo GGUF)" : `- Dirección: ${s.baseUrl}`}
+${preset.managed ? "- Motor: llama.cpp integrado (lo abre Aku con el archivo GGUF)" : `- Dirección: ${s.baseUrl}`}
 - API key: ${s.apiKey ? maskKey(s.apiKey) : preset.needsApiKey ? "falta" : "no hace falta"}
 
 Para cambiarlo: \`/modelo nombre\`, el selector de arriba o Ajustes → Modelo.`;

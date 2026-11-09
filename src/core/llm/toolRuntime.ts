@@ -6,9 +6,9 @@ export const SAVER_MAX_ITERATIONS = 4;
 export const SAVER_MAX_RESULT_CHARS = 4000;
 
 /** Máximo de pasos con herramientas por respuesta (del modelo activo o el de `ref`, o el general). */
-export function getMaxToolIterations(ref?: ModelRef): number {
+export function getMaxToolIterations(ref?: ModelRef, saver = saverOn(ref)): number {
 	const max = activeModelTuning(ref).maxToolIterations;
-	return saverOn(ref) ? Math.min(max, SAVER_MAX_ITERATIONS) : max;
+	return saver ? Math.min(max, SAVER_MAX_ITERATIONS) : max;
 }
 
 /** Recorta un resultado de herramienta antes de dárselo al modelo (en modo ahorro, más corto). */

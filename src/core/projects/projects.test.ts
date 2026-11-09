@@ -109,7 +109,7 @@ test("vincular carpetas: solo carpetas concretas que existan", () => {
 	const p = projects.createProject({ name: "Tienda" });
 	assert.throws(() => projects.addFolder(p.id, join(TMP, "no-existe")), /No encuentro/);
 	assert.throws(() => projects.addFolder(p.id, parse(TMP).root), /demasiado grande/);
-	assert.throws(() => projects.addFolder(p.id, process.env.SHIRO_DATA_DIR!), /datos de Shiro/);
+	assert.throws(() => projects.addFolder(p.id, process.env.SHIRO_DATA_DIR!), /datos de Aku/);
 	projects.addFolder(p.id, FOLDER);
 	assert.throws(() => projects.addFolder(p.id, FOLDER), /ya está/);
 	assert.equal(projects.getProject(p.id)?.folders.length, 1);
@@ -122,7 +122,7 @@ test("una carpeta que contiene los datos de Shiro se puede vincular, pero los da
 	const dataDir = process.env.SHIRO_DATA_DIR!;
 	mkdirSync(dataDir, { recursive: true });
 	writeFileSync(join(dataDir, "secreto.json"), '{"llmApiKey":"sk-no-se-ve"}');
-	assert.throws(() => projects.addFolder(projects.createProject({ name: "Dentro" }).id, join(dataDir, "projects")), /datos de Shiro/);
+	assert.throws(() => projects.addFolder(projects.createProject({ name: "Dentro" }).id, join(dataDir, "projects")), /datos de Aku/);
 	const p = projects.addFolder(projects.createProject({ name: "Padre" }).id, TMP)!;
 	const label = projects.projectSources(p)[1]!.label;
 	assert.ok(projects.resolveProjectPath(p, `${label}/MiTienda/precios.csv`));

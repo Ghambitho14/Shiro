@@ -209,7 +209,7 @@ function toNetworkError(settings: LLMSettings, err: unknown): LLMError {
 		);
 	}
 	if (PROVIDER_PRESETS[settings.provider].managed) {
-		return new LLMError(`Se perdió la conexión con llama.cpp (${settings.model}). Vuelve a enviar el mensaje: Shiro lo abrirá de nuevo.`, "connection");
+		return new LLMError(`Se perdió la conexión con llama.cpp (${settings.model}). Vuelve a enviar el mensaje: Aku lo abrirá de nuevo.`, "connection");
 	}
 	const hint = settings.provider === "ollama" ? " ¿Está Ollama abierto? (ejecuta: ollama serve)" : settings.local ? " ¿Está el servidor encendido?" : "";
 	return new LLMError(`No se pudo conectar con ${label} en ${settings.baseUrl}.${hint}`, "connection");

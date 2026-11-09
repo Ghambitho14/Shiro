@@ -152,7 +152,7 @@ export function checkFolder(pathArg: string): string {
 	}
 	// Los datos de Shiro tienen claves y sesiones: nunca dentro de un proyecto. Una carpeta que los
 	// contiene (p. ej. la de GitHub con Shiro dentro) sí se puede vincular: la de datos queda oculta.
-	if (isWithinRoot(full, DATA_DIR, true)) throw new Error("No se puede vincular la carpeta de datos de Shiro.");
+	if (isWithinRoot(full, DATA_DIR, true)) throw new Error("No se puede vincular la carpeta de datos de Aku.");
 	return full;
 }
 

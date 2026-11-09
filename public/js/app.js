@@ -6,15 +6,18 @@ import { $, applyTheme, closeMenu, isMobile, openMenuEl, prefs, toast } from "./
 import { input, state } from "./state.js";
 import { initMessages } from "./messages.js";
 import { initComposer, paintComposer, stopGeneration } from "./chat.js";
+import { initContextMeter } from "./contextMeter.js";
 import { refreshAgents } from "./rooms.js";
 import { initSidebar, loadSessions, newChat, openSearch, route } from "./sidebar.js";
 import { initSettings, loadSettings, paintSuggestions } from "./settings.js";
 import { initReminders, pollNotifications } from "./reminders.js";
 import { initVoice, reader, stopReading, voice } from "./voiceMode.js";
+import { initMiniVoice, isMiniVoice } from "./miniVoice.js";
 
 // Botones y eventos de cada parte, en el mismo orden que cuando todo estaba en este archivo.
 initMessages();
 initComposer();
+initContextMeter();
 initSidebar();
 initSettings();
 initReminders();
@@ -68,4 +71,6 @@ async function init() {
 	input.focus();
 }
 
-init();
+// La cajita de voz de la bandeja (?mini=voz) solo necesita el modo voz, no la ventana entera.
+if (isMiniVoice()) initMiniVoice();
+else init();

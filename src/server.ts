@@ -107,7 +107,10 @@ function hasLocalToken(req: import("node:http").IncomingMessage): boolean {
 	return a.length === b.length && timingSafeEqual(a, b);
 }
 
-const server = createServer(async (req, res) => {
+async function handleRequest(
+	req: import("node:http").IncomingMessage,
+	res: import("node:http").ServerResponse,
+): Promise<void> {
 	const url = req.url ?? "/";
 	const method = req.method ?? "GET";
 	const parsedUrl = new URL(url, "http://127.0.0.1");
@@ -249,6 +252,19 @@ const server = createServer(async (req, res) => {
 	}
 
 	send(res, 404, "Not found");
+}
+
+/**
+ * Un error en una petición (p. ej. Supabase sin conexión) se contesta con un 500 y su mensaje:
+ * sin esto, la promesa rechazada apagaba Shiro entero.
+ */
+const server = createServer((req, res) => {
+	handleRequest(req, res).catch((err: unknown) => {
+		const message = err instanceof Error ? err.message : String(err);
+		console.error(`⚠️  Falló ${req.method ?? "GET"} ${req.url ?? "/"}: ${message}`);
+		if (!res.headersSent) sendJson(res, 500, { error: message });
+		else if (!res.writableEnded) res.end();
+	});
 });
 
 server.on("error", (err: NodeJS.ErrnoException) => {
@@ -262,10 +278,16 @@ server.on("error", (err: NodeJS.ErrnoException) => {
 	process.exitCode = 1;
 });
 
-function shutdown(signal: NodeJS.Signals | "update"): void {
+function shutdown(signal: NodeJS.Signals | "update" | "quit"): void {
 	if (shuttingDown) return;
 	shuttingDown = true;
-	console.log(signal === "update" ? "\n  Hay una versión nueva de Shiro: cierro esta para abrir la actualizada..." : `\n  ${signal} recibido. Cerrando Shiro...`);
+	console.log(
+		signal === "update"
+			? "\n  Hay una versión nueva de Aku: cierro esta para abrir la actualizada..."
+			: signal === "quit"
+				? "\n  Salir de Aku (ícono de la bandeja). Cerrando..."
+				: `\n  ${signal} recibido. Cerrando Aku...`,
+	);
 	forgetServerInfo();
 	void mcpManager.closeAll();
 	void shiroBrowser.close();
@@ -304,6 +326,12 @@ process.on("SIGTERM", () => {
 	shutdown("SIGTERM");
 });
 
+/** «Salir de Aku» del ícono de la bandeja (tray.ts): el mismo cierre ordenado que con Ctrl+C. */
+export function quitServer(): void {
+	stopCronScheduler();
+	shutdown("quit");
+}
+
 function forgetServerInfo(): void {
 	try {
 		const info = JSON.parse(readFileSync(SERVER_INFO_FILE, "utf-8")) as { pid?: number };
@@ -318,7 +346,7 @@ let markReady: (url: string) => void = () => {};
 export const serverReady = new Promise<string>((resolve) => (markReady = resolve));
 
 server.listen(PORT, BIND_HOST, () => {
-	console.log(`Shiro web: http://${BIND_HOST}:${PORT}`);
+	console.log(`Aku web: http://${BIND_HOST}:${PORT}`);
 	try {
 		mkdirSync(dirname(SERVER_INFO_FILE), { recursive: true });
 		writeFileSync(SERVER_INFO_FILE, JSON.stringify({ pid: process.pid, port: PORT, token: LOCAL_TOKEN }), "utf-8");
@@ -338,6 +366,6 @@ server.listen(PORT, BIND_HOST, () => {
 	} else if (AUTH_TOKEN) {
 		console.log("Auth: token requerido en rutas sensibles (SHIRO_AUTH_TOKEN)");
 	} else if (!IS_LOCAL_ONLY) {
-		console.log(`⚠️  Sin contraseña (SHIRO_AUTH_TOKEN=off): quien llegue a ${BIND_HOST}:${PORT} puede usar Shiro.`);
+		console.log(`⚠️  Sin contraseña (SHIRO_AUTH_TOKEN=off): quien llegue a ${BIND_HOST}:${PORT} puede usar Aku.`);
 	}
 });

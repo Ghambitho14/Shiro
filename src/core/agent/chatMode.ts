@@ -1,8 +1,10 @@
 /** Modos del chat web. El servidor los valida: nunca se fía de un texto libre del navegador. */
-export const CHAT_MODES = ["chat", "code", "hacking"] as const;
+export const CHAT_MODES = ["chat", "hacking"] as const;
 export type ChatMode = (typeof CHAT_MODES)[number];
 
+/** El antiguo modo Code ahora es CodeHacking: pestañas abiertas y chats viejos aún lo mandan. */
 export function parseChatMode(value: unknown): ChatMode {
+	if (value === "code") return "hacking";
 	return typeof value === "string" && (CHAT_MODES as readonly string[]).includes(value) ? (value as ChatMode) : "chat";
 }
 

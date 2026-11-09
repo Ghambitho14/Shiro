@@ -13,7 +13,7 @@ export const state = {
 	settings: null,
 	llm: null,
 	profile: {},
-	name: "Shiro",
+	name: "Aku",
 	search: "",
 	/** Id del proyecto cuya página está abierta (sin chat elegido): el próximo chat nace en él. */
 	projectHome: null,
@@ -30,6 +30,8 @@ export const state = {
 	agents: [],
 	/** Sala del chat abierto (participantes y principal), o null si es un chat normal. */
 	room: null,
+	/** «Cerrar conversación» resumiendo el chat abierto. */
+	closing: false,
 };
 
 /** Referencias DOM de cada mensaje. */

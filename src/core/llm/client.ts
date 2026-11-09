@@ -116,8 +116,8 @@ function buildClient(resolve: () => LLMSettings, real: Real | null, ref?: ModelR
 			let textMode = settings.toolMode === "text" || textModeModels.has(modelKey(settings));
 			let msgs = textMode ? withTextToolInstructions(messages, toolsDef) : [...messages];
 			let emittedText = false;
-			const maxIterations = getMaxToolIterations(ref);
-			const saver = saverOn(ref);
+			const saver = opts.saverLimits !== false && saverOn(ref);
+			const maxIterations = getMaxToolIterations(ref, saver);
 			const toolImageMsgs = new Set<Message>();
 
 			for (let i = 0; i < maxIterations; i++) {
@@ -188,7 +188,9 @@ function buildClient(resolve: () => LLMSettings, real: Real | null, ref?: ModelR
 						continue;
 					}
 					const r = await executeTool(call.function.name, args);
-					const content = normalizeToolResult(r.ok ? r.content : `Error: ${r.error ?? "desconocido"}`, ref, saver);
+					const raw = r.ok ? r.content : `Error: ${r.error ?? "desconocido"}`;
+					// use_skill ya entrega por partes (SkillLoader): recortarlo perdería instrucciones.
+					const content = call.function.name === "use_skill" ? raw : normalizeToolResult(raw, ref, saver);
 					// Se envuelve después de recortar, para que la marca de cierre no se pierda.
 					results.push({ call, content: r.ok ? wrapExternal(call.function.name, content) : content });
 					if (r.ok && r.image) images.push(r.image);

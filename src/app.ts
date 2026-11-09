@@ -4,15 +4,22 @@
  * `npm run app -- --acceso-directo` (o `Shiro.exe --acceso-directo`) crea además un icono "Shiro" en el escritorio.
  */
 import { spawn } from "node:child_process";
-import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DATA_DIR } from "./config/config.js";
 import { IS_WINDOWS, runPowerShell } from "./core/pc/powershell.js";
+import { focusOwnWindow, pinWindowToCorner } from "./core/pc/pc.js";
 import { findInstalledBrowser } from "./core/browser/findBrowser.js";
+import { resolveLLMSettings } from "./core/llm/providers.js";
 import { APP_DIR, IS_EXE, readAppFile } from "./runtime.js";
+import { setTrayStatus, startTray } from "./tray.js";
+import { getState } from "./store.js";
+
+/** Tamaño de la cajita de voz de la bandeja (píxeles lógicos, con la barra de título de Edge). */
+const VOICE_BOX = { width: 420, height: 190 };
 
 /** Cómo se vuelve a abrir Shiro (para los mensajes). */
-const OPEN_AGAIN = IS_EXE ? "abre Shiro.exe" : "npm start";
+const OPEN_AGAIN = IS_EXE ? "abre Aku.exe" : "npm start";
 /** Puerto de este Shiro. Con el .exe puede cambiar si el 1406 lo usa otro Shiro (ver pickExePort). */
 let PORT = Number(process.env.PORT) || 1406;
 
@@ -103,17 +110,73 @@ function detached(file: string, args: string[]): void {
 	child.unref();
 }
 
-export function openAppWindow(url: string): void {
-	const browser = findInstalledBrowser();
+export function openAppWindow(url: string, size = { width: 1180, height: 820 }, prefer?: "chrome"): void {
+	const browser = findInstalledBrowser(prefer);
 	if (browser) {
-		detached(browser, [`--app=${url}`, "--window-size=1180,820"]);
+		detached(browser, [`--app=${url}`, `--window-size=${size.width},${size.height}`]);
 		return;
 	}
 	if (process.platform === "win32") detached("rundll32.exe", ["url.dll,FileProtocolHandler", url]);
 	else detached(process.platform === "darwin" ? "open" : "xdg-open", [url]);
 }
 
-/** Acceso directo en el escritorio que abre Shiro.exe, o ejecuta `npm run app` en esta carpeta. */
+/** Clic en el ícono de la bandeja: trae al frente la ventana de Aku si ya está abierta; si no, abre una. */
+async function showAppWindow(url: string): Promise<void> {
+	const focused = await focusOwnWindow(getState().name || "Aku").catch(() => false);
+	if (!focused) openAppWindow(url);
+}
+
+/** «Nuevo chat» del menú: la ventana al frente con un chat vacío (su atajo Ctrl+Mayús+O), o una ventana nueva. */
+async function newChatWindow(url: string): Promise<void> {
+	const focused = await focusOwnWindow(getState().name || "Aku", { newChat: true }).catch(() => false);
+	if (!focused) openAppWindow(url);
+}
+
+/**
+ * «Hablarle» del menú: la cajita de voz (`/?mini=voz`, miniVoice.js) abajo a la derecha y siempre encima.
+ * Si ya está abierta, solo la trae al frente.
+ */
+async function openVoiceBox(url: string): Promise<void> {
+	const title = `${getState().name || "Aku"} (voz)`;
+	if (await pinWindowToCorner(title, VOICE_BOX.width, VOICE_BOX.height).catch(() => false)) return;
+	// Con Chrome si está: su dictado funciona donde el de Edge da error "network".
+	openAppWindow(`${url}/?mini=voz`, VOICE_BOX, "chrome");
+	await pinWindowToCorner(title, VOICE_BOX.width, VOICE_BOX.height, 10_000).catch(() => false);
+}
+
+/** La segunda línea de la cabecera del menú de la bandeja; se repasa por si cambias de modelo. */
+function paintTrayStatus(): void {
+	try {
+		setTrayStatus(`Encendido · ${resolveLLMSettings().model}`);
+	} catch {
+		setTrayStatus("Encendido");
+	}
+}
+
+/**
+ * Aku.exe con doble clic se vuelve a lanzar en segundo plano, sin consola, y esta se cierra:
+ * se maneja con el ícono de la bandeja. Lo que escribiría en la consola va a `aku.log` en la carpeta de datos.
+ * `SHIRO_BACKGROUND` evita que el de segundo plano se vuelva a lanzar a sí mismo.
+ */
+function relaunchInBackground(argv: string[]): void {
+	mkdirSync(DATA_DIR, { recursive: true });
+	const log = join(DATA_DIR, "aku.log");
+	const fd = openSync(log, "w");
+	try {
+		const child = spawn(process.execPath, ["app", ...argv], {
+			detached: true,
+			windowsHide: true,
+			stdio: ["ignore", fd, fd],
+			env: { ...process.env, SHIRO_BACKGROUND: "1" },
+		});
+		child.unref();
+	} finally {
+		closeSync(fd);
+	}
+	console.log(`  Aku sigue en segundo plano: búscalo en la bandeja, junto al reloj. Registro: ${log}`);
+}
+
+/** Acceso directo en el escritorio que abre Aku.exe, o ejecuta `npm run app` en esta carpeta. */
 async function createDesktopShortcut(): Promise<void> {
 	if (!IS_WINDOWS) {
 		console.log("  El acceso directo solo se crea automáticamente en Windows.");
@@ -122,8 +185,8 @@ async function createDesktopShortcut(): Promise<void> {
 	const cacheDir = join(DATA_DIR, "cache");
 	mkdirSync(cacheDir, { recursive: true });
 	// La imagen del icono: dentro del .exe no es un archivo, así que se copia a la caché.
-	const png = join(cacheDir, "shiro-icon.png");
-	const pngData = readAppFile("public/Shiro.PNG");
+	const png = join(cacheDir, "aku-icon.png");
+	const pngData = readAppFile("public/Aku.png");
 	if (!pngData) throw new Error("no encuentro la imagen del icono");
 	writeFileSync(png, pngData);
 	const out = await runPowerShell(
@@ -142,19 +205,23 @@ $w.Write([uint16]1); $w.Write([uint16]32); $w.Write([uint32]$png.Length); $w.Wri
 $w.Write($png)
 [System.IO.File]::WriteAllBytes($env:SHIRO_A_ICO, $ico.ToArray())
 $desktop = [Environment]::GetFolderPath('Desktop')
-$path = Join-Path $desktop 'Shiro.lnk'
-$lnk = (New-Object -ComObject WScript.Shell).CreateShortcut($path)
+$shell = New-Object -ComObject WScript.Shell
+# El de antes del cambio de nombre (Shiro.lnk) se quita, pero solo si abre lo mismo que este.
+$old = Join-Path $desktop 'Shiro.lnk'
+if ((Test-Path $old) -and ($shell.CreateShortcut($old).WorkingDirectory -eq $env:SHIRO_A_DIR)) { Remove-Item $old }
+$path = Join-Path $desktop 'Aku.lnk'
+$lnk = $shell.CreateShortcut($path)
 $lnk.TargetPath = $env:SHIRO_A_TARGET
 $lnk.Arguments = [string]$env:SHIRO_A_ARGS
 $lnk.WorkingDirectory = $env:SHIRO_A_DIR
 $lnk.WindowStyle = 7
 $lnk.IconLocation = $env:SHIRO_A_ICO
-$lnk.Description = 'Shiro, tu asistente'
+$lnk.Description = 'Aku, tu asistente'
 $lnk.Save()
 $path`,
 		{
 			png,
-			ico: join(cacheDir, "shiro.ico"),
+			ico: join(cacheDir, "aku.ico"),
 			dir: APP_DIR,
 			target: IS_EXE ? process.execPath : process.env.ComSpec || "cmd.exe",
 			args: IS_EXE ? "" : "/c npm run app",
@@ -171,6 +238,11 @@ export async function runApp(argv: string[] = []): Promise<void> {
 			console.log(`  No pude crear el acceso directo: ${err instanceof Error ? err.message : String(err)}`);
 		}
 	}
+	// Aku.exe: sin consola, en segundo plano; se abre y se apaga desde el ícono de la bandeja.
+	if (IS_EXE && IS_WINDOWS && !process.env.SHIRO_BACKGROUND) {
+		relaunchInBackground(argv.filter((a) => !a.startsWith("--acceso") && a !== "--shortcut"));
+		return;
+	}
 	if (IS_EXE && !process.env.PORT) {
 		PORT = await pickExePort(PORT);
 		process.env.PORT = String(PORT); // server.ts lo lee al cargarse
@@ -180,13 +252,13 @@ export async function runApp(argv: string[] = []): Promise<void> {
 	if (running) {
 		const outdated = !running.startedAt || newestCodeChange() > running.startedAt;
 		if (!outdated) {
-			console.log("  Shiro ya estaba en marcha: abro la ventana.");
-			openAppWindow(localUrl);
+			console.log("  Aku ya estaba en marcha: abro su ventana.");
+			await showAppWindow(localUrl);
 			return;
 		}
 		if (!(await stopOutdatedServer(localUrl, running))) {
 			// Con el .exe suele ser otro Shiro (p. ej. el de npm run dev) usando el mismo puerto.
-			const which = IS_EXE ? `otro Shiro en el puerto ${PORT} (por ejemplo, el de npm run dev)` : "un Shiro de antes de la última actualización";
+			const which = IS_EXE ? `otro Aku en el puerto ${PORT} (por ejemplo, el de npm run dev)` : "un Aku de antes de la última actualización";
 			console.log(
 				`\n  Hay ${which} y no puedo cerrarlo yo. Abro ese.` +
 					`\n  Para usar este, ciérralo (Ctrl+C en su consola, o cierra esa ventana) y vuelve a ejecutar: ${OPEN_AGAIN}\n`,
@@ -194,10 +266,21 @@ export async function runApp(argv: string[] = []): Promise<void> {
 			openAppWindow(localUrl);
 			return;
 		}
-		console.log("  Había un Shiro de antes de la última actualización: lo cerré y abro el nuevo.");
+		console.log("  Había un Aku de antes de la última actualización: lo cerré y abro el nuevo.");
 	}
-	const { serverReady } = await import("./server.js");
+	const { serverReady, quitServer } = await import("./server.js");
 	const url = await serverReady;
 	openAppWindow(url);
-	console.log("\n  Shiro está abierto en su ventana. Deja esta consola abierta mientras lo uses (ciérrala para apagarlo).\n");
+	paintTrayStatus();
+	setInterval(paintTrayStatus, 15_000).unref();
+	startTray({
+		open: () => void showAppWindow(url),
+		talk: () => void openVoiceBox(url),
+		newchat: () => void newChatWindow(url),
+		quit: quitServer,
+	});
+	console.log(
+		"\n  Aku está abierto en su ventana y en la bandeja, junto al reloj. Si cierras la ventana sigue funcionando:" +
+			`\n  haz clic en su ícono para volver. Para apagarlo: clic derecho en el ícono → Salir de Aku${process.env.SHIRO_BACKGROUND ? "" : " (o cierra esta consola)"}.\n`,
+	);
 }

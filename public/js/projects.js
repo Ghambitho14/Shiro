@@ -338,7 +338,7 @@ export async function uploadFiles(projectId, files) {
 				});
 				if (!r.ok) failed.push(`${f.name}: ${(await r.json().catch(() => ({}))).error || `error ${r.status}`}`);
 			} catch {
-				failed.push(`${f.name}: sin conexión con Shiro`);
+				failed.push(`${f.name}: sin conexión con Aku`);
 			}
 			done++;
 			paint();

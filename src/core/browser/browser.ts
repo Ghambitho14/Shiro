@@ -129,7 +129,7 @@ class ShiroBrowser {
 
 	private async launch(): Promise<Browser> {
 		const candidates = automationBrowsers();
-		if (!candidates.length) throw new BrowserError("No encontré Chrome ni Edge instalados: instala Google Chrome para usar el navegador de Shiro.");
+		if (!candidates.length) throw new BrowserError("No encontré Chrome ni Edge instalados: instala Google Chrome para usar el navegador de Aku.");
 		const { default: puppeteer } = await import("puppeteer-core");
 		mkdirSync(PROFILE_DIR, { recursive: true });
 		let browser: Browser | null = null;
@@ -159,7 +159,7 @@ class ShiroBrowser {
 					// Quedó abierto de antes (otro proceso de Shiro o un cierre brusco): se usa ese mismo.
 					browser = await this.connectExisting(puppeteer, 0);
 					if (browser) break;
-					throw new BrowserError("El navegador de Shiro ya está abierto en otro proceso de Shiro. Ciérralo y vuelve a intentarlo.");
+					throw new BrowserError("El navegador de Aku ya está abierto en otro proceso de Aku. Ciérralo y vuelve a intentarlo.");
 				}
 				// Edge a veces arranca con un lanzador que se cierra enseguida y deja el navegador abierto aparte.
 				browser = await this.connectExisting(puppeteer, startedAt);
@@ -436,7 +436,7 @@ class ShiroBrowser {
 
 	async snapshot(): Promise<string> {
 		const page = this.requirePage();
-		if (isShiroUrl(page.url())) throw new BrowserError("Esta página es la propia web de Shiro: no la puedo leer desde el navegador.");
+		if (isShiroUrl(page.url())) throw new BrowserError("Esta página es la propia web de Aku: no la puedo leer desde el navegador.");
 		let snap: PageSnapshot | null = null;
 		for (let attempt = 0; attempt < 3 && !snap; attempt++) {
 			try {
@@ -542,7 +542,7 @@ class ShiroBrowser {
 
 	async screenshot(): Promise<{ path: string; width: number; height: number }> {
 		const page = this.requirePage();
-		if (isShiroUrl(page.url())) throw new BrowserError("Esta página es la propia web de Shiro: no la capturo.");
+		if (isShiroUrl(page.url())) throw new BrowserError("Esta página es la propia web de Aku: no la capturo.");
 		mkdirSync(SCREENSHOT_DIR, { recursive: true });
 		const path = join(SCREENSHOT_DIR, `navegador-${Date.now()}.jpg`);
 		await page.screenshot({ type: "jpeg", quality: 75, path });

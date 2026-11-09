@@ -1,10 +1,138 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getConfig } from "../../config/config.js";
-import { buildSkillsBlock, findSkillDirs, getEnabledSkills, listSkillGroups, parseSkillMarkdown, resolveInsideSkill, skillSlug, type Skill } from "./SkillLoader.js";
+import { APP_DIR } from "../../runtime.js";
+import { BUNDLED_SKILLS } from "../../workspace.js";
+import {
+	buildSkillsBlock,
+	copyAllSkillsToShiro,
+	copySkillToShiro,
+	deleteOwnSkill,
+	findSkillDirs,
+	getEnabledSkills,
+	listSkillGroups,
+	parseSkillMarkdown,
+	resolveInsideSkill,
+	SHIRO_SKILLS_DIR,
+	SKILL_PAGE_CHARS,
+	skillSlug,
+	useSkill,
+	type Skill,
+} from "./SkillLoader.js";
+
+/** Una carpeta personal de mentira con las habilidades que pide `files`. */
+function withFakeHome(files: Record<string, string>, fn: () => void): void {
+	const home = mkdtempSync(join(tmpdir(), "shiro-home-"));
+	const saved = { USERPROFILE: process.env.USERPROFILE, HOME: process.env.HOME };
+	try {
+		process.env.USERPROFILE = process.env.HOME = home;
+		for (const [rel, text] of Object.entries(files)) {
+			mkdirSync(join(home, rel, ".."), { recursive: true });
+			writeFileSync(join(home, rel), text);
+		}
+		fn();
+	} finally {
+		for (const [k, v] of Object.entries(saved)) {
+			if (v === undefined) delete process.env[k];
+			else process.env[k] = v;
+		}
+		rmSync(home, { recursive: true, force: true });
+	}
+}
+
+test("las habilidades de Shiro: la lista coincide con la carpeta, y llegan solas sin pisar cambios", () => {
+	const inRepo = readdirSync(join(APP_DIR, "skills")).sort();
+	assert.deepEqual(inRepo, [...BUNDLED_SKILLS].sort());
+	for (const name of BUNDLED_SKILLS) {
+		const { meta, body } = parseSkillMarkdown(readFileSync(join(APP_DIR, "skills", name, "SKILL.md"), "utf-8"));
+		assert.equal(meta.name, name);
+		assert.ok(meta.description?.length > 20, name);
+		assert.ok(body.length > 100, name);
+	}
+	const own = listSkillGroups().find((g) => g.source === "shiro")!;
+	for (const name of BUNDLED_SKILLS) assert.ok(own.skills.some((s) => s.name === name), name);
+	assert.ok(useSkill("pentest-informe").content.includes("Informe de pruebas de seguridad"));
+});
+
+test("copiar una habilidad a Shiro trae todos sus archivos, queda propia y no pisa la que ya está", () => {
+	withFakeHome(
+		{
+			".claude/skills/zz-copia-test/SKILL.md": "---\nname: zz-copia-test\ndescription: original\n---\nInstrucciones",
+			".claude/skills/zz-copia-test/references/guia.md": "guía",
+			".claude/skills/zz-copia-test/node_modules/x/index.js": "no se copia",
+			".claude/skills/synced/cuenta/zz-apagada-test/SKILL.md": "---\nname: zz-apagada-test\ndescription: de la app\n---\nx",
+			".codex/skills/zz-copia-test/SKILL.md": "---\nname: zz-copia-test\ndescription: otra igual\n---\ny",
+		},
+		() => {
+			// «Copiar todas» solo toma las de Claude (synced), no lo instalado de otros autores ni otras apps.
+			const results = copyAllSkillsToShiro();
+			try {
+				assert.deepEqual(
+					results.map((r) => [r.id, r.copied]),
+					[["shiro:zz-apagada-test", true]],
+				);
+				assert.equal(existsSync(join(SHIRO_SKILLS_DIR, "zz-copia-test")), false);
+				// La segunda vez ya está: no se copia nada ni se pisa.
+				assert.deepEqual(copyAllSkillsToShiro().map((r) => r.copied), [false]);
+				// Estaba apagada: la API la deja apagada con este dato.
+				assert.equal(results[0].enabled, false);
+				// Una por una sí se puede copiar cualquiera.
+				const instalada = listSkillGroups().find((g) => g.source === "claude")!.skills.find((s) => s.name === "zz-copia-test")!;
+				assert.deepEqual(copySkillToShiro(instalada.id), { id: "shiro:zz-copia-test", copied: true, enabled: instalada.enabled });
+				const dir = join(SHIRO_SKILLS_DIR, "zz-copia-test");
+				assert.ok(existsSync(join(dir, "references", "guia.md")));
+				assert.equal(existsSync(join(dir, "node_modules")), false);
+				assert.equal(readdirSync(SHIRO_SKILLS_DIR).some((n) => n.startsWith(".copiando")), false);
+				// La copia manda sobre la original, y una ya editada no se pisa.
+				const active = getEnabledSkills().filter((s) => s.name === "zz-copia-test");
+				assert.deepEqual(active.map((s) => s.source), ["shiro"]);
+				writeFileSync(join(dir, "SKILL.md"), "---\nname: zz-copia-test\ndescription: editada\n---\nmía");
+				const original = listSkillGroups().find((g) => g.source === "claude")!.skills[0];
+				assert.equal(copySkillToShiro(original.id).copied, false);
+				assert.ok(readFileSync(join(dir, "SKILL.md"), "utf-8").includes("mía"));
+				assert.throws(() => copySkillToShiro("shiro:zz-copia-test"), /ya es de Aku/);
+			} finally {
+				deleteOwnSkill("shiro:zz-copia-test");
+				deleteOwnSkill("shiro:zz-apagada-test");
+			}
+		},
+	);
+});
+
+test("use_skill entrega las habilidades largas por partes, sin perder nada", () => {
+	const line = "Paso con instrucciones importantes de la habilidad.\n";
+	const body = Array.from({ length: 500 }, (_, i) => `${i} ${line}`).join("");
+	withFakeHome(
+		{
+			".claude/skills/zz-larga-test/SKILL.md": `---\nname: zz-larga-test\ndescription: larga\n---\n${body}`,
+			".claude/skills/zz-larga-test/references/guia.md": "guía",
+		},
+		() => {
+			let offset = 0;
+			let all = "";
+			let last = "";
+			for (let i = 0; i < 20; i++) {
+				const { ok, content } = useSkill("zz-larga-test", undefined, offset);
+				assert.equal(ok, true);
+				assert.ok(content.length <= SKILL_PAGE_CHARS + 200);
+				const next = /offset=(\d+)/.exec(content);
+				last = content;
+				if (!next) break;
+				all += content.slice(0, content.indexOf("\n\n[Sigue"));
+				offset = Number(next[1]);
+			}
+			assert.ok(all.includes("0 Paso"));
+			assert.ok(last.includes("499 Paso"), "la última parte llega hasta el final");
+			// La lista de archivos va al final, para no gastar espacio en cada parte.
+			assert.ok(last.includes("references/guia.md"));
+			assert.equal(useSkill("zz-larga-test").content.includes("references/guia.md"), false);
+			assert.equal(useSkill("zz-larga-test", undefined, 10_000_000).ok, false);
+		},
+	);
+});
 
 test("lee el encabezado de un SKILL.md (comillas, bloques > y |)", () => {
 	const a = parseSkillMarkdown(`---\nname: pdf\ndescription: "Lee y crea PDFs: \\"formularios\\" incluidos"\n---\n\n# PDF\nPasos...`);

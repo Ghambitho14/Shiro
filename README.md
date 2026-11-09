@@ -53,7 +53,7 @@ Cada modelo guarda solo lo que cambies; lo demás sigue a los ajustes generales.
 Si juegas o usas otros programas que gastan la tarjeta gráfica, llama.cpp irá más lento: pulsa
 "Liberar la tarjeta ahora" o baja el contexto.
 
-## Shiro.exe (Windows)
+## Aku.exe (Windows)
 
 Para tener Shiro como un programa normal, sin abrir la terminal ni instalar Node.js en otros equipos:
 
@@ -61,16 +61,17 @@ Para tener Shiro como un programa normal, sin abrir la terminal ni instalar Node
 npm run exe
 ```
 
-Crea `dist/Shiro.exe` (~120 MB, con su icono): un solo archivo con todo Shiro dentro. Ábrelo con doble
-clic. `Shiro.exe --acceso-directo` crea además un icono en el escritorio. Para crearlo hace falta Node.js
+Crea `dist/Aku.exe` (~120 MB, con su icono): un solo archivo con todo Aku dentro (el asistente ahora se llama Aku). Ábrelo con doble
+clic. `Aku.exe --acceso-directo` crea además un icono en el escritorio. Para crearlo hace falta Node.js
 25.5 o más nuevo; para usarlo, nada (el modelo sí: Ollama, LM Studio o uno en la nube).
 
 - **Tus datos no van dentro del .exe**. Si al lado del .exe hay una carpeta `data`, usa esa (copia ahí la
   `data` de este proyecto para llevarte tu configuración y tus chats). Si no, usa `%APPDATA%\Shiro` y la
   primera vez sale la bienvenida.
-- **Instalador**: `npm run instalador` crea `dist/ShiroSetup-<versión>.exe` (~30 MB). Instala Shiro para tu
+- **Instalador**: `npm run instalador` crea `dist/AkuSetup-<versión>.exe` (~30 MB). Instala Aku para tu
   usuario (sin permisos de administrador) con icono en el menú Inicio (y en el escritorio si lo marcas), y se
-  desinstala desde Configuración → Aplicaciones (tus datos en `%APPDATA%\Shiro` se quedan). Hace falta
+  desinstala desde Configuración → Aplicaciones (tus datos en `%APPDATA%\Shiro` se quedan: la carpeta conserva
+  el nombre de antes). Si tenías instalado Shiro, el instalador de Aku lo reemplaza y quita sus accesos directos. Hace falta
   [Inno Setup 6](https://jrsoftware.org/isinfo.php): `winget install --id JRSoftware.InnoSetup -e --scope user`.
 - Si ya tienes otro Shiro abierto (por ejemplo `npm run dev`, con tus datos del proyecto), el .exe no lo usa:
   abre el suyo en otro puerto (1407…).
@@ -79,7 +80,7 @@ clic. `Shiro.exe --acceso-directo` crea además un icono en el escritorio. Para 
 - Para actualizarlo, vuelve a ejecutar `npm run exe` (con Shiro cerrado) y reemplaza el .exe.
 - Si lo pasas a otro PC, Windows puede avisar "Windows protegió su PC" porque el .exe no está firmado:
   **Más información → Ejecutar de todas formas**.
-- También sirve para lo demás: `Shiro.exe tui`, `Shiro.exe mcp` (OpenCode), `Shiro.exe --help`.
+- También sirve para lo demás: `Aku.exe tui`, `Aku.exe mcp` (OpenCode), `Aku.exe --help`.
 
 ## La aplicación
 
@@ -162,8 +163,17 @@ herramientas, Shiro cambia solo a "modo texto".
 Instrucciones especializadas (carpetas con un `SKILL.md`, el mismo formato que Claude Code,
 Codex u OpenCode). En **Ajustes → Habilidades**:
 
-- **Habilidades de Shiro**: crea las tuyas ("cómo resumir mis correos", "cómo escribo los
-  informes"…), importa un `SKILL.md` o copia carpetas en `data/workspace/skills`.
+- **Habilidades de Shiro**: trae cinco de serie (investigar en internet, buscar en el PC y tres de
+  pentesting autorizado) que funcionan sin ninguna otra aplicación. Crea las tuyas ("cómo resumir
+  mis correos", "cómo escribo los informes"…), importa un `SKILL.md` o copia carpetas en
+  `data/workspace/skills`. Las de serie no se pisan si las cambias; si borras una vuelve al
+  arrancar, así que para quitarla apágala.
+- **Copiar a Shiro**: cada habilidad de otra aplicación tiene un botón que la copia con todos sus
+  archivos y la hace propia. «Agregar habilidad» → «Copiar todas las de Claude» copia de una vez
+  las que vienen con tu cuenta de Claude (`~/.claude/skills/synced`), apagadas hasta que enciendas
+  las que quieras. Quedan en `data/` de este equipo, siguen funcionando aunque desinstales esa
+  aplicación y no se actualizan si cambia la original. Algunas necesitan programas o herramientas
+  que Shiro no trae.
 - **Usar habilidades de otras aplicaciones**: Shiro encuentra solo las que tengas en Claude Code
   (`~/.claude/skills`), otros agentes (`~/.agents/skills`), Codex, GitHub Copilot, OpenCode y
   LM Studio, y las usa sin que tengas que activar nada. Cada aplicación tiene su interruptor; toca

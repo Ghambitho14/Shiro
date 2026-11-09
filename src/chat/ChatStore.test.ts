@@ -45,6 +45,16 @@ test("sanitizeMessages guarda los tokens gastados solo en respuestas del asisten
 	assert.equal(bad.usage, undefined);
 });
 
+test("sanitizeMessages guarda el medidor de contexto solo en respuestas del asistente", () => {
+	const context = { used: 6100, limit: 40960, exact: true, parts: [{ id: "messages", tokens: 6100 }], sent: 4, total: 4 };
+	const [user, ok] = sanitizeMessages([
+		{ role: "user", content: "hola", context },
+		{ role: "assistant", content: "hola", context },
+	]);
+	assert.equal(user.context, undefined);
+	assert.deepEqual(ok.context, context);
+});
+
 test("sanitizeMessages guarda el modo del usuario y descarta valores inválidos", () => {
 	const out = sanitizeMessages([
 		{ role: "user", content: "pentest", mode: "hacking" },
@@ -56,7 +66,8 @@ test("sanitizeMessages guarda el modo del usuario y descarta valores inválidos"
 	]);
 	assert.deepEqual(out, [
 		{ role: "user", content: "pentest", mode: "hacking" },
-		{ role: "user", content: "programa", mode: "code" },
+		// El antiguo modo Code ahora es CodeHacking.
+		{ role: "user", content: "programa", mode: "hacking" },
 		{ role: "assistant", content: "respuesta" },
 		{ role: "user", content: "modo inventado" },
 		{ role: "user", content: "chat viejo" },

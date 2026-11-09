@@ -21,6 +21,8 @@ export type CatalogModel = {
 	temperature: boolean;
 	/** Máximo de tokens que puede escribir en una respuesta. */
 	output?: number;
+	/** Tamaño de su contexto (medidor de la caja de escribir). */
+	context?: number;
 	deprecated: boolean;
 };
 
@@ -46,7 +48,7 @@ type RawModel = {
 	status?: unknown;
 	temperature?: unknown;
 	modalities?: { input?: unknown };
-	limit?: { output?: unknown };
+	limit?: { output?: unknown; context?: unknown };
 	provider?: { npm?: unknown };
 };
 
@@ -63,12 +65,14 @@ export function extractCatalog(raw: unknown, now = Date.now()): Catalog {
 			const npm = String(m.provider?.npm ?? provider.npm ?? "");
 			const inputs = Array.isArray(m.modalities?.input) ? m.modalities.input : [];
 			const output = Number(m.limit?.output);
+			const context = Number(m.limit?.context);
 			models[modelId] = {
 				name: typeof m.name === "string" && m.name.trim() ? m.name.trim() : modelId,
 				api: NPM_API[npm] ?? "chat",
 				vision: inputs.includes("image"),
 				temperature: m.temperature !== false,
 				...(Number.isFinite(output) && output > 0 ? { output } : {}),
+				...(Number.isFinite(context) && context > 0 ? { context } : {}),
 				deprecated: m.status === "deprecated",
 			};
 		}

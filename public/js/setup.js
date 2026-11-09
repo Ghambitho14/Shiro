@@ -53,12 +53,12 @@ const KINDS = [
 	{
 		value: "local",
 		title: "En este equipo",
-		text: "Lo más sencillo: todo queda en la carpeta de Shiro de este ordenador.",
+		text: "Lo más sencillo: todo queda en la carpeta de Aku de este ordenador.",
 	},
 	{
 		value: "obsidian",
 		title: "En Obsidian",
-		text: "Tus chats, recuerdos y recordatorios se guardan como notas en la carpeta Shiro de tu bóveda: esa carpeta es la memoria de Shiro.",
+		text: "Tus chats, recuerdos y recordatorios se guardan como notas en la carpeta Shiro de tu bóveda: esa carpeta es la memoria de Aku.",
 	},
 	{
 		value: "supabase",
@@ -90,11 +90,11 @@ export async function mountStorageForm(container, { settings = false, onSaved } 
 		</div>
 		<div class="storage-detail" data-for="obsidian">
 			<label class="field vault-pick" hidden><span>Tus bóvedas de Obsidian</span><select class="select"></select></label>
-			<label class="field"><span>Carpeta de la bóveda</span><input class="input mono" data-f="vault" placeholder="C:\\Users\\tu-nombre\\Documents\\Mi bóveda" /><small>Shiro crea dentro una carpeta <b>Shiro</b> con tus chats, recuerdos, recordatorios, tus agentes y todo lo que lee en cada respuesta (SOUL.md, MEMORY.md, Sobre mí.md…). Las claves y los ajustes del modelo se quedan en este equipo.</small></label>
+			<label class="field"><span>Carpeta de la bóveda</span><input class="input mono" data-f="vault" placeholder="C:\\Users\\tu-nombre\\Documents\\Mi bóveda" /><small>Aku crea dentro una carpeta <b>Shiro</b> con tus chats, recuerdos, recordatorios, tus agentes y todo lo que lee en cada respuesta (SOUL.md, MEMORY.md, Sobre mí.md…). Las claves y los ajustes del modelo se quedan en este equipo.</small></label>
 			${
 				settings
 					? `<div class="rebuild-row" hidden>
-				<p class="set-desc">¿Borraste o moviste algo de la carpeta Shiro? <b>Rehacer la estructura</b> vuelve a crear lo que falte con la copia de seguridad que Shiro guarda en este equipo (<code class="mono"></code>). No cambia ni borra nada de lo que ya hay.</p>
+				<p class="set-desc">¿Borraste o moviste algo de la carpeta Shiro? <b>Rehacer la estructura</b> vuelve a crear lo que falte con la copia de seguridad que Aku guarda en este equipo (<code class="mono"></code>). No cambia ni borra nada de lo que ya hay.</p>
 				<div class="actions-row"><button type="button" class="btn sm" data-a="rebuild">Rehacer la estructura</button></div>
 			</div>`
 					: ""
@@ -104,7 +104,7 @@ export async function mountStorageForm(container, { settings = false, onSaved } 
 			<label class="field"><span>Dirección del proyecto</span><input class="input mono" data-f="url" placeholder="https://xxxx.supabase.co" /></label>
 			<label class="field"><span>Clave secreta (service_role)</span><input class="input mono" data-f="key" type="password" autocomplete="off" /><small>Supabase → Project Settings → API Keys. Se guarda solo en este equipo: no se envía al navegador ni a nadie más.</small></label>
 			<details class="sql-box">
-				<summary>1.º Crea las tablas de Shiro (una vez por proyecto)</summary>
+				<summary>1.º Crea las tablas de Aku (una vez por proyecto)</summary>
 				<p class="set-desc">Copia esto, pégalo en Supabase → <b>SQL Editor</b> y pulsa <b>Run</b>.</p>
 				<textarea class="textarea mono" readonly rows="8"></textarea>
 				<div class="actions-row"><button type="button" class="btn sm" data-a="copy-sql">${icon("copy", "sm")}Copiar SQL</button></div>
@@ -184,7 +184,7 @@ export async function mountStorageForm(container, { settings = false, onSaved } 
 		try {
 			const r = await api("/api/storage/test", { method: "POST", json: payload() });
 			if (!r.ok) return showError(r.error, r.missingTables);
-			notice(result, r.warning ? "warn" : "ok", r.warning || "Todo bien: Shiro puede guardar ahí.");
+			notice(result, r.warning ? "warn" : "ok", r.warning || "Todo bien: Aku puede guardar ahí.");
 		} catch (err) {
 			notice(result, "bad", err.message);
 		}
@@ -308,7 +308,7 @@ export async function openSetup({ firstRun = false } = {}) {
 	f("language").value = profile.language || "Español";
 	f("about").value = profile.about || "";
 	f("extra").value = profile.extra || "";
-	f("assistantName").value = settings.assistantName || "Shiro";
+	f("assistantName").value = settings.assistantName || "Aku";
 
 	const storageForm = await mountStorageForm($('[data-mount="storage"]', d));
 	const modelForm = mountModelForm($('[data-mount="model"]', d), { llm, toast: ctx.toast });
@@ -336,7 +336,7 @@ export async function openSetup({ firstRun = false } = {}) {
 		notice(errorBox, null);
 		if (id === "done") {
 			const who = f("userName").value.trim();
-			const me = f("assistantName").value.trim() || "Shiro";
+			const me = f("assistantName").value.trim() || "Aku";
 			$('[data-step="done"] h2', d).textContent = `¡Listo, ${who}! Soy ${me}.`;
 			const items = [
 				`Te llamaré <b></b>.`,
@@ -379,7 +379,7 @@ export async function openSetup({ firstRun = false } = {}) {
 				});
 			}
 			if (id === "assistant") {
-				await api("/api/settings", { method: "PUT", json: { assistantName: f("assistantName").value.trim() || "Shiro" } });
+				await api("/api/settings", { method: "PUT", json: { assistantName: f("assistantName").value.trim() || "Aku" } });
 			}
 			if (id === "storage") return await storageForm.save();
 			if (id === "model") await modelForm.save();

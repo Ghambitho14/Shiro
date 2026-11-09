@@ -25,7 +25,7 @@ export function ptyPackageDir(): string {
 function extractFromExe(): string {
 	const prefix = `${ptyPackageDir()}/`;
 	const manifest = readAppFile(`${prefix}package.json`);
-	if (!manifest) throw new Error(`Este Shiro.exe no trae la consola para ${process.platform}-${process.arch}.`);
+	if (!manifest) throw new Error(`Este Aku.exe no trae la consola para ${process.platform}-${process.arch}.`);
 	const { version } = JSON.parse(manifest.toString("utf-8")) as { version?: string };
 	const dir = join(DATA_DIR, "cache", `node-pty-${version ?? "0"}`);
 	const done = join(dir, ".completo");

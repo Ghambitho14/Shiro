@@ -26,6 +26,18 @@ test("Modo ahorro: «sí, hazlo» mantiene las herramientas de los mensajes ante
 	assert.ok(selectToolsByIntent(ALL, ["sí, hazlo", "¿Puedes cerrar la ventana del Bloc de notas?"]).includes("pc_windows"));
 });
 
+test("Modo ahorro: entiende otras formas de pedir el sonido", () => {
+	for (const pedido of ["Sube el sonido", "silencia esto", "pausa la canción", "dale play"]) {
+		assert.ok(selectToolsByIntent(ALL, [pedido]).includes("pc_media"), pedido);
+	}
+});
+
+test("Modo ahorro: la terminal está aunque el mensaje no traiga una palabra clave", () => {
+	assert.ok(selectToolsByIntent(ALL, ["Encuentra mi factura"]).includes("terminal"));
+	// Si el control del PC está apagado, `resolveTools` ya la quitó: no vuelve por estar en ALWAYS.
+	assert.ok(!selectToolsByIntent(["search_web", "use_skill"], ["Encuentra mi factura"]).includes("terminal"));
+});
+
 test("Modo ahorro: nunca deja la lista vacía", () => {
 	assert.deepEqual(selectToolsByIntent(["pc_open"], ["hola"]), ["pc_open"]);
 	assert.deepEqual(selectToolsByIntent([], ["hola"]), []);

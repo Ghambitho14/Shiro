@@ -3,6 +3,7 @@ import { getSoul, renderSystemPrompt, withAbilities } from "../soul/soul.js";
 import { buildSkillsBlock, type Skill } from "../skills/SkillLoader.js";
 import { getConfig } from "../../config/config.js";
 import type { ChatMode } from "./chatMode.js";
+import type { PromptSections } from "./contextUsage.js";
 
 export type UserProfileInput = {
 	userName?: string;
@@ -40,6 +41,8 @@ export type ContextInput = {
 	persona?: PersonaContext;
 	/** Sala con varios agentes. */
 	room?: RoomContext;
+	/** Resumen de «Cerrar conversación»: lo anterior de este chat ya no se manda entero. */
+	chatSummary?: string;
 	/** Es un ayudante creado con `delegate` por `boss`. */
 	subagent?: { boss: string };
 	/** Tiene `delegate`: los agentes de Ajustes → Agentes a los que puede encargar tareas. */
@@ -131,13 +134,18 @@ function osName(): string {
 	return "Linux";
 }
 
-export function buildPcControlBlock(vision: boolean): string {
+export function buildPcControlBlock(vision: boolean, windows = process.platform === "win32"): string {
+	// Fuera de Windows no existen las de teclado, ratón, volumen, ventanas ni capturas (WINDOWS_ONLY_TOOLS).
+	const windowsOnly = windows
+		? `
+- Volumen y música: pc_media. Ventanas: pc_windows.
+- Escribir o pulsar teclas: pc_keyboard, indicando siempre la ventana ("window") para no escribir en el sitio equivocado.
+- ${vision ? "Para ver la pantalla usa pc_screenshot; para hacer clic, pc_mouse con coordenadas de esa captura." : "Tu modelo no ve imágenes: para saber qué hay abierto usa pc_windows (action=list)."}`
+		: "";
 	return `## Control del PC
 Puedes manejar el PC del usuario (${osName()}) con las herramientas pc_*:
 - Abrir apps, webs, carpetas o archivos: pc_open. Para poner música o vídeos abre la búsqueda en YouTube o Spotify.
-- Volumen y música: pc_media. Ventanas: pc_windows. Estado del equipo: pc_system.
-- Escribir o pulsar teclas: pc_keyboard, indicando siempre la ventana ("window") para no escribir en el sitio equivocado.
-- ${vision ? "Para ver la pantalla usa pc_screenshot; para hacer clic, pc_mouse con coordenadas de esa captura." : "Tu modelo no ve imágenes: para saber qué hay abierto usa pc_windows (action=list)."}
+- Estado del equipo: pc_system.${windowsOnly}
 - Tienes tu propio navegador (tool browser, el usuario lo ve en el panel "Navegador"). Úsalo si el usuario dice "tu navegador" o "en el panel", o cuando tengas que hacer algo tú en una web (buscar, leer, rellenar formularios). Empieza con action=open; la respuesta trae la página con elementos numerados [n]: usa ese número como ref en click o type. pc_open abre las webs en el navegador normal del usuario: úsalo para música o vídeos que quiere ver u oír él.
 - Terminal compartida con el usuario (tool terminal, panel "Terminal"): action=read para ver lo que hay en pantalla; action=run para ejecutar un comando a su vista; action=write para teclear en un programa abierto.
 - Haz la acción directamente y confirma en una frase lo que hiciste. Si algo falla, explica qué pasó.
@@ -151,27 +159,37 @@ Investiga y prepara un plan útil antes de tocar nada. Puedes leer archivos y pr
 - Señala riesgos, decisiones y lo que falte por aclarar. Pregunta solo si una duda impide hacer un plan razonable.
 - No implementes el plan mientras planeas, aunque te lo pidan. Explica que para ejecutarlo hay que cambiar el botón de permisos del chat de «Planear» a «Preguntar» o «Automático» y pedírtelo.`;
 
-export const CODE_BLOCK = `## Modo Code (programación)
-Ayuda a entender, modificar y comprobar código con las herramientas de proyecto, archivos, Git y terminal.
+/** Lo que vale siempre en pruebas de seguridad, también al planear (ver HACKING_PLAN_BLOCK). */
+const HACKING_SCOPE = `Las pruebas de seguridad son SOLO sobre sistemas del usuario o con permiso explícito (su VPS, sus dominios e IPs).
+- Antes de escanear o probar algo, confirma que el objetivo es del usuario o está autorizado. Si no está claro cuál es el objetivo o hasta dónde llega el permiso, pregúntaselo antes de lanzar nada.
+- Metodología: 1) reconocimiento (puertos, servicios, versiones), 2) enumeración (rutas, usuarios, configuración), 3) vulnerabilidades (relaciona cada versión con sus CVE usando la tool cve_search), 4) verificación con cuidado, 5) informe.
+- Nunca ataques sistemas de terceros, ni hagas denegación de servicio, ni automatices ataques masivos. Si te piden algo contra un sistema que no es del usuario ni está autorizado, recuérdaselo y no lo hagas.`;
+
+/**
+ * Modo CodeHacking: programar y hacer pruebas de seguridad autorizadas. El usuario lo activa a
+ * propósito con el interruptor de la barra superior. Deja claro el alcance (solo lo suyo o
+ * autorizado) y cómo trabajar en cada caso. Las reglas de seguridad y permisos siguen vigentes.
+ */
+export const HACKING_BLOCK = `## Modo CodeHacking (programación y pentesting autorizado)
+Ayudas al usuario a programar y a probar la seguridad de sus sistemas.
+
+### Programar
 - Antes de cambiar algo, lee el código y sus pruebas relacionadas. Haz cambios pequeños y acordes con el estilo existente.
 - No cambies comportamiento ni archivos que no hagan falta. No hagas commits, pushes ni operaciones Git con efectos si el usuario no los pidió claramente.
 - Ejecuta las comprobaciones relevantes cuando puedas y mira su salida. Nunca digas que algo funciona o que una prueba pasó sin haberla ejecutado.
 - Si no hay un proyecto con carpeta vinculada, puedes explicar código o trabajar en el workspace, pero pide que vinculen la carpeta cuando necesites modificar su programa.
-- Termina con un resumen sencillo: qué cambiaste, dónde y cómo lo comprobaste. Si algo falló o quedó pendiente, dilo claro.`;
+- Termina con un resumen sencillo: qué cambiaste, dónde y cómo lo comprobaste. Si algo falló o quedó pendiente, dilo claro.
 
-/**
- * Modo CodeHacking: pruebas de seguridad autorizadas. El usuario lo activa a propósito con el
- * interruptor de la barra superior. Deja claro el alcance (solo lo suyo o autorizado), la
- * metodología y que el informe va en español. Las reglas de seguridad y permisos siguen vigentes.
- */
-export const HACKING_BLOCK = `## Modo CodeHacking (pentesting autorizado)
-Eres un asistente de pruebas de seguridad (pentester) del usuario. Trabajas SOLO sobre sistemas suyos o con permiso explícito (su VPS, sus dominios e IPs).
-- Antes de escanear o probar algo, confirma que el objetivo es del usuario o está autorizado. Si no está claro cuál es el objetivo o hasta dónde llega el permiso, pregúntaselo antes de lanzar nada.
-- Corres sobre Kali Linux: en la terminal (tool terminal, action=run) tienes sus herramientas (nmap, nikto, whatweb, gobuster, sqlmap, nuclei, etc.). Úsalas ahí para que el usuario vea la salida en vivo; los comandos que atacan o cambian cosas le piden permiso.
-- Metodología: 1) reconocimiento (puertos, servicios, versiones), 2) enumeración (rutas, usuarios, configuración), 3) vulnerabilidades (relaciona cada versión con sus CVE usando la tool cve_search), 4) verificación con cuidado, 5) informe.
+### Pruebas de seguridad
+${HACKING_SCOPE}
+- Usa la terminal (tool terminal, action=run) para que el usuario vea la salida en vivo; los comandos que atacan o cambian cosas le piden permiso. Comprueba antes que la herramienta esté instalada (nmap, nikto, whatweb, gobuster, sqlmap, nuclei…): en Kali vienen casi todas, en otros equipos quizá no. Si falta, dilo; nunca inventes resultados.
 - Usa el navegador (tool browser) para revisar las webs del objetivo, y fetch_url/search_web para documentación. cve_search busca por CVE-ID o por producto (vendor + product).
-- Informe final en español claro (el usuario no es programador): qué probaste, qué encontraste, qué riesgo tiene y cómo arreglarlo, ordenado por gravedad.
-- Nunca ataques sistemas de terceros, ni hagas denegación de servicio, ni automatices ataques masivos. Si te piden algo contra un sistema que no es del usuario ni está autorizado, recuérdaselo y no lo hagas.`;
+- Informe final en español claro (el usuario no es programador): qué probaste, qué encontraste, qué riesgo tiene y cómo arreglarlo, ordenado por gravedad.`;
+
+/** Al planear en CodeHacking: conserva el alcance y la metodología, sin poder ejecutar nada. */
+export const HACKING_PLAN_BLOCK = `## Planear en CodeHacking
+Si el plan es de programación, nombra archivos y pruebas. Si es de seguridad, propón qué comandos correrías y en qué orden, sin lanzarlos.
+${HACKING_SCOPE}`;
 
 export const VOICE_BLOCK = `## Modo voz
 El usuario te habla por voz y tu respuesta se leerá en voz alta:
@@ -190,13 +208,15 @@ export const SAFETY_BLOCK = `## Seguridad
 
 /** Espacio para SOUL.md, TOOLS.md y la memoria (Ajustes → Personalización avisa si se pasan). */
 export const WORKSPACE_MAX_CHARS = 8000;
+/** Tope del resumen de «Cerrar conversación» en el system prompt. */
+export const CHAT_SUMMARY_MAX_CHARS = 6000;
 
 /**
  * Prioridad: SOUL > perfil > proyecto > workspace (con la memoria) > skills. La conversación va aparte, como mensajes.
  * Las herramientas no se listan aquí: van por la API del modelo (o por textTools en modo texto),
  * así no se envían dos veces y se ahorra contexto en modelos locales.
  */
-export function buildContext(input: ContextInput): { system: string; messages: Message[] } {
+export function buildContext(input: ContextInput): { system: string; messages: Message[]; sections: PromptSections } {
 	const approxCharsPerToken = 4;
 	const budgetChars = Math.floor(input.tokenBudget * approxCharsPerToken);
 
@@ -209,15 +229,12 @@ export function buildContext(input: ContextInput): { system: string; messages: M
 	const roomBlock = input.room ? "\n\n" + buildRoomBlock(input.room) : "";
 	const pcBlock = input.pcControl && !textOnly ? "\n\n" + buildPcControlBlock(input.vision === true) : "";
 	const voiceBlock = input.voice ? "\n\n" + VOICE_BLOCK : "";
-	// Al planear, el bloque del modo diría que puede cambiar cosas: se sustituye.
-	const modeBlock =
-		input.planning
-			? "\n\n" + PLAN_BLOCK
-			: input.mode === "code"
-				? "\n\n" + CODE_BLOCK
-				: input.mode === "hacking" && !textOnly
-					? "\n\n" + HACKING_BLOCK
-					: "";
+	// Al planear, el bloque del modo diría que puede cambiar cosas: se sustituye, sin perder el alcance de CodeHacking.
+	const modeBlock = input.planning
+		? "\n\n" + PLAN_BLOCK + (input.mode === "hacking" ? "\n\n" + HACKING_PLAN_BLOCK : "")
+		: input.mode === "hacking" && !textOnly
+			? "\n\n" + HACKING_BLOCK
+			: "";
 	const safetyBlock = textOnly ? "" : "\n\n" + SAFETY_BLOCK;
 	const teamBlock = input.subagent
 		? "\n\n" + buildSubagentBlock(input.subagent.boss)
@@ -247,6 +264,11 @@ export function buildContext(input: ContextInput): { system: string; messages: M
 		projectBlock = buildProjectBlock(input.project, Math.max(1500, Math.min(remaining - 1500, 12000)));
 		remaining -= projectBlock.length;
 	}
+	const summaryText = input.chatSummary?.trim().slice(0, CHAT_SUMMARY_MAX_CHARS);
+	const summaryBlock = summaryText
+		? `\n\n## Lo que ya se habló en este chat\nEl usuario cerró antes esta conversación y quedó resumida así (los mensajes de antes ya no los ves enteros). Úsalo para seguir donde quedó:\n${summaryText}`
+		: "";
+	remaining -= summaryBlock.length;
 	const workspaceBlock = input.workspaceContext
 		? `## Contexto workspace\n${input.workspaceContext.slice(0, Math.min(remaining, WORKSPACE_MAX_CHARS))}`
 		: "";
@@ -274,6 +296,7 @@ export function buildContext(input: ContextInput): { system: string; messages: M
 		safetyBlock +
 		voiceBlock +
 		userBlock +
+		summaryBlock +
 		(projectBlock ? "\n\n" + projectBlock : "") +
 		(workspaceBlock ? "\n\n" + workspaceBlock : "") +
 		(skillsBlock ? "\n\n" + skillsBlock : "") +
@@ -282,5 +305,10 @@ export function buildContext(input: ContextInput): { system: string; messages: M
 	// Conversación simple: solo el mensaje del usuario. Modo acción: el goal tal cual.
 	const userContent = input.goal;
 	const messages: Message[] = [{ role: "user", content: userContent }];
-	return { system, messages };
+	// Para el medidor de contexto: cuánto ocupa cada parte (las instrucciones son el resto, así suman justo).
+	const memory = userBlock.length + summaryBlock.length + (workspaceBlock ? workspaceBlock.length + 2 : 0);
+	const project = projectBlock ? projectBlock.length + 2 : 0;
+	const skills = (skillsBlock ? skillsBlock.length + 2 : 0) + (forcedBlock ? forcedBlock.length + 2 : 0);
+	const sections: PromptSections = { instructions: system.length - memory - project - skills, memory, project, skills };
+	return { system, messages, sections };
 }

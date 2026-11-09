@@ -5,7 +5,7 @@ import { isShiroUrl } from "../../browser/pageModel.js";
  * (o alguien por WhatsApp) no puede hacer que el modelo lea tus chats o claves de 127.0.0.1,
  * ni siquiera con una redirección.
  */
-export const FETCH_USER_AGENT = "Shiro/1.0 (AI agent)";
+export const FETCH_USER_AGENT = "Aku/1.0 (AI agent)";
 
 const FETCH_TIMEOUT_MS = 15000;
 /** Lo que se descarga como mucho; de una página más grande se usa el principio. */
@@ -88,7 +88,7 @@ export async function executeFetchUrl(args: Record<string, unknown>): Promise<{ 
 	if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
 		return { ok: false, content: "Solo se permiten URLs http o https" };
 	}
-	if (isShiroUrl(parsed.href)) return { ok: false, content: "La web de Shiro no se lee con fetch_url." };
+	if (isShiroUrl(parsed.href)) return { ok: false, content: "La web de Aku no se lee con fetch_url." };
 
 	const controller = new AbortController();
 	const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);

@@ -1,6 +1,6 @@
 import type { Message, ContentPart } from "./Types.js";
 import { getMessagePreview } from "./contentUtils.js";
-import { LLMError, type LLMClient, type TokenUsage } from "../llm/LLMClient.js";
+import { LLMError, type LLMClient, type TokenUsage, type ToolDef } from "../llm/LLMClient.js";
 import { buildContext } from "./ContextBuilder.js";
 import { readFileSync } from "node:fs";
 import {
@@ -10,6 +10,7 @@ import {
 	getToolsDefinitionScoped,
 	LITE_TOOLS,
 	PC_TOOLS,
+	WINDOWS_ONLY_TOOLS,
 } from "../tools/ToolRegistry.js";
 import { activeModelTuning, modelSupportsVision, PROVIDER_PRESETS, resolveLLMSettings, saverOn, type ModelRef } from "../llm/providers.js";
 import { selectToolsByIntent } from "./toolIntent.js";
@@ -22,7 +23,10 @@ import { getConfig } from "../../config/config.js";
 import { runWithApprover, type Approver } from "../tools/approval.js";
 import { mcpManager } from "../mcp/McpManager.js";
 import { getEnabledSkills, getSkillInstructions } from "../skills/SkillLoader.js";
-import { getProject, inlineProjectText, projectIndex, runWithProject } from "../projects/projects.js";
+import { getProject, inlineProjectText, projectIndex, runWithProject, type Project } from "../projects/projects.js";
+import { measureContext, type ContextReport, type PromptSections } from "./contextUsage.js";
+import { contextLimit } from "../llm/contextLimit.js";
+import { normalizeToolResult } from "../llm/toolRuntime.js";
 import { claudeCodeLauncher } from "../claudeCode/claudeCode.js";
 import { loadAgents } from "../agents/registry.js";
 import { runWithAgentContext, type AgentRunContext } from "./runContext.js";
@@ -60,6 +64,8 @@ export type AgentOptions = {
 	onStreamDelta?: (chunk: string) => void;
 	/** Tokens que gasta cada vuelta con el modelo (para mostrar cuánto costó la respuesta). */
 	onUsage?: (usage: TokenUsage) => void;
+	/** Al terminar: cuánto contexto del modelo ocupó la respuesta y en qué (medidor de la web). */
+	onContext?: (report: ContextReport) => void;
 	/**
 	 * Quién aprueba las acciones peligrosas (exec, escribir archivos…).
 	 * Sin approver, con approvalMode "ask" esas acciones se bloquean.
@@ -89,12 +95,16 @@ export type AgentOptions = {
 	persona?: PersonaContext;
 	/** Sala con varios agentes: quién está y cómo llegan los mensajes de los demás. */
 	room?: RoomContext;
+	/** Resumen de «Cerrar conversación» (`compactConversation`): `conversation` ya trae solo lo de después. */
+	chatSummary?: string;
 	/** Es un ayudante creado con `delegate`: hace su tarea y no puede crear otros. */
 	subagent?: { boss: string };
 };
 
 /** Veces que se permite repetir exactamente la misma llamada (nombre + args) en una respuesta. */
 const MAX_IDENTICAL_TOOL_CALLS = 2;
+/** Lo que ocupa una captura en el contexto, en letras (≈800 tokens, como en historyBudget). */
+const IMAGE_CHARS = 2800;
 
 /** Mensaje para el usuario cuando el modelo falla: dice qué pasó en vez de ocultarlo. */
 function describeFailure(err: unknown): string {
@@ -118,7 +128,7 @@ export function resolveTools(
 ): string[] | undefined {
 	let tools = requested;
 	// Ajustes → Modelo: cada modelo puede tener su perfil (pocas o todas las herramientas).
-	// Code y Planear ya son listas cortas y elegidas a propósito: no se vuelven a recortar.
+	// CodeHacking y Planear ya son listas elegidas a propósito: no se vuelven a recortar.
 	const profile = activeModelTuning(ref).toolProfile;
 	const lite = mode === "chat" && !planning && (profile === "lite" || (profile === "auto" && localModel));
 	if (lite) {
@@ -126,11 +136,15 @@ export function resolveTools(
 	}
 	// El control del PC solo se ofrece donde se puede pedir permiso al usuario (web, terminal).
 	// En WhatsApp, Telegram o tareas programadas cualquiera que escriba podría abrir cosas o mirar la pantalla.
-	// Code y CodeHacking se activan a propósito: conservan su terminal (cada comando sigue pidiendo
+	// CodeHacking se activa a propósito: conserva su terminal (cada comando sigue pidiendo
 	// permiso), pero solo donde hay approver (canAskUser).
-	const stripPc = !canAskUser || (!getConfig().pcControl && mode !== "code" && mode !== "hacking");
+	const stripPc = !canAskUser || (!getConfig().pcControl && mode !== "hacking");
 	if (stripPc) {
 		tools = (tools ?? getAllToolNames()).filter((t) => !PC_TOOLS.includes(t));
+	}
+	// En Linux (Kali, Docker) estas fallarían siempre: mejor que el modelo no las vea.
+	if (process.platform !== "win32") {
+		tools = (tools ?? getAllToolNames()).filter((t) => !WINDOWS_ONLY_TOOLS.includes(t));
 	}
 	// Las de los servidores MCP las eligió el usuario (también con modelos locales), pero pueden
 	// tener efectos: igual que el control del PC, solo donde se le puede pedir permiso. Nunca al planear.
@@ -168,23 +182,29 @@ function trimToBudget(history: Message[], fixedChars: number, ref?: ModelRef): M
 	return kept;
 }
 
-export async function runAgent(goal: string, opts: AgentOptions, workspaceContext?: string): Promise<string> {
-	const {
-		llm,
-		agentName,
-		tokenBudget = 8000,
-		allowedTools,
-		explainMode = "off",
-		conversation,
-		userProfile,
-		onStreamDelta,
-		onUsage,
-		approver,
-		onToolEvent,
-		signal,
-		voice = false,
-		sessionId,
-	} = opts;
+/** Todo lo que se le manda al modelo en una respuesta, ya armado (sin llamarlo todavía). */
+type PreparedRun = {
+	mode: ChatMode;
+	permissions: PermissionMode;
+	planning: boolean;
+	ref: ModelRef | undefined;
+	effectiveTools: string[] | undefined;
+	textOnly: boolean;
+	saverLimits: boolean;
+	vision: boolean;
+	project: Project | undefined;
+	effectiveExplainMode: "off" | "brief" | "on";
+	toolsDef: ToolDef[];
+	fullMessages: Message[];
+	/** Para el medidor de contexto: lo que ocupa cada parte de las instrucciones. */
+	sections: PromptSections;
+	/** La conversación que se envía (ya recortada) y cuántos mensajes tiene el chat. */
+	sentMessages: Message[];
+	totalMessages: number;
+};
+
+async function prepareRun(goal: string, opts: AgentOptions, workspaceContext?: string): Promise<PreparedRun> {
+	const { llm, agentName, tokenBudget = 8000, allowedTools, explainMode = "off", conversation, userProfile, approver, voice = false } = opts;
 
 	const mode = opts.mode ?? "chat";
 	const permissions = opts.permissions ?? "ask";
@@ -218,9 +238,10 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 	if (opts.subagent && (effectiveTools ?? getAllToolNames()).includes("delegate")) {
 		effectiveTools = (effectiveTools ?? getAllToolNames()).filter((t) => t !== "delegate");
 	}
-	// Modo ahorro: solo en Chat. Code, CodeHacking y Planear ya tienen listas cortas y completas
-	// para su tarea; quitarles herramientas por palabras clave los dejaría cojos a mitad de trabajo.
-	if (saverOn(ref) && opts.textOnly !== true && mode === "chat" && !planning) {
+	// Modo ahorro: solo en Chat. CodeHacking y Planear ya tienen listas completas para su tarea;
+	// quitarles herramientas por palabras clave o limitar sus pasos los dejaría cojos a mitad de trabajo.
+	const saverLimits = mode === "chat" && !planning;
+	if (saverOn(ref) && opts.textOnly !== true && saverLimits) {
 		const before = effectiveTools ?? getAllToolNames();
 		if (before.length) {
 			effectiveTools = selectToolsByIntent(before, intentTexts(goal, conversation));
@@ -250,7 +271,7 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 			}
 		: undefined;
 
-	const { system, messages } = buildContext({
+	const { system, messages, sections } = buildContext({
 		goal,
 		agentName,
 		tokenBudget,
@@ -267,6 +288,7 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 		project: projectContext,
 		persona: opts.persona,
 		room: opts.room,
+		chatSummary: opts.chatSummary,
 		subagent: opts.subagent,
 		// El jefe sabe a qué agentes de Ajustes → Agentes puede encargar tareas.
 		helpers:
@@ -291,13 +313,82 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 	// Solo se manda la parte del chat que cabe en el presupuesto (Ajustes → Modelo → "Conversación
 	// que se envía"): cada vuelta con herramientas reenvía todo, y un chat largo gasta muchísimo.
 	const sentHistory = history.length ? trimToBudget(history, system.length + JSON.stringify(toolsDef ?? []).length, ref) : history;
-	const fullMessages: Message[] = [{ role: "system", content: system }, ...(sentHistory.length ? sentHistory : messages)];
+	const sentMessages = sentHistory.length ? sentHistory : messages;
+	const fullMessages: Message[] = [{ role: "system", content: system }, ...sentMessages];
+
+	return {
+		mode,
+		permissions,
+		planning,
+		ref,
+		effectiveTools,
+		textOnly,
+		saverLimits,
+		vision,
+		project,
+		effectiveExplainMode,
+		toolsDef,
+		fullMessages,
+		sections,
+		sentMessages,
+		totalMessages: history.length || sentMessages.length,
+	};
+}
+
+/** Tamaño del contexto del modelo de esta respuesta (el de un agente o el de Ajustes), si se sabe. */
+function limitFor(ref: ModelRef | undefined): Promise<number | undefined> {
+	return contextLimit(resolveLLMSettings(ref)).catch(() => undefined);
+}
+
+/**
+ * El medidor de contexto antes de enviar: arma lo mismo que una respuesta, sin llamar al modelo.
+ * Se calcula como en la web (que siempre puede preguntar), aunque aquí no haya a quién.
+ */
+export async function estimateContext(goal: string, opts: AgentOptions, workspaceContext?: string): Promise<ContextReport> {
+	const prep = await prepareRun(goal, { ...opts, approver: opts.approver ?? (async () => false) }, workspaceContext);
+	const empty = !opts.conversation?.length;
+	return measureContext({
+		sections: prep.sections,
+		history: empty ? [] : prep.sentMessages,
+		totalMessages: empty ? 0 : prep.totalMessages,
+		tools: prep.toolsDef,
+		limit: await limitFor(prep.ref),
+		preview: true,
+	});
+}
+
+export async function runAgent(goal: string, opts: AgentOptions, workspaceContext?: string): Promise<string> {
+	const { llm, agentName, onStreamDelta, onUsage, approver, onToolEvent, signal, userProfile, sessionId } = opts;
+	const prep = await prepareRun(goal, opts, workspaceContext);
+	const { mode, permissions, planning, ref, effectiveTools, textOnly, saverLimits, vision, project, effectiveExplainMode, toolsDef, fullMessages } = prep;
+
+	// Medidor de contexto: lo que leyó el modelo en la última vuelta y lo que trajeron las herramientas.
+	let lastInput: number | undefined;
+	let toolResultChars = 0;
+	const trackUsage = (u: TokenUsage) => {
+		if (u.input > 0) lastInput = u.input;
+		onUsage?.(u);
+	};
+	const reportContext = async () => {
+		if (!opts.onContext) return;
+		opts.onContext(
+			measureContext({
+				sections: prep.sections,
+				history: prep.sentMessages,
+				totalMessages: prep.totalMessages,
+				tools: toolsDef,
+				toolResultChars,
+				realInput: lastInput,
+				limit: await limitFor(ref),
+			}),
+		);
+	};
 
 	const usedTools: { name: string; ok: boolean; argsKeys: string[] }[] = [];
 	const callCounts = new Map<string, number>();
 	let toolSeq = 0;
 
-	const executeTool = async (name: string, args: Record<string, unknown>) => {
+	const runTool = async (name: string, args: Record<string, unknown>): Promise<{ ok: boolean; content: string; error?: string; image?: string }> => {
 		if (signal?.aborted) return { ok: false, content: "", error: "Cancelado por el usuario." };
 		const argsKeys = Object.keys(args ?? {}).slice(0, 12);
 		logger.info(`🔧 Tool: ${name}`);
@@ -348,6 +439,16 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 			return { ok: true, content: r.content };
 		}
 	};
+	const executeTool = async (name: string, args: Record<string, unknown>) => {
+		const out = await runTool(name, args);
+		if (opts.onContext) {
+			// Como lo recibe el modelo (client.ts lo recorta igual), más la llamada y una captura si la hay.
+			const raw = out.ok ? out.content : `Error: ${out.error ?? "desconocido"}`;
+			const given = name === "use_skill" ? raw : normalizeToolResult(raw, ref, saverLimits && saverOn(ref));
+			toolResultChars += given.length + JSON.stringify(args ?? {}).length + name.length + 60 + (out.image ? IMAGE_CHARS : 0);
+		}
+		return out;
+	};
 
 	// Solo se reintenta la llamada al modelo, nunca las tools (podrían tener efectos).
 	let streamed = false;
@@ -385,8 +486,8 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 							approver,
 							() =>
 								textOnly
-									? llm.chat(fullMessages, { onDelta, onUsage, signal, sessionId, thinking: opts.thinking })
-									: llm.chatWithTools(fullMessages, toolsDef, executeTool, { onDelta, onUsage, signal, sessionId, thinking: opts.thinking }),
+									? llm.chat(fullMessages, { onDelta, onUsage: trackUsage, signal, sessionId, thinking: opts.thinking })
+									: llm.chatWithTools(fullMessages, toolsDef, executeTool, { onDelta, onUsage: trackUsage, signal, sessionId, thinking: opts.thinking, saverLimits }),
 							permissions,
 						),
 					),
@@ -407,9 +508,12 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 		if (signal?.aborted) return "";
 		const message = err instanceof Error ? err.message : String(err);
 		logger.error("Fallo del modelo", { error: message.slice(0, 300) });
+		// Si no cupo, el medidor lo muestra lleno (con lo estimado: el modelo no dijo cuánto leyó).
+		await reportContext();
 		return describeFailure(err);
 	}
 
+	await reportContext();
 	const finalText = isMeaningfulResponse(content) ? content : FALLBACK_EMPTY_RESPONSE;
 	return finalText + buildToolExplanation(usedTools, effectiveExplainMode);
 }

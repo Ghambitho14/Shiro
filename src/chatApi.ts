@@ -14,9 +14,10 @@ import { setHealthActive } from "./core/health/HealthManager.js";
 import { buildWorkspaceContext } from "./workspace.js";
 import { getLLM } from "./core/llm/getLLM.js";
 import { addUsage, newUsage } from "./core/llm/LLMClient.js";
-import { runAgent } from "./core/agent/Agent.js";
+import { estimateContext, runAgent } from "./core/agent/Agent.js";
+import type { ContextReport } from "./core/agent/contextUsage.js";
 import { parseChatMode, parsePermissionMode, type ChatMode, type PermissionMode } from "./core/agent/chatMode.js";
-import { CODE_TOOLS, getAllToolNames, HACKING_TOOLS, planToolsFor } from "./core/tools/ToolRegistry.js";
+import { getAllToolNames, HACKING_TOOLS, planToolsFor } from "./core/tools/ToolRegistry.js";
 import { matchSkillCommand, parseCommand } from "./commands.js";
 import { deleteRoom, getRoom, isValidSessionId, saveRoom } from "./core/rooms/roomStore.js";
 import { currentAgents, planRoomTurn, prepareAgentTurn, publicAgent, publicRoom, type AgentTurn, type RoomPlan } from "./core/rooms/roomTurn.js";
@@ -29,8 +30,10 @@ import {
 	renameChatSession,
 	saveChatSession,
 	sanitizeMessages,
+	compactConversation,
 	type ChatMessage,
 } from "./chat/ChatStore.js";
+import { closeChatSession, CloseChatError } from "./chat/closeChat.js";
 import { getMessagePreview } from "./core/agent/contentUtils.js";
 import { isBodyTooLargeError, readBody, safeDecode, sendJson, sendSseData } from "./http.js";
 
@@ -42,6 +45,8 @@ const APPROVAL_TIMEOUT_MS = 5 * 60 * 1000;
 const sessionApprovals = new Map<string, Set<string>>();
 /** Salas respondiendo ahora: un turno a la vez por sala. */
 const roomTurns = new Set<string>();
+/** Chats resumiéndose ahora con «Cerrar conversación» (uno a la vez por chat). */
+const closingChats = new Set<string>();
 
 /** Approver para una respuesta en streaming: pregunta al navegador por SSE y espera su respuesta. */
 function createSseApprover(res: ServerResponse, sessionKey: string): Approver {
@@ -83,6 +88,27 @@ function sanitizeAllowedTools(input: unknown): string[] | undefined {
 		unique.push(name);
 	}
 	return unique.length > 0 ? unique : getAllToolNames();
+}
+
+/**
+ * Las herramientas de una petición según el modo, los permisos y el interruptor general.
+ * Elegir CodeHacking o Planear es una decisión explícita: no depende del interruptor general de
+ * herramientas. Al planear, la lista de solo lectura manda sobre cualquier ajuste.
+ */
+function requestTools(mode: ChatMode, permissions: PermissionMode, allowedTools: string[] | undefined, autonomous: boolean) {
+	const webTools = ["search_web", "fetch_url", "get_weather"];
+	const planning = permissions === "plan";
+	const modeTools = planning ? planToolsFor(mode) : mode === "hacking" ? HACKING_TOOLS : undefined;
+	const effectiveAllowedTools = modeTools ??
+		(autonomous
+			? allowedTools
+			: (() => {
+					// Cumplir “siempre internet”: en modo no-autónomo limitamos a web-tools.
+					const incoming = Array.isArray(allowedTools) ? allowedTools : [];
+					const filtered = incoming.filter((t) => webTools.includes(t));
+					return (filtered.length ? filtered : webTools) as string[];
+				})());
+	return { planning, modeTools, effectiveAllowedTools };
 }
 
 export async function handleChatApi(req: IncomingMessage, res: ServerResponse, method: string, pathname: string): Promise<boolean> {
@@ -150,6 +176,28 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 		// Chat nuevo dentro de un proyecto (desde la página del proyecto).
 		if (projectId) attachChat(projectId, session.id);
 		sendJson(res, 201, { session });
+		return true;
+	}
+
+	// «Cerrar conversación»: resumen → recuerdo → mensaje `summary` del chat (closeChat.ts).
+	const closeMatch = method === "POST" ? /^\/api\/chat-sessions\/([^/]+)\/close$/.exec(pathname) : null;
+	if (closeMatch) {
+		const id = safeDecode(closeMatch[1]).trim();
+		if (id && closingChats.has(id)) {
+			sendJson(res, 409, { error: "Ya lo estoy resumiendo." });
+			return true;
+		}
+		closingChats.add(id);
+		try {
+			const session = await closeChatSession(id);
+			if (!session) sendJson(res, 404, { error: "No encontré ese chat." });
+			else sendJson(res, 200, { session });
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			sendJson(res, err instanceof CloseChatError ? 400 : 502, { error: message });
+		} finally {
+			closingChats.delete(id);
+		}
 		return true;
 	}
 
@@ -248,6 +296,50 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 		}
 	}
 
+	// Medidor de contexto antes de enviar (chat nuevo o sin medir): lo que armaría una respuesta,
+	// sin llamar al modelo. En una sala se calcula como si respondiera el asistente principal.
+	if (method === "POST" && pathname === "/api/chat/context") {
+		let parsed: { messages?: unknown; allowedTools?: unknown; sessionId?: unknown; mode?: unknown; permissions?: unknown };
+		try {
+			parsed = JSON.parse(await readBody(req));
+		} catch (err) {
+			sendJson(res, isBodyTooLargeError(err) ? 413 : 400, { error: isBodyTooLargeError(err) ? "Request body too large (max 6 MB)" : "Invalid JSON" });
+			return true;
+		}
+		const mode = parseChatMode(parsed.mode);
+		const permissions = parsed.mode === "plan" ? "plan" : parsePermissionMode(parsed.permissions);
+		const { summary: chatSummary, messages: incoming } = compactConversation(sanitizeMessages(parsed.messages));
+		const sessionId = typeof parsed.sessionId === "string" && parsed.sessionId.trim() ? parsed.sessionId.trim() : undefined;
+		const autonomous = getConfig().autonomousMode === true;
+		const { planning, effectiveAllowedTools } = requestTools(mode, permissions, sanitizeAllowedTools(parsed.allowedTools), autonomous);
+		const lastUser = [...incoming].reverse().find((m) => m.role === "user");
+		try {
+			const context = await estimateContext(
+				lastUser ? getMessagePreview(lastUser.content) : "",
+				{
+					llm: getLLM(),
+					agentName: getState().name,
+					tokenBudget: 8000,
+					textOnly: false,
+					allowedTools: effectiveAllowedTools,
+					mode,
+					permissions,
+					conversation: incoming,
+					chatSummary,
+					userProfile: getUserProfile(),
+					mcp: mode === "chat" && !planning ? autonomous : false,
+					sessionId,
+					projectId: projectOfChat(sessionId)?.id,
+				},
+				buildWorkspaceContext({ includeLongTermMemory: true }) || undefined,
+			);
+			sendJson(res, 200, { context });
+		} catch (err) {
+			sendJson(res, 200, { error: err instanceof Error ? err.message : String(err) });
+		}
+		return true;
+	}
+
 	if (method === "POST" && (pathname === "/api/chat" || pathname === "/api/chat/stream")) {
 		let body: string;
 		try {
@@ -261,6 +353,7 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 			return true;
 		}
 		let incoming: ChatMessage[];
+		let chatSummary: string | undefined;
 		let allowedTools: string[] | undefined;
 		let sessionId: string | undefined;
 		let voice = false;
@@ -283,7 +376,8 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 			// Una pestaña abierta de antes aún manda mode "plan": debe seguir siendo solo lectura.
 			permissions = parsed.mode === "plan" ? "plan" : parsePermissionMode(parsed.permissions);
 			moreReasoning = parsed.reasoning === "more";
-			incoming = sanitizeMessages(parsed.messages);
+			// Chat cerrado con «Cerrar conversación»: al modelo le llegan el resumen y lo de después.
+			({ summary: chatSummary, messages: incoming } = compactConversation(sanitizeMessages(parsed.messages)));
 			allowedTools = sanitizeAllowedTools(parsed.allowedTools);
 			console.log("🛠️ Tools sanitized:", allowedTools?.length || "todas");
 			sessionId = typeof parsed.sessionId === "string" && parsed.sessionId.trim() ? parsed.sessionId.trim() : undefined;
@@ -310,21 +404,8 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 			setHealthActive();
 			const config = getConfig();
 			const autonomous = config.autonomousMode === true;
-			const webTools = ["search_web", "fetch_url", "get_weather"];
-			// Elegir Code, CodeHacking o Planear es una decisión explícita: no depende del interruptor
-			// general de herramientas. Al planear, la lista de solo lectura manda sobre cualquier ajuste.
-			const planning = permissions === "plan";
+			const { planning, modeTools, effectiveAllowedTools } = requestTools(mode, permissions, allowedTools, autonomous);
 			const thinking = moreReasoning ? ("high" as const) : undefined;
-			const modeTools = planning ? planToolsFor(mode) : mode === "hacking" ? HACKING_TOOLS : mode === "code" ? CODE_TOOLS : undefined;
-			const effectiveAllowedTools = modeTools ??
-				(autonomous
-					? allowedTools
-					: (() => {
-							// Cumplir “siempre internet”: en modo no-autónomo limitamos a web-tools.
-							const incoming = Array.isArray(allowedTools) ? allowedTools : [];
-							const filtered = incoming.filter((t) => webTools.includes(t));
-							return (filtered.length ? filtered : webTools) as string[];
-						})());
 			const goal = userContent.trim() || "¿Qué hay en esta imagen?";
 			// Si el chat es de un proyecto, Shiro usa sus instrucciones y sus archivos.
 			const project = projectOfChat(sessionId);
@@ -400,7 +481,7 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 				});
 			}
 			// Un agente con una lista propia nunca puede recuperar herramientas que el modo quitó.
-			// En Chat se conserva su comportamiento; en Code, CodeHacking o al planear se cruza con la del modo.
+			// En Chat se conserva su comportamiento; en CodeHacking o al planear se cruza con la del modo.
 			const responseTools =
 				turn && modeTools && effectiveAllowedTools
 					? (turn.allowedTools ?? effectiveAllowedTools).filter((t) => effectiveAllowedTools.includes(t))
@@ -432,6 +513,7 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 					if (!res.writableEnded) abort.abort();
 				});
 				const usage = newUsage();
+				let context: ContextReport | undefined;
 				try {
 					const content = await runAgent(goal, {
 						llm: turn?.llm ?? getLLM(),
@@ -444,11 +526,15 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 						thinking,
 						explainMode: config.explainMode,
 						conversation: turn?.conversation ?? incoming,
+						chatSummary,
 						persona: turn?.persona,
 						room: turn?.room,
 						userProfile: getUserProfile(),
 						onStreamDelta: (chunk) => sendSseData(res, { type: "delta", text: chunk }),
 						onUsage: (u) => addUsage(usage, u),
+						onContext: (r) => {
+							context = r;
+						},
 						onToolEvent: (e) =>
 							sendSseData(res, e.phase === "end" ? { type: "tool", ...e, image: screenshotUrl(e.image) } : { type: "tool", ...e }),
 						approver: createSseApprover(res, sessionId ?? "web-default"),
@@ -460,7 +546,7 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 						projectId: project?.id,
 					}, workspaceContext ?? undefined);
 					if (abort.signal.aborted) return true;
-					sendSseData(res, { type: "done", content, ...speakerInfo, ...(usage.turns ? { usage } : {}) });
+					sendSseData(res, { type: "done", content, ...speakerInfo, ...(usage.turns ? { usage } : {}), ...(context ? { context } : {}) });
 					res.end();
 				} catch (errIn) {
 					const msgIn = errIn instanceof Error ? errIn.message : String(errIn);
@@ -470,8 +556,12 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 				return true;
 			}
 			const usage = newUsage();
+			let context: ContextReport | undefined;
 			const content = await runAgent(goal, {
 				onUsage: (u) => addUsage(usage, u),
+				onContext: (r) => {
+					context = r;
+				},
 				llm: turn?.llm ?? getLLM(),
 				agentName: turn?.agentName ?? state.name,
 				tokenBudget: 8000,
@@ -483,13 +573,14 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 				thinking,
 				explainMode: config.explainMode,
 				conversation: turn?.conversation ?? incoming,
+						chatSummary,
 				persona: turn?.persona,
 				room: turn?.room,
 				userProfile: getUserProfile(),
 				sessionId,
 				projectId: project?.id,
 			}, workspaceContext ?? undefined);
-			sendJson(res, 200, { content, ...speakerInfo, ...(roomPayload ?? {}), ...(usage.turns ? { usage } : {}) });
+			sendJson(res, 200, { content, ...speakerInfo, ...(roomPayload ?? {}), ...(usage.turns ? { usage } : {}), ...(context ? { context } : {}) });
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);
 			if (streamSse && res.headersSent) {

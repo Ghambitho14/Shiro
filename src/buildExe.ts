@@ -1,12 +1,12 @@
 /**
- * `npm run exe`: crea dist/Shiro.exe, un solo archivo con todo Shiro dentro (Node SEA).
+ * `npm run exe`: crea dist/Aku.exe, un solo archivo con todo Aku dentro (Node SEA).
  *
  * 1. esbuild junta el código (src + node_modules) en un único .mjs.
  * 2. La web (public/), sus librerías y el motor de SQLite van dentro como assets (runtime.ts los lee).
- * 3. En Windows, a una copia de node.exe se le pone el icono y el nombre de Shiro.
- * 4. `node --build-sea` mete el código y los assets en esa copia → dist/Shiro.exe.
- * 5. Con `npm run instalador` (--instalador), Inno Setup lo empaqueta en dist/ShiroSetup-<versión>.exe
- *    (installer/shiro.iss).
+ * 3. En Windows, a una copia de node.exe se le pone el icono y el nombre de Aku.
+ * 4. `node --build-sea` mete el código y los assets en esa copia → dist/Aku.exe.
+ * 5. Con `npm run instalador` (--instalador), Inno Setup lo empaqueta en dist/AkuSetup-<versión>.exe
+ *    (installer/aku.iss).
  *
  * Los datos NO van dentro: el .exe usa la carpeta "data" a su lado si existe, si no %APPDATA%\Shiro.
  */
@@ -20,7 +20,7 @@ import { APP_DIR, APP_VERSION, SQL_WASM_FILE, VENDOR_FILES } from "./runtime.js"
 
 const DIST = join(APP_DIR, "dist");
 const WORK = join(DIST, "exe-build");
-const OUTPUT = join(DIST, process.platform === "win32" ? "Shiro.exe" : "shiro");
+const OUTPUT = join(DIST, process.platform === "win32" ? "Aku.exe" : "aku");
 const ICON = join(WORK, "shiro.ico");
 const WANT_INSTALLER = process.argv.includes("--instalador");
 
@@ -55,6 +55,8 @@ function collectAssets(): Record<string, string> {
 		}
 	};
 	walk("public");
+	// Las habilidades que trae Shiro: seedBundledSkills() (workspace.ts) las copia a los datos.
+	walk("skills");
 	// La consola de la terminal: ptyLoader.ts la copia fuera del .exe para poder abrir sus binarios.
 	// Los .pdb (10 MB) solo sirven para depurar la propia librería.
 	walk(ptyPackageDir(), /\.pdb$/i);
@@ -73,7 +75,7 @@ function supportsBuildSea(): boolean {
 }
 
 async function main(): Promise<void> {
-	console.log(`\n  Creando Shiro.exe (v${APP_VERSION})\n`);
+	console.log(`\n  Creando Aku.exe (v${APP_VERSION})\n`);
 	if (!supportsBuildSea()) {
 		throw new Error(`Para crear el .exe hace falta Node.js 25.5 o más nuevo (tienes ${process.version}). Descárgalo de nodejs.org.`);
 	}
@@ -99,7 +101,7 @@ async function main(): Promise<void> {
 
 	let base = process.execPath;
 	if (process.platform === "win32") {
-		step("Poniéndole el icono y el nombre de Shiro…");
+		step("Poniéndole el icono y el nombre de Aku…");
 		const copy = join(WORK, "node-base.exe");
 		copyFileSync(process.execPath, copy);
 		try {
@@ -119,7 +121,7 @@ async function main(): Promise<void> {
 	}
 
 	step("Creando el ejecutable…");
-	const built = join(WORK, process.platform === "win32" ? "Shiro.exe" : "shiro");
+	const built = join(WORK, process.platform === "win32" ? "Aku.exe" : "aku");
 	const config = join(WORK, "sea-config.json");
 	writeFileSync(
 		config,
@@ -146,7 +148,7 @@ async function main(): Promise<void> {
 		rmSync(OUTPUT, { force: true });
 		renameSync(built, OUTPUT);
 	} catch {
-		throw new Error(`No pude reemplazar ${OUTPUT}: ¿está abierto? Cierra Shiro (su consola) y vuelve a intentarlo.`);
+		throw new Error(`No pude reemplazar ${OUTPUT}: ¿está abierto? Cierra Aku (su consola) y vuelve a intentarlo.`);
 	}
 	const mb = Math.round(statSync(OUTPUT).size / 1024 / 1024);
 	if (!WANT_INSTALLER) {
@@ -161,7 +163,7 @@ async function main(): Promise<void> {
 	const setup = buildInstaller();
 	rmSync(WORK, { recursive: true, force: true });
 	console.log(`\n  ✓ Listo: ${setup} (${Math.round(statSync(setup).size / 1024 / 1024)} MB)`);
-	console.log("    Es el archivo para instalar Shiro (aquí o en otro PC): doble clic → Instalar.");
+	console.log("    Es el archivo para instalar Aku (aquí o en otro PC): doble clic → Instalar.");
 	console.log("    Queda en el menú Inicio, se desinstala desde Configuración → Aplicaciones");
 	console.log("    y tus datos van en %APPDATA%\\Shiro.\n");
 }
@@ -183,9 +185,9 @@ function buildInstaller(): string {
 	if (!iscc) throw new Error("Falta Inno Setup 6. Instálalo con: winget install --id JRSoftware.InnoSetup -e --scope user");
 	const args = [`/DAppVersion=${APP_VERSION}`, `/DExeFile=${OUTPUT}`, `/DOutDir=${DIST}`, "/Q"];
 	if (existsSync(ICON)) args.push(`/DIconFile=${ICON}`);
-	args.push(join(APP_DIR, "installer", "shiro.iss"));
+	args.push(join(APP_DIR, "installer", "aku.iss"));
 	execFileSync(iscc, args, { stdio: ["ignore", "ignore", "inherit"] });
-	return join(DIST, `ShiroSetup-${APP_VERSION}.exe`);
+	return join(DIST, `AkuSetup-${APP_VERSION}.exe`);
 }
 
 /**
@@ -378,12 +380,12 @@ public static class ShiroExeResources {
 		f.Write(0x3Fu); f.Write(0u); f.Write(0x00040004u); f.Write(1u); f.Write(0u); f.Write(0u); f.Write(0u);
 
 		string[,] strings = {
-			{ "CompanyName", "Shiro" },
-			{ "FileDescription", "Shiro" },
+			{ "CompanyName", "Aku" },
+			{ "FileDescription", "Aku" },
 			{ "FileVersion", version },
-			{ "InternalName", "Shiro" },
-			{ "OriginalFilename", "Shiro.exe" },
-			{ "ProductName", "Shiro" },
+			{ "InternalName", "Aku" },
+			{ "OriginalFilename", "Aku.exe" },
+			{ "ProductName", "Aku" },
 			{ "ProductVersion", version },
 		};
 		List<byte[]> items = new List<byte[]>();

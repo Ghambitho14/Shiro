@@ -46,7 +46,7 @@ function oldServerBox() {
 	const e = el(
 		"div",
 		"ext-empty warn",
-		"<strong>Reinicia Shiro para ver esto.</strong> El Shiro que está abierto es de antes de la última actualización. Ciérralo (Ctrl+C en su consola, o cierra esa ventana) y ábrelo otra vez con <code>npm start</code>.",
+		"<strong>Reinicia Aku para ver esto.</strong> El Aku que está abierto es de antes de la última actualización. Ciérralo (Ctrl+C en su consola, o cierra esa ventana) y ábrelo otra vez con <code>npm start</code>.",
 	);
 	e.setAttribute("role", "status");
 	return e;
@@ -154,7 +154,20 @@ export async function loadSkills() {
 	}
 }
 
-function skillItem(s, { groupEnabled = true, editable = false } = {}) {
+/** Copia a las habilidades de Shiro una habilidad de otra aplicación o, si no se indica cuál, todas las de Claude. */
+async function copySkills(id) {
+	try {
+		const d = await api("/api/skills/copy", { method: "POST", json: id ? { id } : { all: true } });
+		paintSkills(d);
+		if (id) ui.toast(d.copied ? "Copiada: ya es una habilidad de Aku" : "Ya estaba copiada");
+		else if (!d.copied && !d.existing) ui.toast("No encontré habilidades de Claude en este equipo.");
+		else ui.toast(`Copié ${plural(d.copied, "habilidad", "habilidades")}${d.existing ? `; ${plural(d.existing, "ya estaba", "ya estaban")}` : ""}`);
+	} catch (err) {
+		ui.toast(err.message, "error");
+	}
+}
+
+function skillItem(s, { groupEnabled = true, editable = false, copyable = false } = {}) {
 	const item = el("div", `ext-item${s.enabled ? "" : " off"}`);
 	const text = el("div", "ext-item-text", "<strong></strong><span></span>");
 	text.querySelector("strong").textContent = s.name;
@@ -165,6 +178,15 @@ function skillItem(s, { groupEnabled = true, editable = false } = {}) {
 	view.setAttribute("aria-label", `Ver ${s.name}`);
 	view.onclick = () => showSkill(s.id);
 	item.append(text, view);
+	if (copyable) {
+		const already = sk.data?.own.skills.some((o) => o.name.toLowerCase() === s.name.toLowerCase());
+		const copy = el("button", "icon-btn sm", icon(already ? "check" : "copy", "sm"));
+		copy.title = already ? "Ya está copiada en las habilidades de Aku" : "Copiar a Aku: la hace propia, con todos sus archivos";
+		copy.setAttribute("aria-label", already ? `${s.name} ya está en Aku` : `Copiar ${s.name} a Aku`);
+		copy.disabled = Boolean(already);
+		copy.onclick = () => copySkills(s.id);
+		item.append(copy);
+	}
 	if (editable) {
 		const more = el("button", "icon-btn sm", icon("dots", "sm"));
 		more.title = "Más opciones";
@@ -198,14 +220,15 @@ function skillList(body, skills, groupEnabled, emptyText, appLabel = "") {
 		body.append(emptyBox(emptyText));
 		return;
 	}
-	if (!groupEnabled) body.append(el("p", "ext-hint", "Activa el interruptor de arriba para que Shiro pueda usarlas."));
-	for (const s of skills.filter((x) => !x.builtIn)) body.append(skillItem(s, { groupEnabled }));
+	if (!groupEnabled) body.append(el("p", "ext-hint", "Activa el interruptor de arriba para que Aku pueda usarlas."));
+	const copyable = Boolean(appLabel);
+	for (const s of skills.filter((x) => !x.builtIn)) body.append(skillItem(s, { groupEnabled, copyable }));
 	const builtIn = skills.filter((x) => x.builtIn);
 	if (builtIn.length) {
 		const hint = el("p", "ext-hint");
 		hint.textContent = `Incluidas con ${appLabel || "la aplicación"}: empiezan apagadas porque suelen necesitar herramientas que solo tiene esa aplicación. Enciende las que quieras probar.`;
 		body.append(hint);
-		for (const s of builtIn) body.append(skillItem(s, { groupEnabled }));
+		for (const s of builtIn) body.append(skillItem(s, { groupEnabled, copyable }));
 	}
 }
 
@@ -222,7 +245,7 @@ function paintSkills(d) {
 	sk.data = d;
 	const own = $("#skills-own");
 	own.innerHTML = "";
-	if (!d.own.skills.length) own.append(emptyBox("No hay habilidades de Shiro instaladas. Crea una con «Agregar habilidad»."));
+	if (!d.own.skills.length) own.append(emptyBox("No hay habilidades de Aku instaladas. Crea una con «Agregar habilidad»."));
 	for (const s of d.own.skills) own.append(skillItem(s, { editable: true }));
 
 	const apps = $("#skills-apps");
@@ -398,6 +421,7 @@ function bindSkills() {
 			[
 				{ label: "Crear habilidad", icon: "pencil", onClick: () => openSkillEditor() },
 				{ label: "Importar un archivo SKILL.md", icon: "upload", onClick: () => $("#skill-file").click() },
+				{ label: "Copiar todas las de Claude", icon: "copy", onClick: () => copySkills() },
 				"sep",
 				{ label: "Abrir la carpeta de habilidades", icon: "folder", onClick: openSkillsFolder },
 				{ label: "Añadir otra carpeta…", icon: "plus", onClick: addSkillFolder },
@@ -464,12 +488,12 @@ function toolItem(server, t) {
 	const ask = el("label", "check", `<input type="checkbox" /><span>Sin preguntar</span>`);
 	const askInput = ask.querySelector("input");
 	askInput.checked = t.alwaysAllow;
-	ask.title = "Si lo marcas, Shiro usará esta herramienta sin pedirte permiso";
+	ask.title = "Si lo marcas, Aku usará esta herramienta sin pedirte permiso";
 	askInput.onchange = async () => {
 		if (askInput.checked && !t.readOnly) {
 			const ok = await ui.confirmDialog({
 				title: `¿Usar "${t.name}" sin preguntar?`,
-				text: `Shiro podrá usar esta herramienta de ${server.name} sin pedirte permiso cada vez. Hazlo solo si sabes lo que hace.`,
+				text: `Aku podrá usar esta herramienta de ${server.name} sin pedirte permiso cada vez. Hazlo solo si sabes lo que hace.`,
 				ok: "Sí, sin preguntar",
 			});
 			if (!ok) {
@@ -496,7 +520,7 @@ function serverBody(body, s) {
 		body.append(n);
 	}
 	if (s.state === "connecting") body.append(el("p", "ext-hint", "Arrancando… La primera vez puede tardar un poco si tiene que descargarse."));
-	if (s.state === "off") body.append(el("p", "ext-hint", "Apagado: enciéndelo con el interruptor para que Shiro pueda usarlo."));
+	if (s.state === "off") body.append(el("p", "ext-hint", "Apagado: enciéndelo con el interruptor para que Aku pueda usarlo."));
 	if (s.tools.length) {
 		const list = el("div", "ext-tools");
 		const title = el("p", "ext-hint", "");
@@ -598,7 +622,7 @@ function paintMcp(d) {
 async function deleteServer(s) {
 	const ok = await ui.confirmDialog({
 		title: `¿Eliminar "${s.name}"?`,
-		text: "Shiro dejará de usar este servidor. Se quita de la lista (no desinstala nada de tu PC).",
+		text: "Aku dejará de usar este servidor. Se quita de la lista (no desinstala nada de tu PC).",
 		ok: "Eliminar",
 		danger: true,
 	});

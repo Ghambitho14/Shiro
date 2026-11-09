@@ -15,6 +15,7 @@ import { state } from "./state.js";
 import { renderThread, updateEmpty } from "./messages.js";
 import { sendMessage, setStatus } from "./chat.js";
 import { paintPermissions } from "./permissions.js";
+import { refreshContextMeter } from "./contextMeter.js";
 import { openRoom, paintRoomBar } from "./rooms.js";
 import { chatMenu, closeSidebarMobile, loadSessions, newChat, openChat, openOverview, openProject, paintSidebar, refreshModelInfo, setDocTitle } from "./sidebar.js";
 import { ttsSettings } from "./voiceMode.js";
@@ -35,7 +36,9 @@ export function paintIdentity() {
 	const box = $("#user-initials");
 	if (initials) box.textContent = initials;
 	else box.innerHTML = icon("user", "sm");
-	state.placeholder = `Pregúntale o pídele algo a ${state.name} (escribe / para ver los comandos)`;
+	state.placeholder = window.matchMedia("(max-width: 680px)").matches
+		? `Pregúntale algo a ${state.name}`
+		: `Pregúntale o pídele algo a ${state.name} (escribe / para ver los comandos)`;
 	if (!state.activeId) setDocTitle();
 	updateEmpty();
 	paintSuggestions();
@@ -56,20 +59,18 @@ const PLAN_SUGGESTIONS = [
 ];
 
 const MODE_SUGGESTIONS = {
-	code: [
+	hacking: [
 		{ icon: "braces", text: "Revisa este proyecto y busca errores" },
 		{ icon: "file", text: "Explica cómo está organizado este proyecto" },
-		{ icon: "check", text: "¿Qué pruebas faltan en este proyecto?" },
-	],
-	hacking: [
 		{ icon: "shield", text: "Haz un plan de pruebas para mi VPS" },
-		{ icon: "search", text: "¿Qué es un CVE y cómo se lee?" },
 		{ icon: "globe", text: "Revisa la seguridad de mi web autorizada" },
 	],
 };
 
 export function paintSuggestions() {
-	const pc = state.mode === "chat" && state.settings?.pcControl !== false && state.settings?.autonomousMode !== false;
+	// Las sugerencias del PC solo en Windows: en un servidor (Docker, Kali) no hay escritorio que manejar.
+	const windows = (state.settings?.platform ?? "win32") === "win32";
+	const pc = windows && state.mode === "chat" && state.settings?.pcControl !== false && state.settings?.autonomousMode !== false;
 	const suggestions = state.permissions === "plan" ? PLAN_SUGGESTIONS : state.mode === "chat" ? SUGGESTIONS.filter((x) => pc || !x.pc) : (MODE_SUGGESTIONS[state.mode] || []);
 	const box = $("#suggestions");
 	box.innerHTML = "";
@@ -88,9 +89,11 @@ export async function loadSettings() {
 	state.llm = llm;
 	paintPermissions();
 	state.profile = profile || {};
-	state.name = s.assistantName || "Shiro";
+	state.name = s.assistantName || "Aku";
 	$("#model-name").textContent = llm.model || "sin configurar";
 	paintIdentity();
+	// Otro modelo puede tener otro tamaño de contexto.
+	refreshContextMeter();
 	return s;
 }
 
@@ -278,7 +281,7 @@ export function paintWhatsApp({ status, qrDataUrl }) {
 		idle: "Desconectado.",
 		starting: "Iniciando… puede tardar unos segundos.",
 		qr: "Escanea este código con tu móvil: WhatsApp → Dispositivos vinculados → Vincular.",
-		ready: "Conectado. Ya puedes escribirle a Shiro por WhatsApp.",
+		ready: "Conectado. Ya puedes escribirle a Aku por WhatsApp.",
 		auth_failure: "Falló la vinculación. Vuelve a intentarlo.",
 		disconnected: "Se desconectó.",
 		error: "Hubo un error.",
@@ -353,12 +356,12 @@ export function paintTelegram(s) {
 	const list = $("#tg-chats");
 	list.replaceChildren(
 		...s.pending.map((p) =>
-			telegramRow(p.name, `${p.username ? `@${p.username} · ` : ""}quiere hablar con Shiro`, "Autorizar", "primary", () =>
+			telegramRow(p.name, `${p.username ? `@${p.username} · ` : ""}quiere hablar con Aku`, "Autorizar", "primary", () =>
 				api("/api/telegram/allow", { method: "POST", json: { chatId: p.id } }),
 			),
 		),
 		...s.chats.map((c) =>
-			telegramRow(c.name || c.id, "Puede hablar con Shiro", "Quitar", "", () =>
+			telegramRow(c.name || c.id, "Puede hablar con Aku", "Quitar", "", () =>
 				api("/api/telegram/revoke", { method: "POST", json: { chatId: c.id } }),
 			),
 		),

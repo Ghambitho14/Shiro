@@ -9,11 +9,11 @@
  * Al modelo solo se le da la lista (nombre + descripción) en el system prompt; el contenido
  * completo lo carga él mismo con la tool use_skill cuando una encaja. Así no se gasta contexto.
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { getConfig } from "../../config/config.js";
-import { LOCAL_WORKSPACE_DIR } from "../../workspace.js";
+import { LOCAL_WORKSPACE_DIR, seedBundledSkills } from "../../workspace.js";
 
 export const SHIRO_SKILLS_DIR = join(LOCAL_WORKSPACE_DIR, "skills");
 
@@ -221,13 +221,14 @@ export function clearSkillCache(): void {
  * Con onlyEnabled no se leen las carpetas de las aplicaciones apagadas.
  */
 export function listSkillGroups(onlyEnabled = false): SkillGroup[] {
+	seedBundledSkills();
 	const cfg = getConfig();
 	const key = JSON.stringify([onlyEnabled, homedir(), cfg.disabledSkills, cfg.enabledSkills, cfg.disabledSkillSources, cfg.skillPaths]);
 	if (cache && cache.key === key && Date.now() - cache.at < CACHE_MS) return cache.groups;
 
 	const sw: Switches = { disabled: new Set(cfg.disabledSkills), enabled: new Set(cfg.enabledSkills) };
 	const off = new Set(cfg.disabledSkillSources);
-	const groups: SkillGroup[] = [scanGroup("shiro", "Shiro", SHIRO_SKILLS_DIR, true, sw)];
+	const groups: SkillGroup[] = [scanGroup("shiro", "Aku", SHIRO_SKILLS_DIR, true, sw)];
 	cfg.skillPaths.forEach((p, i) => groups.push(scanGroup(`path:${i}`, p, resolve(p), true, sw)));
 	for (const src of EXTERNAL_SKILL_SOURCES) {
 		if (onlyEnabled && off.has(src.id)) continue;
@@ -371,8 +372,24 @@ export function resolveInsideSkill(dir: string, file: string): string | null {
 	}
 }
 
+/** Cuánto entrega use_skill de una vez: las habilidades largas se leen por partes, sin perder nada. */
+export const SKILL_PAGE_CHARS = 8000;
+
+/** La parte del texto que empieza en `offset`, cortada en un salto de línea y con cómo seguir. `tail`: solo al final. */
+function skillPage(text: string, offset: number, tail = ""): { ok: boolean; content: string } {
+	if (offset >= text.length && offset > 0) return { ok: false, content: `Ya no hay más: el texto tiene ${text.length} letras.` };
+	let end = Math.min(offset + SKILL_PAGE_CHARS, text.length);
+	if (end < text.length) {
+		const line = text.lastIndexOf("\n", end);
+		if (line > offset + SKILL_PAGE_CHARS / 2) end = line + 1;
+	}
+	const part = text.slice(offset, end);
+	if (end >= text.length) return { ok: true, content: part + tail };
+	return { ok: true, content: `${part}\n\n[Sigue: vas por la letra ${end} de ${text.length}. Lee el resto con use_skill y offset=${end} antes de responder.]` };
+}
+
 /** Lo que devuelve la tool use_skill. */
-export function useSkill(name?: string, file?: string): { ok: boolean; content: string } {
+export function useSkill(name?: string, file?: string, offset = 0): { ok: boolean; content: string } {
 	const skills = getEnabledSkills();
 	if (!name?.trim()) {
 		if (!skills.length) return { ok: false, content: "No hay habilidades activadas. El usuario puede añadirlas en Ajustes → Habilidades." };
@@ -386,14 +403,14 @@ export function useSkill(name?: string, file?: string): { ok: boolean; content: 
 		const path = resolveInsideSkill(skill.dir, file.trim());
 		if (!path) return { ok: false, content: `El archivo "${file}" no existe dentro de la habilidad ${skill.name}.` };
 		if (statSync(path).size > MAX_FILE_BYTES) return { ok: false, content: `El archivo "${file}" es demasiado grande para leerlo.` };
-		return { ok: true, content: `# ${skill.name} / ${file}\n\n${readFileSync(path, "utf-8")}` };
+		return skillPage(`# ${skill.name} / ${file}\n\n${readFileSync(path, "utf-8")}`, offset);
 	}
 	const { body } = parseSkillMarkdown(readFileSync(skill.file, "utf-8"));
 	const files = listSkillFiles(skill.dir);
 	const extra = files.length
 		? `\n\n---\nCarpeta de la habilidad: ${skill.dir}\nOtros archivos (léelos con use_skill y file si las instrucciones lo piden):\n${files.map((f) => `- ${f}`).join("\n")}`
 		: "";
-	return { ok: true, content: `# Habilidad: ${skill.name}\n\n${body}${extra}` };
+	return skillPage(`# Habilidad: ${skill.name}\n\n${body}`, offset, extra);
 }
 
 /** Contenido completo de una habilidad para forzarla con "/nombre" en el chat. */
@@ -431,7 +448,7 @@ export function saveOwnSkill(input: { name: string; description: string; instruc
 	let previousDir: string | null = null;
 	if (input.originalId) {
 		const prev = findSkillById(input.originalId);
-		if (!prev || prev.source !== "shiro") throw new Error("Solo se pueden editar las habilidades de Shiro.");
+		if (!prev || prev.source !== "shiro") throw new Error("Solo se pueden editar las habilidades de Aku.");
 		extra = extraMetaLines(parseSkillMarkdown(readFileSync(prev.file, "utf-8")).rawMeta);
 		previousDir = prev.dir;
 	}
@@ -464,9 +481,51 @@ export function importOwnSkill(markdown: string, fallbackName: string): string {
 	return `shiro:${slug}`;
 }
 
+/**
+ * Copia una habilidad de otra aplicación a las de Shiro, con todos sus archivos: desde entonces es
+ * propia y sigue funcionando aunque esa aplicación desaparezca. Una ya copiada no se pisa (pudo
+ * editarse). Es una foto: si la original cambia, la copia no. Sin enlaces simbólicos, que podrían
+ * apuntar fuera de la carpeta. En `enabled` dice si la original estaba en uso, para respetarlo.
+ */
+export function copySkillToShiro(id: string): { id: string; copied: boolean; enabled: boolean } {
+	const skill = findSkillById(id);
+	if (!skill) throw new Error("No encontré esa habilidad.");
+	if (skill.source === "shiro") throw new Error("Esta habilidad ya es de Aku.");
+	const slug = skillSlug(skill.name);
+	if (!slug) throw new Error(`No pude sacar un nombre de carpeta para "${skill.name}".`);
+	const ownId = `shiro:${slug}`;
+	const dir = join(SHIRO_SKILLS_DIR, slug);
+	if (existsSync(dir)) return { id: ownId, copied: false, enabled: skill.enabled };
+	// A una carpeta oculta (la búsqueda no entra ahí) y luego de golpe: nunca queda una copia a medias.
+	const temp = join(SHIRO_SKILLS_DIR, `.copiando-${slug}`);
+	rmSync(temp, { recursive: true, force: true });
+	mkdirSync(SHIRO_SKILLS_DIR, { recursive: true });
+	try {
+		cpSync(skill.dir, temp, {
+			recursive: true,
+			filter: (src) => !SKIP_DIRS.has(basename(src)) && !lstatSync(src).isSymbolicLink(),
+		});
+		renameSync(temp, dir);
+	} catch (err) {
+		rmSync(temp, { recursive: true, force: true });
+		throw err;
+	}
+	clearSkillCache();
+	return { id: ownId, copied: true, enabled: skill.enabled };
+}
+
+/**
+ * Copia de una vez las habilidades de Claude: las de `~/.claude/skills/synced`, que vienen con la
+ * cuenta. Lo demás de esa carpeta lo instaló el usuario de otros autores: se copia una por una.
+ */
+export function copyAllSkillsToShiro(): { id: string; copied: boolean; enabled: boolean }[] {
+	const claude = listSkillGroups().find((g) => g.source === "claude");
+	return (claude?.skills ?? []).filter((s) => s.builtIn).map((s) => copySkillToShiro(s.id));
+}
+
 export function deleteOwnSkill(id: string): void {
 	const skill = findSkillById(id);
-	if (!skill || skill.source !== "shiro") throw new Error("Solo se pueden borrar las habilidades de Shiro.");
+	if (!skill || skill.source !== "shiro") throw new Error("Solo se pueden borrar las habilidades de Aku.");
 	const dir = resolve(skill.dir);
 	if (!dir.startsWith(resolve(SHIRO_SKILLS_DIR) + sep)) throw new Error("Ruta de habilidad no válida.");
 	rmSync(dir, { recursive: true, force: true });
