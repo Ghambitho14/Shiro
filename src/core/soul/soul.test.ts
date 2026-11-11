@@ -17,7 +17,9 @@ const { existsSync, mkdirSync, readFileSync, writeFileSync } = await import("nod
 
 test("las instrucciones base por defecto llevan el nombre y la fecha", () => {
 	const soul = getSoul("Aku");
-	assert.match(soul, /^Eres Aku, un asistente con acceso a herramientas/);
+	assert.match(soul, /^Eres Aku, un asistente personal con herramientas/);
+	// Sin las frases que lo frenaban: el método de trabajo va aparte (WORK_BLOCK).
+	assert.doesNotMatch(soul, /No hagas planes|Si algo es ambiguo/);
 	assert.match(soul, new RegExp(String(new Date().getFullYear())));
 	assert.doesNotMatch(soul, /\{\{/);
 	assert.match(renderSystemPrompt("Hola {{ Nombre }}, hoy es {{fecha}}. {{otra}}", "Aku"), /^Hola Aku, hoy es .+\. \{\{otra\}\}$/);
@@ -72,4 +74,23 @@ test("SOUL.md, TOOLS.md y MEMORY.md se editan y se restauran", () => {
 	writeNote("soul");
 	assert.equal(readNote("soul"), EDITABLE_NOTES.soul.template);
 	assert.equal(writeNote("tools", "   "), EDITABLE_NOTES.tools.template);
+});
+
+test("Instrucciones.md con el texto de antes pasa al nuevo; una nota que el usuario cambió no se toca", async () => {
+	const { LEGACY_SYSTEM_PROMPTS } = await import("./defaultPrompt.js");
+	const { ensureWorkspace, isDefaultNote } = await import("../../workspace.js");
+	const instructions = join(getWorkspaceDir(), INSTRUCTIONS_NOTE);
+	const tools = join(getWorkspaceDir(), "TOOLS.md");
+	writeFileSync(instructions, LEGACY_SYSTEM_PROMPTS[0] + "\r\n", "utf-8");
+	writeFileSync(tools, "# Mis reglas\n- Solo lo mío.\n", "utf-8");
+	assert.equal(isDefaultNote(INSTRUCTIONS_NOTE, readFileSync(instructions, "utf-8")), true);
+	assert.equal(isDefaultNote("TOOLS.md", readFileSync(tools, "utf-8")), false);
+	ensureWorkspace();
+	assert.equal(readFileSync(instructions, "utf-8"), DEFAULT_SYSTEM_PROMPT + "\n");
+	assert.equal(readFileSync(tools, "utf-8"), "# Mis reglas\n- Solo lo mío.\n");
+	assert.equal(getSoul("Aku"), renderSystemPrompt(DEFAULT_SYSTEM_PROMPT, "Aku"));
+	// La guía por defecto ya no nombra herramientas que no son las de los proyectos.
+	writeNote("tools");
+	assert.doesNotMatch(readNote("tools"), /read_file|exec/);
+	assert.equal(isDefaultNote("TOOLS.md", readNote("tools")), true);
 });

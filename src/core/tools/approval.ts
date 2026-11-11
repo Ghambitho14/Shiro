@@ -1,15 +1,13 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { resolve } from "node:path";
 import { getConfig } from "../../config/config.js";
 import { classifyOpenTarget } from "../pc/pc.js";
 import { isMcpToolName, mcpManager } from "../mcp/McpManager.js";
 import { shiroBrowser } from "../browser/browser.js";
 import { hostOf } from "../browser/pageModel.js";
-import { currentProject } from "../projects/projects.js";
+import { currentProject, resolveProjectPath } from "../projects/projects.js";
 import { terminal } from "../terminal/terminal.js";
 import type { PermissionMode } from "../agent/chatMode.js";
-import { getWorkspaceDir } from "../../workspace.js";
-import { isWithinRoot } from "./paths.js";
+import { gitWorkDir, isGitReadableDir } from "./gitDir.js";
 
 /**
  * Aprobación de acciones peligrosas.
@@ -56,7 +54,7 @@ const GIT_LIST_ARGS: Record<string, Set<string>> = {
 };
 
 /**
- * git sin pedir permiso: solo subcomandos que leen, en el workspace, sin encadenar comandos,
+ * git sin pedir permiso: solo subcomandos que leen, en el workspace o en una carpeta del proyecto del chat, sin encadenar comandos,
  * sin escribir archivos (`--output`) ni leer fuera del repositorio (`--no-index`).
  */
 function isReadOnlyGit(command: string, repoPath: string): boolean {
@@ -66,8 +64,7 @@ function isReadOnlyGit(command: string, repoPath: string): boolean {
 	if (rest.some((a) => /^--(output|no-index)\b/.test(a))) return false;
 	const listArgs = GIT_LIST_ARGS[sub];
 	if (listArgs && !rest.every((a) => listArgs.has(a))) return false;
-	const workspace = getWorkspaceDir();
-	return isWithinRoot(resolve(workspace, repoPath || "."), workspace, true);
+	return isGitReadableDir(gitWorkDir(repoPath));
 }
 
 function str(v: unknown): string {
@@ -97,9 +94,14 @@ export function describeRiskyAction(tool: string, args: Record<string, unknown>)
 		case "exec":
 			return describeCommand("Ejecutar comando", str(args.command).trim(), args.workingDir ? ` (en ${str(args.workingDir)})` : "");
 		case "project": {
-			if (args.action !== "write") return null;
+			if (args.action !== "write" && args.action !== "edit") return null;
 			const project = currentProject();
-			return `Escribir el archivo ${str(args.path)}${project ? ` en el proyecto «${project.name}»` : ""} (${str(args.content).length} caracteres)`;
+			const where = `${str(args.path)}${project ? ` en el proyecto «${project.name}»` : ""}`;
+			if (args.action === "write") return `Escribir el archivo ${where} (${str(args.content).length} caracteres)`;
+			// Se enseña el antes y el después para que el usuario vea qué cambia.
+			const clip = (v: unknown) => (str(v).length > 400 ? `${str(v).slice(0, 400)}…` : str(v));
+			const all = args.replace_all === true || args.replace_all === "true" ? " (todas las veces que aparece)" : "";
+			return `Cambiar un trozo de ${where}${all}:\n— Antes:\n${clip(args.old_text)}\n— Después:\n${clip(args.new_text) || "(se borra)"}`;
 		}
 		case "claude_code": {
 			// Siempre se pregunta: Claude Code puede cambiar archivos y usa la suscripción del usuario.
@@ -128,8 +130,13 @@ export function describeRiskyAction(tool: string, args: Record<string, unknown>)
 				: null;
 		case "write_file_system":
 			return `Escribir el archivo ${str(args.path)} (${str(args.content).length} caracteres)`;
-		case "read_file_system":
+		case "read_file_system": {
+			// Dentro de una carpeta del proyecto del chat es lo mismo que project read: el usuario ya la eligió.
+			const project = currentProject();
+			const path = str(args.path).trim();
+			if (project && /^([A-Za-z]:[\\/]|\/)/.test(path) && resolveProjectPath(project, path)) return null;
 			return `Leer el archivo ${str(args.path)}`;
+		}
 		case "git": {
 			const command = str(args.command).trim();
 			const repoPath = str(args.repoPath).trim();

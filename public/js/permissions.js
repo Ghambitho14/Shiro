@@ -1,5 +1,5 @@
 // Los botones de la caja de escribir: cómo trabaja el agente (permisos, también planear) y si razona más.
-// Valen en cualquier modo (Chat, CodeHacking) y van en cada petición; el servidor los valida.
+// Valen en cualquier modo (Chat, Code, Hacking) y van en cada petición; el servidor los valida.
 import { icon, setIcon } from "./icons.js";
 import { $, el, prefs, savePrefs, showMenu, closeMenu } from "./ui.js";
 import { state } from "./state.js";

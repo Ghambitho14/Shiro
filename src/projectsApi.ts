@@ -13,7 +13,9 @@ import {
 	getProject,
 	listProjects,
 	listUploadsTop,
+	projectForFolder,
 	projectSources,
+	recentFolders,
 	removeFolder,
 	removeUpload,
 	saveUpload,
@@ -28,7 +30,16 @@ type Helpers = {
 };
 
 /** Resumen para la lista de la barra lateral. */
-const summary = (p: Project) => ({ id: p.id, name: p.name, description: p.description, chats: p.chats, createdAt: p.createdAt, updatedAt: p.updatedAt });
+const summary = (p: Project) => ({
+	id: p.id,
+	name: p.name,
+	description: p.description,
+	chats: p.chats,
+	// Para el botón de carpeta del modo Code (nombre de la carpeta del chat).
+	folders: p.folders.map((f) => f.path),
+	createdAt: p.createdAt,
+	updatedAt: p.updatedAt,
+});
 
 /** Proyecto completo para su página: instrucciones, carpetas vinculadas y archivos subidos. */
 function detail(p: Project) {
@@ -71,10 +82,24 @@ export async function handleProjectsApi(req: IncomingMessage, res: ServerRespons
 		}
 	}
 
+	// Botón de carpeta del modo Code: carpetas recientes y el proyecto de una carpeta (lo crea si no hay).
+	if (pathname === "/api/projects/recent-folders" && method === "GET") {
+		return reply(200, { folders: recentFolders(), canPickFolder: canPickFolder(req) });
+	}
+	if (pathname === "/api/projects/for-folder" && method === "POST") {
+		const d = await body();
+		try {
+			return reply(200, { project: summary(projectForFolder(typeof d?.path === "string" ? d.path : "")) });
+		} catch (err) {
+			return fail(400, err);
+		}
+	}
+
 	if (pathname === "/api/projects/pick-folder" && method === "POST") {
 		if (!canPickFolder(req)) return fail(400, "El selector de carpetas solo funciona con Aku abierto en este mismo PC con Windows. Escribe la ruta.");
 		try {
-			const path = await pickFolder("Elige la carpeta para el proyecto");
+			const d = await body();
+			const path = await pickFolder(d?.purpose === "code" ? "Elige la carpeta en la que trabajará Aku" : "Elige la carpeta para el proyecto");
 			return reply(200, path ? { path } : { cancelled: true });
 		} catch (err) {
 			return fail(500, err);

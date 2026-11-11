@@ -11,6 +11,8 @@ import type { ResponseUsage } from "../core/llm/LLMClient.js";
 import { sanitizeContextReport, type ContextReport } from "../core/agent/contextUsage.js";
 import { getMessagePreview } from "../core/agent/contentUtils.js";
 import { CHAT_MODES, type ChatMode } from "../core/agent/chatMode.js";
+import { getChatMode, modeOfMessages, removeChatMode, setChatMode } from "./chatModes.js";
+import type { TodoItem } from "../core/agent/previousWork.js";
 
 /** Herramienta usada en una respuesta (se muestra como "pasos" en la web). */
 export type ChatToolUse = { name: string; label: string; ok: boolean; image?: string };
@@ -22,6 +24,8 @@ export type ChatMessage = {
 	/** Hora del mensaje (ms). */
 	ts?: number;
 	tools?: ChatToolUse[];
+	/** Respuestas del asistente: la lista de tareas que llevaba (tool `todo`), como quedó al terminar. */
+	todo?: TodoItem[];
 	/** En una sala: id del agente que respondió (sin él, el asistente de siempre). */
 	agent?: string;
 	/** Su nombre en ese momento (se sigue viendo aunque luego se borre el agente). */
@@ -45,6 +49,8 @@ export type ChatSessionMeta = {
 	createdAt: number;
 	updatedAt: number;
 	lastPreview: string;
+	/** Modo del chat (cada modo tiene su lista en la web). No lo guardan los almacenamientos: va en chatModes.ts. */
+	mode?: ChatMode;
 };
 
 export type ChatSession = ChatSessionMeta & {
@@ -82,13 +88,11 @@ function isContentPartArray(raw: unknown): raw is ContentPart[] {
 }
 
 /** Datos extra de cada mensaje que guarda la web: hora, herramientas usadas y, en salas, qué agente habló. */
-function sanitizeMeta(item: Record<string, unknown>): Pick<ChatMessage, "ts" | "tools" | "agent" | "agentName" | "usage" | "context" | "mode" | "summary"> {
-	const out: Pick<ChatMessage, "ts" | "tools" | "agent" | "agentName" | "usage" | "context" | "mode" | "summary"> = {};
+function sanitizeMeta(item: Record<string, unknown>): Pick<ChatMessage, "ts" | "tools" | "todo" | "agent" | "agentName" | "usage" | "context" | "mode" | "summary"> {
+	const out: Pick<ChatMessage, "ts" | "tools" | "todo" | "agent" | "agentName" | "usage" | "context" | "mode" | "summary"> = {};
 	if (item.role === "assistant" && item.summary === true) out.summary = true;
 	if (item.role === "user" && typeof item.mode === "string") {
-		// Los chats del antiguo modo Code se abren en CodeHacking, que es el mismo.
-		const mode = item.mode === "code" ? "hacking" : item.mode;
-		if ((CHAT_MODES as readonly string[]).includes(mode)) out.mode = mode as ChatMode;
+		if ((CHAT_MODES as readonly string[]).includes(item.mode)) out.mode = item.mode as ChatMode;
 	}
 	if (item.role === "assistant" && item.usage && typeof item.usage === "object") {
 		const u = item.usage as Record<string, unknown>;
@@ -120,6 +124,19 @@ function sanitizeMeta(item: Record<string, unknown>): Pick<ChatMessage, "ts" | "
 			})
 			.filter((t): t is ChatToolUse => t !== null);
 		if (tools.length) out.tools = tools;
+	}
+	if (item.role === "assistant" && Array.isArray(item.todo)) {
+		const todo = item.todo
+			.slice(0, 20)
+			.map((t): TodoItem | null => {
+				if (!t || typeof t !== "object") return null;
+				const r = t as Record<string, unknown>;
+				const text = String(r.text ?? "").trim().slice(0, 200);
+				if (!text) return null;
+				return { text, status: r.status === "done" || r.status === "in_progress" ? r.status : "pending" };
+			})
+			.filter((t): t is TodoItem => t !== null);
+		if (todo.length) out.todo = todo;
 	}
 	return out;
 }
@@ -170,11 +187,28 @@ function backend(): ChatBackend {
 	return chatBackendFor(currentStorage(), sanitizeMessages);
 }
 
+/**
+ * Los chats con su modo. Los que aún no lo tienen anotado (chats de antes, o de WhatsApp, Telegram o el móvil)
+ * se clasifican una vez por sus mensajes; sin mensajes del usuario se quedan en Chat sin anotar.
+ */
 export async function listChatSessions(): Promise<ChatSessionMeta[]> {
-	return backend().list();
+	const store = backend();
+	const sessions = await store.list();
+	const out: ChatSessionMeta[] = [];
+	for (const s of sessions) {
+		let mode = getChatMode(s.id);
+		if (!mode) {
+			const full = await store.get(s.id).catch(() => null);
+			const messages = full?.messages ?? [];
+			mode = modeOfMessages(messages) ?? (messages.some((m) => m.role === "user") ? "chat" : undefined);
+			if (mode) setChatMode(s.id, mode);
+		}
+		out.push({ ...s, mode: mode ?? "chat" });
+	}
+	return out;
 }
 
-export async function createChatSession(initialMessages: ChatMessage[] = []): Promise<ChatSession> {
+export async function createChatSession(initialMessages: ChatMessage[] = [], mode?: ChatMode): Promise<ChatSession> {
 	const now = Date.now();
 	const messages = sanitizeMessages(initialMessages);
 	const session: ChatSession = {
@@ -186,11 +220,15 @@ export async function createChatSession(initialMessages: ChatMessage[] = []): Pr
 		messages,
 	};
 	await backend().insert(session);
-	return session;
+	const chosen = mode ?? modeOfMessages(messages);
+	if (chosen) setChatMode(session.id, chosen);
+	return { ...session, mode: chosen ?? "chat" };
 }
 
 export async function getChatSession(id: string): Promise<ChatSession | null> {
-	return backend().get(id);
+	const session = await backend().get(id);
+	if (!session) return null;
+	return { ...session, mode: getChatMode(id) ?? modeOfMessages(session.messages) ?? "chat" };
 }
 
 export async function saveChatSession(id: string, messages: ChatMessage[]): Promise<ChatSession | null> {
@@ -205,7 +243,13 @@ export async function saveChatSession(id: string, messages: ChatMessage[]): Prom
 		messages: cleanMessages,
 	};
 	if (!(await store.update(id, patch))) return null;
-	return { id, createdAt: existing.createdAt, ...patch };
+	// Un chat sin modo anotado lo toma de su primer mensaje con modo (la web no mezcla modos en un chat).
+	let mode = getChatMode(id);
+	if (!mode) {
+		mode = modeOfMessages(cleanMessages);
+		if (mode) setChatMode(id, mode);
+	}
+	return { id, createdAt: existing.createdAt, ...patch, mode: mode ?? "chat" };
 }
 
 export async function renameChatSession(id: string, title: string): Promise<ChatSession | null> {
@@ -217,7 +261,9 @@ export async function renameChatSession(id: string, title: string): Promise<Chat
 }
 
 export async function deleteChatSession(id: string): Promise<boolean> {
-	return backend().remove(id);
+	const ok = await backend().remove(id);
+	if (ok) removeChatMode(id);
+	return ok;
 }
 
 export async function getOrCreateLinkedChatSession(channel: string, externalId: string, titleHint?: string): Promise<ChatSession> {

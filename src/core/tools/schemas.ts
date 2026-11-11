@@ -3,8 +3,13 @@ import { z } from "zod";
 /** Algunos modelos mandan los booleanos como texto ("true"/"false"). */
 const optionalBool = z.preprocess((v) => (typeof v === "string" ? v.trim().toLowerCase() === "true" : v), z.boolean().optional());
 
+/** Los números usan coerce: algunos modelos locales los mandan como texto ("50"). */
+const optionalNumber = (min: number, max: number) => z.coerce.number().min(min).max(max).optional();
+
 export const readFileSchema = z.object({
 	path: z.string().min(1, "path requerido"),
+	line: optionalNumber(1, 1e9),
+	lines: optionalNumber(1, 5000),
 });
 
 export const writeFileSchema = z.object({
@@ -18,6 +23,8 @@ export const listDirSchema = z.object({
 
 export const readFileSystemSchema = z.object({
 	path: z.string().min(1, "path requerido"),
+	line: optionalNumber(1, 1e9),
+	lines: optionalNumber(1, 5000),
 });
 
 export const writeFileSystemSchema = z.object({
@@ -31,6 +38,8 @@ export const listDirSystemSchema = z.object({
 
 export const fetchUrlSchema = z.object({
 	url: z.string().url("URL inválida"),
+	offset: optionalNumber(0, 1e9),
+	find: z.string().trim().max(200).optional(),
 });
 
 export const searchWebSchema = z.object({
@@ -114,9 +123,6 @@ export const sessionsHistorySchema = z.object({
 });
 
 // ---------- Control del PC ----------
-// Los números usan coerce: algunos modelos locales los mandan como texto ("50").
-
-const optionalNumber = (min: number, max: number) => z.coerce.number().min(min).max(max).optional();
 
 export const pcOpenSchema = z.object({
 	target: z.string().trim().min(1, "indica qué abrir").max(2000),
@@ -220,15 +226,49 @@ export const delegateSchema = z.object({
 
 export const projectSchema = z
 	.object({
-		action: z.enum(["list", "read", "search", "write"]).default("list"),
+		action: z.enum(["list", "find", "search", "read", "edit", "write"]).default("list"),
 		path: z.string().trim().max(1000).optional(),
 		query: z.string().trim().max(300).optional(),
+		files: z.string().trim().max(200).optional(),
+		context: optionalNumber(0, 3),
+		line: optionalNumber(1, 1e9),
+		lines: optionalNumber(1, 5000),
 		offset: optionalNumber(0, 1e9),
+		// Sin trim: los espacios del principio (la sangría) son parte del texto a cambiar.
+		old_text: z.string().max(200_000, "old_text demasiado largo").optional(),
+		new_text: z.string().max(2_000_000, "new_text demasiado largo").optional(),
+		replace_all: optionalBool,
 		content: z.string().max(2_000_000, "contenido demasiado largo").optional(),
 	})
 	.refine((a) => a.action !== "read" || Boolean(a.path), { message: "indica 'path' con el archivo a leer" })
-	.refine((a) => a.action !== "search" || Boolean(a.query), { message: "indica 'query' con lo que quieres buscar" })
-	.refine((a) => a.action !== "write" || (Boolean(a.path) && a.content !== undefined), { message: "indica 'path' y 'content'" });
+	.refine((a) => (a.action !== "search" && a.action !== "find") || Boolean(a.query), { message: "indica 'query' con lo que quieres buscar" })
+	.refine((a) => a.action !== "write" || (Boolean(a.path) && a.content !== undefined), { message: "indica 'path' y 'content'" })
+	.refine((a) => a.action !== "edit" || (Boolean(a.path) && Boolean(a.old_text) && a.new_text !== undefined), {
+		message: "indica 'path', 'old_text' (el trozo exacto que hay ahora) y 'new_text' (cómo debe quedar)",
+	});
+
+/** Estados de una tarea; se aceptan los nombres que usan otros programas (completed, in-progress…). */
+const todoStatus = z.preprocess((v) => {
+	const s = String(v ?? "pending").trim().toLowerCase().replace(/[\s-]+/g, "_");
+	if (/^(done|completed?|hech[oa]|terminad[oa]|finished|list[oa])$/.test(s)) return "done";
+	if (/^(in_progress|en_curso|en_progreso|doing|active|working)$/.test(s)) return "in_progress";
+	return "pending";
+}, z.enum(["pending", "in_progress", "done"]));
+
+const todoItem = z.preprocess(
+	// Otros programas llaman «content» al texto de la tarea.
+	(v) => (v && typeof v === "object" && !("text" in v) && "content" in v ? { ...v, text: (v as { content: unknown }).content } : typeof v === "string" ? { text: v } : v),
+	z.object({ text: z.string().trim().min(1, "cada tarea necesita su texto").max(200), status: todoStatus }),
+);
+
+export const todoSchema = z.preprocess(
+	(v) => {
+		if (!v || typeof v !== "object" || "items" in v) return v;
+		const o = v as Record<string, unknown>;
+		return { ...o, items: o.todos ?? o.tasks };
+	},
+	z.object({ items: z.array(todoItem).min(1, "indica al menos una tarea en items").max(20, "como mucho 20 tareas") }),
+);
 
 export const useSkillSchema = z.object({
 	name: z.string().trim().max(200).optional(),
@@ -276,4 +316,5 @@ export const toolSchemas: Record<string, z.ZodType<Record<string, unknown>>> = {
 	delegate: delegateSchema,
 	use_skill: useSkillSchema,
 	project: projectSchema,
+	todo: todoSchema as z.ZodType<Record<string, unknown>>,
 };

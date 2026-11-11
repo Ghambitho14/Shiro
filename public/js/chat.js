@@ -7,9 +7,10 @@ import { $, $$, el, notifySystem, openMenu, prefs, toast } from "./ui.js";
 import { input, messagesBox, refs, state } from "./state.js";
 import { buildAssistant, buildContent, buildUser, inProjectHome, markLast, nearBottom, paintAssistant, scrollToBottom, updateEmpty } from "./messages.js";
 import { persist, setRoom } from "./rooms.js";
-import { newChat, paintSidebar, panels, setRoute } from "./sidebar.js";
+import { newChat, paintSidebar, panels, rememberChat, setRoute } from "./sidebar.js";
 import { readAloud, stopReading, voice as voiceMode } from "./voiceMode.js";
 import { refreshContextMeter } from "./contextMeter.js";
+import { workProjectForNewChat } from "./workFolder.js";
 
 // ───────────────────────────── composer ─────────────────────────────
 
@@ -178,12 +179,14 @@ export const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes("File
 
 export async function ensureSession() {
 	if (state.activeId) return;
-	const projectId = state.projectHome;
-	const d = await api("/api/chat-sessions", { method: "POST", json: projectId ? { projectId } : {} });
+	// Página de un proyecto, o la carpeta elegida en el modo Code.
+	const projectId = state.projectHome || workProjectForNewChat();
+	const d = await api("/api/chat-sessions", { method: "POST", json: { mode: state.mode, ...(projectId ? { projectId } : {}) } });
 	if (projectId) projects.noteChatInProject(projectId, d.session.id);
 	state.projectHome = null;
 	state.activeId = d.session.id;
-	state.sessions.unshift(d.session);
+	state.sessions.unshift({ ...d.session, mode: d.session.mode || state.mode });
+	rememberChat(d.session.id);
 	setRoute(d.session.id);
 	paintSidebar();
 }
@@ -317,6 +320,9 @@ export async function runAssistant({ voice = false, hooks = {} } = {}) {
 			content: x.content,
 			...(x.agent ? { agent: x.agent, agentName: x.agentName } : {}),
 			...(x.mode ? { mode: x.mode } : {}),
+			// Qué herramientas usó en cada respuesta y su lista de tareas: así sabe qué miró en la anterior.
+			...(x.tools?.length ? { tools: x.tools.map((t) => ({ name: t.name, label: t.label, ok: t.status !== "fail" })) } : {}),
+			...(x.todo?.length ? { todo: x.todo } : {}),
 		}));
 
 	try {
@@ -333,6 +339,10 @@ export async function runAssistant({ voice = false, hooks = {} } = {}) {
 					repaint();
 					panels.onTool(evt);
 					hooks.onTool?.(evt);
+				},
+				onTodo: (items) => {
+					m.todo = items;
+					repaint();
 				},
 				onApproval: (evt) => {
 					const decide = addApprovalCard(m, evt);
@@ -384,7 +394,7 @@ export async function runAssistant({ voice = false, hooks = {} } = {}) {
 		}
 	}
 	refs.get(m)?.cards.forEach((c) => c.cancel?.());
-	if (m.stopped && !m.content && !m.tools.length) {
+	if (m.stopped && !m.content && !m.tools.length && !m.todo?.length) {
 		refs.get(m)?.root.remove();
 		list.splice(list.indexOf(m), 1);
 	} else {

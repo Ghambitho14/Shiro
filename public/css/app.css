@@ -956,6 +956,74 @@ a {
 	margin-top: 6px;
 }
 
+/* ------------------------------------------------------------ lista de tareas (tool todo) */
+
+.todo {
+	margin: 2px 0 12px;
+	padding: 10px 12px;
+	border: 1px solid var(--border);
+	border-radius: 12px;
+	font-size: 14px;
+	max-width: 560px;
+}
+
+.todo-head {
+	color: var(--text-3);
+	font-size: 12.5px;
+	margin-bottom: 6px;
+}
+
+.todo-list {
+	display: flex;
+	flex-direction: column;
+	gap: 5px;
+}
+
+.todo-item {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	color: var(--text-2);
+	line-height: 1.45;
+}
+
+.todo-item span {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.todo-item .svg-icon {
+	width: 16px;
+	height: 16px;
+	margin-top: 2px;
+	flex: none;
+	color: var(--text-3);
+}
+
+.todo-item.done {
+	color: var(--text-3);
+}
+
+.todo-item.done span {
+	text-decoration: line-through;
+}
+
+.todo-item.done .svg-icon {
+	color: var(--success);
+}
+
+.todo-item.in_progress {
+	color: var(--text);
+}
+
+.todo-item.in_progress .svg-icon {
+	color: var(--accent);
+}
+
+.todo-item.live .svg-icon {
+	animation: spin 0.9s linear infinite;
+}
+
 /* ------------------------------------------------------------ tool steps */
 
 .steps {
@@ -4802,14 +4870,18 @@ body.mini-voz .toast {
 	cursor: pointer;
 }
 
-/* ───────────── Modos Chat / Plan / Code / CodeHacking (barra superior) ───────────── */
+/* ───────────── Modos Chat / Plan / Code / Hacking (barra superior) ───────────── */
 :root {
+	--code: #7c3aed;
+	--code-soft: rgba(124, 58, 237, 0.12);
 	--hack: #15803d;
 	--hack-soft: rgba(22, 163, 74, 0.14);
 	--plan: #2563eb;
 	--plan-soft: rgba(37, 99, 235, 0.12);
 }
 :root[data-theme="dark"] {
+	--code: #a78bfa;
+	--code-soft: rgba(167, 139, 250, 0.16);
 	--hack: #4ade80;
 	--hack-soft: rgba(34, 197, 94, 0.18);
 	--plan: #60a5fa;
@@ -4858,6 +4930,10 @@ body.mini-voz .toast {
 	background: var(--plan-soft);
 	color: var(--plan);
 }
+.mode-opt[data-mode="code"].active {
+	background: var(--code-soft);
+	color: var(--code);
+}
 .mode-opt[data-mode="hacking"].active {
 	background: var(--hack-soft);
 	color: var(--hack);
@@ -4865,6 +4941,9 @@ body.mini-voz .toast {
 /* Un acento discreto deja claro en qué modo especial estás. */
 #app.mode-plan .topbar {
 	box-shadow: inset 0 -2px 0 var(--plan);
+}
+#app.mode-code .topbar {
+	box-shadow: inset 0 -2px 0 var(--code);
 }
 #app.mode-hacking .topbar {
 	box-shadow: inset 0 -2px 0 var(--hack);
@@ -5042,4 +5121,12 @@ body.mini-voz .toast {
 	.suggestions {
 		display: none !important;
 	}
+}
+
+/* Botón de carpeta del modo Code (workFolder.js): nombres largos con puntos suspensivos. */
+#folder-label {
+	max-width: 180px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }

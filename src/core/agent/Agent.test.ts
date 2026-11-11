@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { resolveTools, runAgent } from "./Agent.js";
 import { getConfig } from "../../config/config.js";
 import { activeModelTuning } from "../llm/providers.js";
-import { HACKING_TOOLS, PC_TOOLS, PLAN_TOOLS, planToolsFor, WINDOWS_ONLY_TOOLS } from "../tools/ToolRegistry.js";
+import { CODE_TOOLS, HACKING_TOOLS, PC_TOOLS, PLAN_TOOLS, planToolsFor, WINDOWS_ONLY_TOOLS } from "../tools/ToolRegistry.js";
 import { isPlanToolCall, parseChatMode, parsePermissionMode } from "./chatMode.js";
 import type { LLMClient } from "../llm/LLMClient.js";
 
@@ -28,8 +28,7 @@ test("en la web o la terminal (con approver) sí se ofrece, también a modelos l
 
 test("los modos y permisos se validan, y al planear las acciones mixtas se limitan a lectura", () => {
 	assert.equal(parseChatMode("hacking"), "hacking");
-	// El antiguo modo Code ahora es CodeHacking.
-	assert.equal(parseChatMode("code"), "hacking");
+	assert.equal(parseChatMode("code"), "code");
 	// Plan ya no es un modo: es un permiso que vale en cualquiera.
 	assert.equal(parseChatMode("plan"), "chat");
 	assert.equal(parseChatMode("cualquier cosa"), "chat");
@@ -47,7 +46,15 @@ test("los modos y permisos se validan, y al planear las acciones mixtas se limit
 	assert.equal(isPlanToolCall("terminal", { action: "write", text: "hola" }), false);
 });
 
-test("CodeHacking programa, hackea y usa habilidades; al planear solo se recibe lectura, en cualquier modo", () => {
+test("Code programa y usa habilidades, sin las herramientas de seguridad", () => {
+	const code = resolveTools(CODE_TOOLS, true, true, false, undefined, "code");
+	for (const tool of ["project", "write_file", "git", "exec", "terminal", "delegate", "browser", "use_skill", "claude_code"]) assert.ok(code?.includes(tool), tool);
+	assert.equal(code?.includes("cve_search"), false);
+	const plan = resolveTools(planToolsFor("code"), true, true, false, undefined, "code", true);
+	assert.deepEqual(plan, PLAN_TOOLS);
+});
+
+test("Hacking prueba la seguridad y usa habilidades; al planear solo se recibe lectura, en cualquier modo", () => {
 	const all = resolveTools(HACKING_TOOLS, true, true, false, undefined, "hacking");
 	for (const tool of ["write_file", "git", "exec", "terminal", "delegate", "cve_search", "browser", "use_skill"]) assert.ok(all?.includes(tool), tool);
 	const chatPlan = resolveTools(planToolsFor("chat"), true, true, false, undefined, "chat", true);
@@ -103,7 +110,7 @@ test("Más razonamiento llega al modelo solo si se pidió", async () => {
 	assert.deepEqual(seen, [undefined, "high"]);
 });
 
-test("el modo ahorro no quita a CodeHacking las herramientas de programación", async () => {
+test("el modo ahorro no quita a Hacking sus herramientas", async () => {
 	let offered: string[] = [];
 	const llm: LLMClient = {
 		chat: async () => "ok",
@@ -143,4 +150,84 @@ test("planear bloquea project write antes de ejecutar la herramienta", async () 
 	});
 	assert.match(out, /Estás planeando: es solo lectura/i);
 	assert.match(out, /Preguntar o Automático/);
+});
+
+test("planear deja buscar archivos por nombre y bloquea project edit antes de ejecutarlo", async () => {
+	assert.equal(isPlanToolCall("project", { action: "find", query: "x" }), true);
+	assert.equal(isPlanToolCall("project", { action: "edit" }), false);
+	assert.ok(PLAN_TOOLS.includes("todo") && CODE_TOOLS.includes("todo") && HACKING_TOOLS.includes("todo"));
+	const llm: LLMClient = {
+		chat: async () => "ok",
+		chatWithTools: async (_messages, _defs, exec) => {
+			const r = await exec("project", { action: "edit", path: "Subidos/a.ts", old_text: "a", new_text: "b" });
+			return r.ok ? r.content : (r.error ?? "La herramienta falló");
+		},
+		getConfig: () => ({ provider: "ollama", model: "qwen3:8b", baseUrl: "http://localhost:11434", local: true }),
+	};
+	const out = await runAgent("cambia este archivo", { llm, agentName: "Shiro", permissions: "plan", allowedTools: PLAN_TOOLS, mcp: false });
+	assert.match(out, /Estás planeando: es solo lectura/i);
+});
+
+test("el entorno y la guía van solo donde se puede pedir permiso; el modelo sabe qué hizo antes y cuánto cabe", async () => {
+	const seen: { system: string; last: string; tools: string[]; opts: { resultChars?: number; contextTokens?: number } | undefined }[] = [];
+	const llm: LLMClient = {
+		chat: async () => "ok",
+		chatWithTools: async (messages, defs, _exec, opts) => {
+			seen.push({ system: String(messages[0]?.content), last: String(messages[messages.length - 1]?.content), tools: defs.map((d) => d.function.name), opts });
+			return "Respuesta de prueba.";
+		},
+		getConfig: () => ({ provider: "ollama", model: "qwen3:8b", baseUrl: "http://localhost:11434", local: true }),
+	};
+	const base = { llm, agentName: "Shiro", mcp: false, mode: "code" as const, allowedTools: CODE_TOOLS };
+	const conversation = [
+		{ role: "user" as const, content: "revisa el fallo" },
+		{ role: "assistant" as const, content: "Está en a.ts.", tools: [{ name: "project", label: "Leyendo a.ts", ok: true }] },
+		{ role: "user" as const, content: "sigue" },
+	];
+	await runAgent("sigue", { ...base, approver: async () => true, conversation });
+	await runAgent("hola", base);
+	await runAgent("hola", { ...base, approver: async () => true, subagent: { boss: "Shiro" }, conversation });
+	const [web, telegram, helper] = seen;
+	assert.match(web!.system, /## Cómo trabajas\n/);
+	assert.match(web!.system, /## Entorno\n- Sistema: /);
+	assert.match(web!.system, /Modo Code\. Permisos: Preguntar/);
+	assert.match(web!.system, /## Qué herramienta usar\n/);
+	// Lo que hizo antes va pegado al mensaje nuevo, no arriba en las instrucciones.
+	assert.match(web!.last, /^\[Nota del sistema; no la escribió el usuario\]\n## Lo que hiciste en tu respuesta anterior\n[\s\S]*- ✓ Leyendo a\.ts\n\[Fin de la nota\]\n\nsigue$/);
+	assert.doesNotMatch(web!.system, /Lo que hiciste en tu respuesta anterior/);
+	assert.ok(web!.tools.includes("todo"));
+	assert.equal(typeof web!.opts?.resultChars, "number");
+	assert.ok((web!.opts?.resultChars ?? 0) <= 12_000);
+	// Sin a quién pedir permiso (Telegram, WhatsApp): el método sí, pero nada de cómo es el equipo.
+	assert.match(telegram!.system, /## Cómo trabajas\n/);
+	assert.doesNotMatch(telegram!.system, /## Entorno|## Qué herramienta usar/);
+	// Un ayudante: sin lista de tareas ni otros ayudantes, y sin lo que hizo su jefe antes.
+	assert.ok(!helper!.tools.includes("todo") && !helper!.tools.includes("delegate"));
+	assert.match(helper!.system, /## Entorno\n/);
+	assert.doesNotMatch(helper!.last, /Lo que hiciste en tu respuesta anterior/);
+});
+
+test("la lista de tareas llega a quien la pinta y se queda en la respuesta", async () => {
+	const lists: unknown[] = [];
+	const llm: LLMClient = {
+		chat: async () => "ok",
+		chatWithTools: async (_messages, _defs, exec) => {
+			const a = await exec("todo", { items: [{ text: "Leer", status: "in_progress" }, { content: "Arreglar", status: "pending" }] });
+			const b = await exec("todo", { todos: [{ text: "Leer", status: "completed" }, { text: "Arreglar", status: "in-progress" }] });
+			return `${a.ok ? a.content : a.error} | ${b.ok ? b.content : b.error}`;
+		},
+		getConfig: () => ({ provider: "ollama", model: "qwen3:8b", baseUrl: "http://localhost:11434", local: true }),
+	};
+	const out = await runAgent("arregla el fallo", { llm, agentName: "Shiro", mcp: false, mode: "code", allowedTools: CODE_TOOLS, approver: async () => true, onTodo: (items) => lists.push(items) });
+	assert.match(out, /0 de 2 hechas\. Ahora: «Leer»\. \| Lista guardada: 1 de 2 hechas\. Ahora: «Arreglar»\./);
+	assert.deepEqual(lists, [
+		[
+			{ text: "Leer", status: "in_progress" },
+			{ text: "Arreglar", status: "pending" },
+		],
+		[
+			{ text: "Leer", status: "done" },
+			{ text: "Arreglar", status: "in_progress" },
+		],
+	]);
 });

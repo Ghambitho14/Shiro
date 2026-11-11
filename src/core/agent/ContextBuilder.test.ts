@@ -125,9 +125,10 @@ test("bloque «## Sala»: participantes, principal y mensajes omitidos", () => {
 	strictEqual(buildContext({ ...base, room }).system.includes(block), true);
 });
 
-test("modo CodeHacking: incluye el bloque de pentesting y el guardarraíl de alcance", () => {
+test("modo Hacking: incluye el bloque de pentesting y el guardarraíl de alcance, sin el de programar", () => {
 	const { system } = buildContext({ goal: "Escanea mi VPS", agentName: "Shiro", tokenBudget: 4000, mode: "hacking" });
-	strictEqual(system.includes("Modo CodeHacking"), true);
+	strictEqual(system.includes("Modo Hacking"), true);
+	strictEqual(system.includes("Modo Code"), false);
 	// Guardarraíl: solo objetivos autorizados.
 	strictEqual(/autorizad/i.test(system), true);
 	strictEqual(system.includes("cve_search"), true);
@@ -135,12 +136,13 @@ test("modo CodeHacking: incluye el bloque de pentesting y el guardarraíl de alc
 
 test("sin hacking no aparece el bloque de pentesting", () => {
 	const { system } = buildContext({ goal: "Hola", agentName: "Shiro", tokenBudget: 4000 });
-	strictEqual(system.includes("Modo CodeHacking"), false);
+	strictEqual(system.includes("Modo Hacking"), false);
+	strictEqual(system.includes("Modo Code"), false);
 });
 
 test("en modo texto (sin herramientas) no se añade el bloque de pentesting", () => {
 	const { system } = buildContext({ goal: "Hola", agentName: "Shiro", tokenBudget: 4000, mode: "hacking", textOnly: true });
-	strictEqual(system.includes("Modo CodeHacking"), false);
+	strictEqual(system.includes("Modo Hacking"), false);
 });
 
 test("planear explica el solo lectura incluso si no hay herramientas", () => {
@@ -150,11 +152,11 @@ test("planear explica el solo lectura incluso si no hay herramientas", () => {
 	strictEqual(system.includes("«Preguntar» o «Automático»"), true);
 });
 
-test("planear en CodeHacking no dice que puede cambiar cosas, pero conserva el alcance y la metodología", () => {
+test("planear en Hacking no dice que puede cambiar cosas, pero conserva el alcance y la metodología", () => {
 	const { system } = buildContext({ goal: "Haz un plan", agentName: "Shiro", tokenBudget: 4000, mode: "hacking", planning: true });
 	strictEqual(system.includes("Planear (solo lectura)"), true);
-	strictEqual(system.includes("Modo CodeHacking"), false);
-	strictEqual(system.includes("Planear en CodeHacking"), true);
+	strictEqual(system.includes("Modo Hacking"), false);
+	strictEqual(system.includes("Planear en Hacking"), true);
 	strictEqual(system.includes("confirma que el objetivo"), true);
 	strictEqual(system.includes("Metodología"), true);
 });
@@ -162,12 +164,57 @@ test("planear en CodeHacking no dice que puede cambiar cosas, pero conserva el a
 test("planear en Chat no añade nada de pentesting", () => {
 	const { system } = buildContext({ goal: "Haz un plan", agentName: "Shiro", tokenBudget: 4000, mode: "chat", planning: true });
 	strictEqual(system.includes("Planear (solo lectura)"), true);
-	strictEqual(system.includes("Planear en CodeHacking"), false);
+	strictEqual(system.includes("Planear en Hacking"), false);
+	strictEqual(system.includes("Planear en Code"), false);
 });
 
-test("CodeHacking pide leer antes de cambiar y comprobar el resultado", () => {
-	const { system } = buildContext({ goal: "Arregla el fallo", agentName: "Shiro", tokenBudget: 4000, mode: "hacking" });
-	strictEqual(system.includes("Modo CodeHacking"), true);
+test("Code trabaja como un senior: lee antes de cambiar, reutiliza y comprueba el resultado", () => {
+	const { system } = buildContext({ goal: "Arregla el fallo", agentName: "Shiro", tokenBudget: 4000, mode: "code" });
+	strictEqual(system.includes("Modo Code"), true);
+	strictEqual(system.includes("Modo Hacking"), false);
 	strictEqual(system.includes("Antes de cambiar algo"), true);
+	strictEqual(system.includes("Busca si ya existe"), true);
 	strictEqual(system.includes("Nunca digas que algo funciona"), true);
+	strictEqual(system.includes("cve_search"), false);
+});
+
+test("planear en Code pide archivos, reutilización y pruebas, sin el bloque de trabajo", () => {
+	const { system } = buildContext({ goal: "Haz un plan", agentName: "Shiro", tokenBudget: 4000, mode: "code", planning: true });
+	strictEqual(system.includes("Planear en Code"), true);
+	strictEqual(system.includes("Modo Code"), false);
+	strictEqual(system.includes("confirma que el objetivo"), false);
+});
+
+test("con herramientas van el método, el entorno y la guía; en modo solo texto, no", () => {
+	const base = {
+		goal: "hola",
+		agentName: "A",
+		tokenBudget: 8000,
+		environment: "## Entorno\n- Sistema: Prueba",
+		toolGuide: "## Qué herramienta usar\n- Proyecto: project",
+	};
+	const { system } = buildContext(base);
+	const at = (text: string) => system.indexOf(text);
+	strictEqual(at("## Cómo trabajas\n- Mira antes de responder") > 0, true);
+	// En orden: método, entorno, guía; y todo antes de las reglas de seguridad.
+	strictEqual(at("## Cómo trabajas") < at("## Entorno") && at("## Entorno") < at("## Qué herramienta usar") && at("## Qué herramienta usar") < at("## Seguridad"), true);
+	const plain = buildContext({ ...base, textOnly: true }).system;
+	strictEqual(/## Cómo trabajas|## Entorno|## Qué herramienta usar/.test(plain), false);
+	// Sin entorno ni guía (WhatsApp, Telegram) queda el método.
+	const noEnv = buildContext({ goal: "hola", agentName: "A", tokenBudget: 8000 }).system;
+	strictEqual(noEnv.includes("## Cómo trabajas"), true);
+	strictEqual(/## Entorno|## Qué herramienta usar/.test(noEnv), false);
+});
+
+test("carpetas del proyecto: lo que se sabe de cada una y si la terminal ya está dentro", async () => {
+	const { buildProjectBlock } = await import("./ContextBuilder.js");
+	const folder = join(tmpdir(), "mi-app");
+	const project = { name: "mi-app", index: "(vacío)", hasTool: true, folders: [{ path: folder, note: "Node (npm). Comandos: npm test" }] };
+	const outside = buildProjectBlock({ ...project, terminalCwd: tmpdir() }, 4000);
+	strictEqual(outside.includes(`### Carpetas en este equipo\n- ${folder} — Node (npm). Comandos: npm test\nLa terminal es compartida y no empieza en estas carpetas`), true);
+	const inside = buildProjectBlock({ ...project, terminalCwd: join(folder, "src") }, 4000);
+	strictEqual(inside.includes(`La terminal ya está dentro del proyecto (${join(folder, "src")}).`), true);
+	strictEqual(inside.includes("no empieza en estas carpetas"), false);
+	// Sin terminal no se sabe dónde está: el aviso de siempre.
+	strictEqual(buildProjectBlock(project, 4000).includes("no empieza en estas carpetas"), true);
 });

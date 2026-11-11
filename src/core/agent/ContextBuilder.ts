@@ -4,6 +4,7 @@ import { buildSkillsBlock, type Skill } from "../skills/SkillLoader.js";
 import { getConfig } from "../../config/config.js";
 import type { ChatMode } from "./chatMode.js";
 import type { PromptSections } from "./contextUsage.js";
+import { isWithinRoot } from "../tools/paths.js";
 
 export type UserProfileInput = {
 	userName?: string;
@@ -47,6 +48,10 @@ export type ContextInput = {
 	subagent?: { boss: string };
 	/** Tiene `delegate`: los agentes de Ajustes → Agentes a los que puede encargar tareas. */
 	helpers?: { name: string; description?: string }[];
+	/** Bloque «Entorno» (environment.ts): sistema, consola, programas, modo y permisos. */
+	environment?: string;
+	/** Bloque «Qué herramienta usar» (environment.ts), con las herramientas de esta respuesta. */
+	toolGuide?: string;
 };
 
 /** Instrucciones del ayudante: hace su tarea y devuelve el resultado; no habla con el usuario. */
@@ -112,12 +117,24 @@ export type ProjectContext = {
 	inline?: string | null;
 	/** El modelo tiene la tool project. */
 	hasTool: boolean;
+	/** Carpetas vinculadas en este equipo (para la terminal), con lo que se sabe de cada una (folderInfo.ts). */
+	folders?: { path: string; note?: string }[];
+	/** Carpeta donde está ahora la terminal, si el modelo la tiene. */
+	terminalCwd?: string;
 };
 
 export function buildProjectBlock(p: ProjectContext, maxChars: number): string {
 	const parts = [`## Proyecto «${p.name}»`, `Este chat es parte del proyecto «${p.name}»${p.description ? `: ${p.description}` : "."}`];
 	if (p.instructions) parts.push(`### Instrucciones del proyecto (síguelas en todas tus respuestas)\n${p.instructions}`);
 	parts.push(`### Archivos del proyecto\n${p.index}`);
+	if (p.folders?.length) {
+		const cwd = p.terminalCwd;
+		const inside = cwd ? p.folders.some((f) => isWithinRoot(cwd, f.path, true)) : false;
+		const where = inside
+			? `La terminal ya está dentro del proyecto (${cwd}).`
+			: "La terminal es compartida y no empieza en estas carpetas: antes de correr comandos del proyecto, entra en la que toque (cd).";
+		parts.push(`### Carpetas en este equipo\n${p.folders.map((f) => `- ${f.path}${f.note ? ` — ${f.note}` : ""}`).join("\n")}\n${where}`);
+	}
 	if (p.hasTool) {
 		parts.push(
 			"Para saber qué dicen los archivos usa la tool project (action=search para buscar, action=read para leer) antes de responder sobre su contenido. Di de qué archivo sacas cada dato y no inventes lo que no hayas leído.",
@@ -152,6 +169,18 @@ Puedes manejar el PC del usuario (${osName()}) con las herramientas pc_*:
 - Nunca apagues, reinicies ni cierres programas a la fuerza si el usuario no lo pidió claramente.`;
 }
 
+/**
+ * Cómo se trabaja con herramientas: mirar antes de responder, ir de lo general a lo concreto y
+ * comprobar. Fijo (como los bloques de los modos): las instrucciones que el usuario puede reescribir
+ * hablan del estilo, no del método.
+ */
+export const WORK_BLOCK = `## Cómo trabajas
+- Mira antes de responder: lo que se pueda comprobar con tus herramientas (un archivo, el equipo, una web, tu memoria), compruébalo. No supongas ni le preguntes al usuario lo que puedes averiguar tú.
+- Ve de lo general a lo concreto: primero ubica (listar, buscar) y luego lee solo la parte que importa. Varias búsquedas cortas valen más que una lectura enorme.
+- Si algo falla, lee el error y prueba otra vía (otra ruta, otra palabra, otro comando). No repitas la misma llamada ni te rindas al primer intento.
+- No des nada por hecho sin comprobarlo. Al terminar di qué hiciste o encontraste, en qué te basas (archivo, comando o enlace) y qué no pudiste comprobar.
+- Pregunta solo cuando falte una decisión del usuario o la acción sea delicada. Para charlar o para lo que ya sabes, responde directo, sin herramientas.`;
+
 export const PLAN_BLOCK = `## Planear (solo lectura)
 Investiga y prepara un plan útil antes de tocar nada. Puedes leer archivos y proyectos, buscar información y consultar la memoria, pero NO puedes escribir, ejecutar comandos, crear recordatorios, guardar recuerdos ni cambiar el PC.
 - Lee primero lo que haga falta; no inventes contenido ni des por hecho cómo funciona un proyecto.
@@ -166,29 +195,41 @@ const HACKING_SCOPE = `Las pruebas de seguridad son SOLO sobre sistemas del usua
 - Nunca ataques sistemas de terceros, ni hagas denegación de servicio, ni automatices ataques masivos. Si te piden algo contra un sistema que no es del usuario ni está autorizado, recuérdaselo y no lo hagas.`;
 
 /**
- * Modo CodeHacking: programar y hacer pruebas de seguridad autorizadas. El usuario lo activa a
- * propósito con el interruptor de la barra superior. Deja claro el alcance (solo lo suyo o
- * autorizado) y cómo trabajar en cada caso. Las reglas de seguridad y permisos siguen vigentes.
+ * Modo Code: programar en los proyectos del usuario como un programador senior. El usuario lo activa
+ * a propósito en la barra superior. Las reglas de seguridad y permisos siguen vigentes.
  */
-export const HACKING_BLOCK = `## Modo CodeHacking (programación y pentesting autorizado)
-Ayudas al usuario a programar y a probar la seguridad de sus sistemas.
-
-### Programar
-- Antes de cambiar algo, lee el código y sus pruebas relacionadas. Haz cambios pequeños y acordes con el estilo existente.
-- No cambies comportamiento ni archivos que no hagan falta. No hagas commits, pushes ni operaciones Git con efectos si el usuario no los pidió claramente.
-- Ejecuta las comprobaciones relevantes cuando puedas y mira su salida. Nunca digas que algo funciona o que una prueba pasó sin haberla ejecutado.
+export const CODE_BLOCK = `## Modo Code (programar como un senior)
+Ayudas al usuario a programar en sus proyectos. Trabajas como un programador senior: entiendes antes de tocar, cambias lo justo y compruebas lo que haces.
+- Antes de cambiar algo, lee el código relacionado, sus pruebas y las reglas del proyecto (AGENTS.md, CLAUDE.md, README) si existen. No des por hecho cómo funciona: compruébalo leyendo.
+- Busca si ya existe una función o patrón que sirva antes de escribir algo nuevo, y sigue el estilo, los nombres y la estructura que ya usa el proyecto.
+- Ubica el código con project (find y search) y lee solo el tramo que necesitas. Para cambiar algo usa project edit (un trozo); no reescribas archivos enteros.
+- Haz cambios pequeños y enfocados en lo que se pidió. No toques comportamiento ni archivos que no hagan falta, y no reescribas lo que funciona.
+- Piensa en los casos borde y en los errores: entradas vacías o raras, fallos de red o de disco, qué ve el usuario si algo sale mal.
+- Ejecuta las comprobaciones del proyecto (tipos, pruebas, lint) con la terminal y lee su salida. Nunca digas que algo funciona o que una prueba pasó sin haberla ejecutado.
+- Si encuentras un problema que no te pidieron arreglar, avísalo en vez de cambiarlo por tu cuenta.
+- No hagas commits, pushes ni operaciones Git con efectos si el usuario no los pidió claramente.
 - Si no hay un proyecto con carpeta vinculada, puedes explicar código o trabajar en el workspace, pero pide que vinculen la carpeta cuando necesites modificar su programa.
-- Termina con un resumen sencillo: qué cambiaste, dónde y cómo lo comprobaste. Si algo falló o quedó pendiente, dilo claro.
+- Termina con un resumen sencillo en español (el usuario no es programador): qué cambiaste, dónde, cómo lo comprobaste y qué falta. Si algo falló, dilo claro.`;
 
-### Pruebas de seguridad
+/** Al planear en Code: un plan que se pueda ejecutar sin volver a investigar. */
+export const CODE_PLAN_BLOCK = `## Planear en Code
+Nombra los archivos que habría que tocar, las funciones o patrones del proyecto que se pueden reutilizar, los casos borde y las pruebas o comandos con los que se comprobaría.`;
+
+/**
+ * Modo Hacking (id `hacking`, antes CodeHacking): pruebas de seguridad autorizadas, pensado para Kali.
+ * El usuario lo activa a propósito en la barra superior. Deja claro el alcance (solo lo suyo o
+ * autorizado). Las reglas de seguridad y permisos siguen vigentes.
+ */
+export const HACKING_BLOCK = `## Modo Hacking (pentesting autorizado)
+Ayudas al usuario a probar la seguridad de sus sistemas.
 ${HACKING_SCOPE}
-- Usa la terminal (tool terminal, action=run) para que el usuario vea la salida en vivo; los comandos que atacan o cambian cosas le piden permiso. Comprueba antes que la herramienta esté instalada (nmap, nikto, whatweb, gobuster, sqlmap, nuclei…): en Kali vienen casi todas, en otros equipos quizá no. Si falta, dilo; nunca inventes resultados.
+- Usa la terminal (tool terminal, action=run) para que el usuario vea la salida en vivo; los comandos que atacan o cambian cosas le piden permiso. Mira en «Entorno» qué herramientas están instaladas (nmap, nikto, whatweb, gobuster, sqlmap, nuclei…): en Kali vienen casi todas, en otros equipos quizá no. Si falta la que necesitas, dilo; nunca inventes resultados.
 - Usa el navegador (tool browser) para revisar las webs del objetivo, y fetch_url/search_web para documentación. cve_search busca por CVE-ID o por producto (vendor + product).
 - Informe final en español claro (el usuario no es programador): qué probaste, qué encontraste, qué riesgo tiene y cómo arreglarlo, ordenado por gravedad.`;
 
-/** Al planear en CodeHacking: conserva el alcance y la metodología, sin poder ejecutar nada. */
-export const HACKING_PLAN_BLOCK = `## Planear en CodeHacking
-Si el plan es de programación, nombra archivos y pruebas. Si es de seguridad, propón qué comandos correrías y en qué orden, sin lanzarlos.
+/** Al planear en Hacking: conserva el alcance y la metodología, sin poder ejecutar nada. */
+export const HACKING_PLAN_BLOCK = `## Planear en Hacking
+Propón qué comandos correrías y en qué orden, sin lanzarlos.
 ${HACKING_SCOPE}`;
 
 export const VOICE_BLOCK = `## Modo voz
@@ -229,11 +270,13 @@ export function buildContext(input: ContextInput): { system: string; messages: M
 	const roomBlock = input.room ? "\n\n" + buildRoomBlock(input.room) : "";
 	const pcBlock = input.pcControl && !textOnly ? "\n\n" + buildPcControlBlock(input.vision === true) : "";
 	const voiceBlock = input.voice ? "\n\n" + VOICE_BLOCK : "";
-	// Al planear, el bloque del modo diría que puede cambiar cosas: se sustituye, sin perder el alcance de CodeHacking.
+	// Al planear, el bloque del modo diría que puede cambiar cosas: se sustituye, sin perder el alcance de Hacking.
+	const planExtra = input.mode === "hacking" ? HACKING_PLAN_BLOCK : input.mode === "code" ? CODE_PLAN_BLOCK : "";
+	const workBlock = input.mode === "hacking" ? HACKING_BLOCK : input.mode === "code" ? CODE_BLOCK : "";
 	const modeBlock = input.planning
-		? "\n\n" + PLAN_BLOCK + (input.mode === "hacking" ? "\n\n" + HACKING_PLAN_BLOCK : "")
-		: input.mode === "hacking" && !textOnly
-			? "\n\n" + HACKING_BLOCK
+		? "\n\n" + PLAN_BLOCK + (planExtra ? "\n\n" + planExtra : "")
+		: workBlock && !textOnly
+			? "\n\n" + workBlock
 			: "";
 	const safetyBlock = textOnly ? "" : "\n\n" + SAFETY_BLOCK;
 	const teamBlock = input.subagent
@@ -241,9 +284,21 @@ export function buildContext(input: ContextInput): { system: string; messages: M
 		: input.helpers && !textOnly
 			? "\n\n" + buildHelpersBlock(input.helpers)
 			: "";
+	// Método, entorno y guía de herramientas: solo cuando hay herramientas con las que trabajar.
+	const methodBlock =
+		textOnly ? "" : "\n\n" + WORK_BLOCK + (input.environment ? "\n\n" + input.environment : "") + (input.toolGuide ? "\n\n" + input.toolGuide : "");
 
 	let remaining =
-		budgetChars - soul.length - roomBlock.length - teamBlock.length - pcBlock.length - modeBlock.length - voiceBlock.length - safetyBlock.length - 200;
+		budgetChars -
+		soul.length -
+		roomBlock.length -
+		teamBlock.length -
+		pcBlock.length -
+		modeBlock.length -
+		methodBlock.length -
+		voiceBlock.length -
+		safetyBlock.length -
+		200;
 	if (remaining < 500) remaining = 500;
 
 	const userBlock = input.userProfile && (input.userProfile.userName || input.userProfile.about || input.userProfile.language || input.userProfile.extra)
@@ -291,6 +346,7 @@ export function buildContext(input: ContextInput): { system: string; messages: M
 		soul +
 		roomBlock +
 		teamBlock +
+		methodBlock +
 		pcBlock +
 		modeBlock +
 		safetyBlock +

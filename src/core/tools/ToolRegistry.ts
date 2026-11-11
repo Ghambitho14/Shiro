@@ -25,7 +25,11 @@ export const TOOLS: ToolDefinition[] = [
 		category: "archivos",
 		parameters: {
 			type: "object",
-			properties: { path: { type: "string", description: "Ruta relativa al workspace (ej: notas.txt, docs/README.md)" } },
+			properties: {
+				path: { type: "string", description: "Ruta relativa al workspace (ej: notas.txt, docs/README.md)" },
+				line: { type: "number", description: "Opcional: primera línea a leer (si el archivo es largo)" },
+				lines: { type: "number", description: "Opcional: cuántas líneas leer" },
+			},
 			required: ["path"],
 		},
 		examples: [
@@ -68,11 +72,15 @@ export const TOOLS: ToolDefinition[] = [
 	{
 		label: "Leer Archivo del Sistema",
 		name: "read_file_system",
-		description: "Lee un archivo de la PC del usuario (ruta absoluta).",
+		description: "Lee un archivo de la PC del usuario (ruta absoluta). Si es largo llega por partes: sigue con line (y lines) como diga el resultado.",
 		category: "sistema",
 		parameters: {
 			type: "object",
-			properties: { path: { type: "string", description: "Ruta absoluta (C:/...)" } },
+			properties: {
+				path: { type: "string", description: "Ruta absoluta (C:/...)" },
+				line: { type: "number", description: "Opcional: primera línea a leer" },
+				lines: { type: "number", description: "Opcional: cuántas líneas leer" },
+			},
 			required: ["path"],
 		},
 	},
@@ -128,11 +136,15 @@ export const TOOLS: ToolDefinition[] = [
 		label: "Obtener URL",
 		name: "fetch_url",
 		description:
-			"Obtiene el contenido textual de una URL (HTML, JSON, XML). Úsalo cuando el usuario da un enlace oficial o quieres comprobar una fuente concreta; complementa a search_web.",
+			"Obtiene el contenido textual de una URL (HTML, JSON, XML). Úsalo cuando el usuario da un enlace oficial o quieres comprobar una fuente concreta; complementa a search_web. Una página larga llega por partes: sigue con offset como diga el resultado, o usa find para traer solo los párrafos que tienen unas palabras.",
 		category: "web",
 		parameters: {
 			type: "object",
-			properties: { url: { type: "string", description: "URL completa (https://...)" } },
+			properties: {
+				url: { type: "string", description: "URL completa (https://...)" },
+				offset: { type: "number", description: "Opcional: letra desde la que seguir leyendo (te la da el resultado anterior)" },
+				find: { type: "string", description: "Opcional: palabras a buscar en la página; devuelve solo los párrafos que las tienen" },
+			},
 			required: ["url"],
 		},
 	},
@@ -407,7 +419,7 @@ export const TOOLS: ToolDefinition[] = [
 			type: "object",
 			properties: {
 				command: { type: "string", description: "Un solo comando git (sin 'git', ej: 'status', 'add .', 'commit -m \"msg\"'). Sin &&, | ni >: haz otra llamada para el siguiente" },
-				repoPath: { type: "string", description: "Ruta al repo (default: workspace)" },
+				repoPath: { type: "string", description: "Ruta al repositorio (por defecto, la carpeta del proyecto del chat; si no hay, la de Aku)" },
 			},
 			required: ["command"],
 		},
@@ -669,23 +681,57 @@ export const TOOLS: ToolDefinition[] = [
 		label: "Archivos del proyecto",
 		name: "project",
 		description:
-			"Archivos del proyecto de este chat (documentos subidos y carpetas vinculadas; lee texto, PDF y Word). list: ver los archivos (opcional path de una carpeta). read: leer un archivo (path; si es largo, sigue con offset). search: buscar palabras en todos los archivos (query; opcional path para buscar solo en una carpeta). write: crear o cambiar un archivo de texto (path, content; pide permiso al usuario). Las rutas empiezan por el nombre de la carpeta del proyecto, p. ej. Subidos/informe.pdf.",
+			"Archivos del proyecto de este chat (subidos y carpetas vinculadas; lee texto, PDF y Word). Acciones: list (ver los archivos; path opcional). find (encontrar archivos por nombre: query con parte del nombre o un patrón como *.test.ts). search (buscar texto dentro de los archivos: query con palabras que estén en la misma línea, y | entre alternativas; files para limitar, p. ej. *.ts; context para ver las líneas de alrededor). read (leer path; si es largo llega por partes: line y lines para un tramo). edit (cambiar un trozo: path, old_text con el texto exacto que hay ahora y new_text con cómo debe quedar). write (crear un archivo o reescribirlo entero: path, content). edit y write piden permiso. Las rutas empiezan por la carpeta del proyecto, p. ej. Subidos/informe.pdf.",
 		category: "archivos",
 		parameters: {
 			type: "object",
 			properties: {
-				action: { type: "string", enum: ["list", "read", "search", "write"] },
+				action: { type: "string", enum: ["list", "find", "search", "read", "edit", "write"] },
 				path: { type: "string", description: "Ruta dentro del proyecto (ej: Subidos/informe.pdf)" },
-				query: { type: "string", description: "Para search: palabras a buscar" },
-				offset: { type: "number", description: "Para read: carácter desde el que seguir leyendo" },
+				query: { type: "string", description: "Para find: nombre o patrón. Para search: palabras a buscar" },
+				files: { type: "string", description: "Para search: solo en estos archivos (ej: *.ts, src/**)" },
+				context: { type: "number", description: "Para search: líneas de alrededor que se enseñan (0 a 3)" },
+				line: { type: "number", description: "Para read: primera línea a leer" },
+				lines: { type: "number", description: "Para read: cuántas líneas leer" },
+				offset: { type: "number", description: "Para read de PDF o Word: carácter desde el que seguir" },
+				old_text: { type: "string", description: "Para edit: el trozo exacto que hay ahora (único en el archivo)" },
+				new_text: { type: "string", description: "Para edit: el texto que lo reemplaza" },
+				replace_all: { type: "boolean", description: "Para edit: cambiar todas las veces que aparece" },
 				content: { type: "string", description: "Para write: contenido completo del archivo" },
 			},
 			required: ["action"],
 		},
 		examples: [
-			'"¿qué dice el contrato sobre el pago?" → project({action: "search", query: "pago"})',
+			'"¿dónde está el login?" → project({action: "search", query: "login", files: "*.ts"})',
 			'"resume el informe" → project({action: "read", path: "Subidos/informe.pdf"})',
 		],
+	},
+
+	// ============ LISTA DE TAREAS ============
+	{
+		label: "Lista de tareas",
+		name: "todo",
+		description:
+			"Tu lista de tareas en un trabajo de varios pasos (3 o más); el usuario la ve en el chat y se va tachando. Manda siempre la lista completa en items: cada tarea con text y status (pending, in_progress o done). Créala al empezar, deja en in_progress solo la que estás haciendo y márcala done en cuanto la termines. No la uses para preguntas simples.",
+		category: "utilidades",
+		parameters: {
+			type: "object",
+			properties: {
+				items: {
+					type: "array",
+					description: "La lista completa, en orden",
+					items: {
+						type: "object",
+						properties: {
+							text: { type: "string", description: "La tarea, en pocas palabras" },
+							status: { type: "string", enum: ["pending", "in_progress", "done"] },
+						},
+						required: ["text", "status"],
+					},
+				},
+			},
+			required: ["items"],
+		},
 	},
 ];
 
@@ -747,10 +793,11 @@ export const PLAN_TOOLS = [
 	"sessions_list",
 	"sessions_history",
 	"delegate",
+	"todo",
 ];
 
 /**
- * Herramientas del modo CodeHacking (programación y pentesting autorizado), sin los controles
+ * Herramientas del modo Hacking (pentesting autorizado), sin los controles
  * generales del PC. La terminal es la clave: en la MV de Kali es `bash`, con acceso directo a nmap,
  * nikto, sqlmap, etc. Es una lista elegida a propósito: no pasa por el perfil lite ni el modo ahorro.
  */
@@ -776,7 +823,14 @@ export const HACKING_TOOLS = [
 	"memory_add",
 	"use_skill",
 	"delegate",
+	"todo",
 ];
+
+/**
+ * Herramientas del modo Code (programar en proyectos): las de Hacking sin las de seguridad.
+ * También es una lista elegida a propósito: no pasa por el perfil lite ni el modo ahorro.
+ */
+export const CODE_TOOLS = HACKING_TOOLS.filter((t) => t !== "cve_search");
 
 /** Las herramientas de solo lectura al planear, según el modo. */
 export function planToolsFor(mode: string): string[] {
@@ -835,12 +889,16 @@ export function describeToolUse(name: string, args: Record<string, unknown> = {}
 		case "project": {
 			const labels: Record<string, string> = {
 				list: `Revisando los archivos del proyecto${a.path ? ` en ${short(a.path, 40)}` : ""}`,
-				read: `Leyendo ${short(a.path)}`,
+				find: `Buscando archivos: ${short(a.query)}`,
+				read: `Leyendo ${short(a.path)}${a.line ? ` (desde la línea ${short(a.line, 10)})` : ""}`,
 				search: `Buscando en el proyecto: ${short(a.query)}`,
+				edit: `Editando ${short(a.path)}`,
 				write: `Escribiendo ${short(a.path)}`,
 			};
 			return labels[String(a.action)] ?? "Usando los archivos del proyecto";
 		}
+		case "todo":
+			return "Actualizando la lista de tareas";
 		case "pc_open":
 			return `Abriendo ${short(a.target)}`;
 		case "pc_screenshot":

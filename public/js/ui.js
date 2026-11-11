@@ -229,6 +229,7 @@ export function openMenu(anchor, items, align = "left") {
 		}
 		const b = el("button", `menu-item${it.danger ? " danger" : ""}`, `${it.icon ? icon(it.icon, "sm") : ""}<span></span>`);
 		b.querySelector("span").textContent = it.label;
+		if (it.title) b.title = it.title;
 		b.setAttribute("role", "menuitem");
 		b.onclick = () => {
 			closeMenu();

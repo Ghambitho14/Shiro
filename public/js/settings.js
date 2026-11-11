@@ -59,11 +59,15 @@ const PLAN_SUGGESTIONS = [
 ];
 
 const MODE_SUGGESTIONS = {
-	hacking: [
+	code: [
 		{ icon: "braces", text: "Revisa este proyecto y busca errores" },
 		{ icon: "file", text: "Explica cómo está organizado este proyecto" },
+		{ icon: "check", text: "Corre las pruebas y arregla lo que falle" },
+	],
+	hacking: [
 		{ icon: "shield", text: "Haz un plan de pruebas para mi VPS" },
 		{ icon: "globe", text: "Revisa la seguridad de mi web autorizada" },
+		{ icon: "search", text: "Busca CVE de los servicios de mi servidor" },
 	],
 };
 

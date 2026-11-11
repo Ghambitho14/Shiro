@@ -71,8 +71,9 @@ export const findProject = (id) => store.list.find((p) => p.id === id) ?? null;
 export const projectOfChat = (chatId) => (chatId ? store.list.find((p) => p.chats.includes(chatId)) ?? null : null);
 export const projectChatIds = () => new Set(store.list.flatMap((p) => p.chats));
 
-function upsertSummary(p) {
-	const s = { id: p.id, name: p.name, description: p.description, chats: p.chats, createdAt: p.createdAt, updatedAt: p.updatedAt };
+export function upsertSummary(p) {
+	const folders = p.folders?.map((f) => (typeof f === "string" ? f : f.path)) ?? findProject(p.id)?.folders ?? [];
+	const s = { id: p.id, name: p.name, description: p.description, chats: p.chats, folders, createdAt: p.createdAt, updatedAt: p.updatedAt };
 	const i = store.list.findIndex((x) => x.id === p.id);
 	if (i >= 0) store.list[i] = s;
 	else store.list.unshift(s);

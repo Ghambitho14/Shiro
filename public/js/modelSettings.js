@@ -90,7 +90,7 @@ export function mountModelSettings(container, ctx) {
 			<p class="set-desc" data-part="hint"></p>
 			<details class="tuning-sec" open>
 				<summary>Cómo responde</summary>
-				${row("Modo ahorro", "Gasta menos: solo le da las herramientas que parecen hacer falta para tu mensaje, acorta los resultados largos y usa como mucho 4 pasos.", `<select class="select" data-f="saver"></select>`)}
+				${row("Modo ahorro", "Gasta menos: solo le da las herramientas que parecen hacer falta para tu mensaje, acorta los resultados largos y usa como mucho 8 pasos. Solo vale en Chat.", `<select class="select" data-f="saver"></select>`)}
 				${row(
 					"Temperatura",
 					"Baja: más preciso y repetible. Alta: más creativo y variado.",
@@ -118,7 +118,7 @@ export function mountModelSettings(container, ctx) {
 				<summary>Herramientas</summary>
 				${row("Cómo las usa", "Nativas es lo normal. «Como texto» sirve para modelos que no saben usarlas.", `<select class="select" data-f="toolMode"></select>`)}
 				${row("Cuántas ve", "Los modelos pequeños se confunden con muchas: mejor pocas.", `<select class="select" data-f="toolProfile"></select>`)}
-				${row("Pasos máximos por respuesta", "Cuántas herramientas puede usar seguidas antes de contestar.", `<input class="input tuning-num" type="number" min="1" max="40" data-f="maxToolIterations" aria-label="Pasos máximos" />`)}
+				${row("Pasos máximos por respuesta", "Cuántas herramientas puede usar seguidas antes de contestar. En Code, Hacking y al planear vale el triple: son trabajos largos.", `<input class="input tuning-num" type="number" min="1" max="40" data-f="maxToolIterations" aria-label="Pasos máximos" />`)}
 				${row("Tiempo máximo de espera", "Si el modelo tarda más en responder, se corta.", `<select class="select" data-f="timeoutMs"></select>`)}
 			</details>
 			<div class="actions-row">

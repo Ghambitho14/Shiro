@@ -15,8 +15,19 @@ import { loadRoom, paintRoomBar, setRoom } from "./rooms.js";
 import { loadSettings, openSettings, paintSuggestions } from "./settings.js";
 import { openReminders } from "./reminders.js";
 import { stopReading, voice } from "./voiceMode.js";
+import { paintWorkFolder } from "./workFolder.js";
 
 // ───────────────────────────── chats (barra lateral) ─────────────────────────────
+
+/** Cada modo (Chat, Code, Hacking) tiene su lista de chats; un chat sin modo es de Chat. */
+const modeOf = (s) => s.mode || "chat";
+
+/** El último chat abierto en cada modo: al volver a ese modo se abre ese. */
+export function rememberChat(id, mode = state.mode) {
+	if (!id) return;
+	prefs.lastChat = { ...(prefs.lastChat || {}), [mode]: id };
+	savePrefs();
+}
 
 /**
  * El título de la ventana siempre empieza por el nombre del asistente: así el control
@@ -33,8 +44,9 @@ export function setDocTitle(chatTitle = "") {
 }
 
 export function upsertSession(s) {
-	const meta = { id: s.id, title: s.title, createdAt: s.createdAt, updatedAt: s.updatedAt, lastPreview: s.lastPreview };
 	const i = state.sessions.findIndex((x) => x.id === s.id);
+	const mode = s.mode || state.sessions[i]?.mode || state.mode;
+	const meta = { id: s.id, title: s.title, createdAt: s.createdAt, updatedAt: s.updatedAt, lastPreview: s.lastPreview, mode };
 	if (i >= 0) state.sessions[i] = meta;
 	else state.sessions.unshift(meta);
 }
@@ -54,16 +66,19 @@ export function paintSidebar() {
 	const list = $("#chat-list");
 	const q = norm(state.search.trim());
 	paintCrumb();
+	paintWorkFolder();
 	const activeProject = state.projectHome || projects.projectOfChat(state.activeId)?.id || null;
 	$("#project-list").hidden = Boolean(q);
 	if (!q) projects.paintSidebarProjects({ activeProjectId: activeProject, activeChatId: state.activeId, onHome: inProjectHome() });
 	// Los chats de un proyecto se ven dentro de él; al buscar, salen todos.
 	const inProjects = q ? new Set() : projects.projectChatIds();
-	const sessions = state.sessions
+	const ofMode = state.sessions.filter((s) => modeOf(s) === state.mode);
+	const sessions = ofMode
 		.filter((s) => !inProjects.has(s.id) && (!q || norm(`${s.title} ${s.lastPreview || ""}`).includes(q)))
 		.sort((a, b) => b.updatedAt - a.updatedAt);
 	if (!sessions.length) {
-		list.innerHTML = q || !state.sessions.length ? `<div class="sb-empty">${q ? "Ningún chat coincide con la búsqueda." : "Aún no tienes chats. ¡Empieza uno!"}</div>` : "";
+		const empty = state.mode === "chat" ? "Aún no tienes chats. ¡Empieza uno!" : `Aún no tienes chats en ${MODE_NAMES[state.mode]}. ¡Empieza uno!`;
+		list.innerHTML = q || !ofMode.length ? `<div class="sb-empty">${q ? "Ningún chat de este modo coincide con la búsqueda." : empty}</div>` : "";
 		return;
 	}
 	let html = "";
@@ -273,8 +288,13 @@ export async function openChat(id, push = true) {
 		paintAttachments();
 		setDocTitle(d.session.title);
 		renderThread();
+		// El chat se abre en su modo (y la barra lateral pasa a la lista de ese modo).
 		const lastMode = [...state.messages].reverse().find((m) => m.role === "user" && m.mode)?.mode;
-		setMode(lastMode || prefs.mode);
+		const mode = d.session.mode || lastMode || "chat";
+		const meta = state.sessions.find((x) => x.id === id);
+		if (meta) meta.mode = mode;
+		setMode(mode, { remember: true });
+		rememberChat(id, state.mode);
 		requestAnimationFrame(() => scrollToBottom());
 		paintSidebar();
 		if (push) setRoute(id);
@@ -331,16 +351,16 @@ export function openSearch() {
 }
 // ───────────────────────────── barra superior ─────────────────────────────
 
-const CHAT_MODES = ["chat", "hacking"];
+const CHAT_MODES = ["chat", "code", "hacking"];
+const MODE_NAMES = { chat: "Chat", code: "Code", hacking: "Hacking" };
 const MODE_DISCLAIMERS = {
 	chat: "Aku puede equivocarse. Antes de acciones delicadas en tu PC te pide permiso.",
-	hacking: "CodeHacking: programa y prueba solo sistemas tuyos o con permiso explícito. Las acciones delicadas piden permiso.",
+	code: "Code: Aku programa en tus proyectos. Las acciones delicadas piden permiso.",
+	hacking: "Hacking: prueba solo sistemas tuyos o con permiso explícito. Las acciones delicadas piden permiso.",
 };
 
 /** Cambia el modo y toda su ayuda visual. Solo la elección del usuario se guarda como preferencia. */
 export function setMode(mode, { remember = false } = {}) {
-	// El antiguo modo Code (preferencias guardadas) ahora es CodeHacking.
-	if (mode === "code") mode = "hacking";
 	state.mode = CHAT_MODES.includes(mode) ? mode : "chat";
 	if (remember) {
 		prefs.mode = state.mode;
@@ -358,9 +378,31 @@ export function setMode(mode, { remember = false } = {}) {
 	refreshContextMeter();
 }
 
+/**
+ * El usuario cambia de modo: cada modo tiene sus chats, así que si hay un chat abierto se pasa al último
+ * que tenía abierto en el otro modo (o a uno nuevo). Un chat nunca mezcla modos.
+ */
+function switchMode(mode) {
+	if (mode === state.mode) return;
+	if (state.busy) {
+		toast("Espera a que termine la respuesta para cambiar de modo.");
+		return;
+	}
+	setMode(mode, { remember: true });
+	if (state.view !== "chat" || inProjectHome() || !state.activeId) {
+		paintSidebar();
+		return;
+	}
+	const last = prefs.lastChat?.[state.mode];
+	const target = last && state.sessions.find((s) => s.id === last && modeOf(s) === state.mode);
+	if (target) openChat(target.id);
+	else newChat();
+}
+
 /** Lo que cambia según el modo y los permisos: el aviso, el texto de la caja y las sugerencias. */
 function paintModeHints() {
 	$(".disclaimer").textContent = permissionNote() || MODE_DISCLAIMERS[state.mode];
+	paintWorkFolder();
 	updateEmpty();
 	paintSuggestions();
 }
@@ -430,7 +472,7 @@ export function initSidebar() {
 		},
 	});
 	$$("#mode-seg .mode-opt").forEach((b) => {
-		b.onclick = () => setMode(b.dataset.mode, { remember: true });
+		b.onclick = () => switchMode(b.dataset.mode);
 	});
 	$("#mode-seg").addEventListener("keydown", (e) => {
 		if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;

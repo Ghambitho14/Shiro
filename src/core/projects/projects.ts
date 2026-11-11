@@ -179,6 +179,39 @@ export function removeFolder(id: string, pathArg: string): Project | null {
 	return save(p);
 }
 
+// ───────────────────────────── carpeta de trabajo (modo Code) ─────────────────────────────
+
+/**
+ * El proyecto de una carpeta, para el botón de carpeta del modo Code (como en Claude): el que ya la tenga
+ * vinculada o, si no hay, uno nuevo con el nombre de la carpeta. Lanza los mismos errores que checkFolder.
+ */
+export function projectForFolder(pathArg: string): Project {
+	const full = checkFolder(pathArg);
+	const key = normalizeForCompare(full);
+	const found = listProjects().find((p) => p.folders.some((f) => normalizeForCompare(f.path) === key));
+	if (found) return found;
+	const p = createProject({ name: basename(full) || full });
+	return addFolder(p.id, full)!;
+}
+
+export type RecentFolder = { path: string; name: string; projectId: string; exists: boolean };
+
+/** Carpetas vinculadas a proyectos, primero las de los proyectos usados hace menos (menú de carpetas de Code). */
+export function recentFolders(limit = 8): RecentFolder[] {
+	const out: RecentFolder[] = [];
+	const seen = new Set<string>();
+	for (const p of listProjects()) {
+		for (const f of p.folders) {
+			const key = normalizeForCompare(f.path);
+			if (seen.has(key)) continue;
+			seen.add(key);
+			out.push({ path: f.path, name: basename(f.path) || f.path, projectId: p.id, exists: existsSync(f.path) });
+			if (out.length >= limit) return out;
+		}
+	}
+	return out;
+}
+
 // ───────────────────────────── archivos subidos ─────────────────────────────
 
 /** Ruta relativa segura para un archivo subido ("informes/2024/a.pdf"), o null si no es válida. */
@@ -447,29 +480,113 @@ export async function inlineProjectText(p: Project, maxChars = 4000): Promise<st
 
 const fold = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
+/** Un patrón con comodines (`*.test.ts`, `src/**\/api*`) como expresión regular: `*` no cruza carpetas, `**` sí. */
+export function globToRegExp(glob: string): RegExp {
+	let re = "";
+	for (let i = 0; i < glob.length; i++) {
+		const c = glob[i]!;
+		if (c === "*") {
+			if (glob[i + 1] === "*") {
+				re += ".*";
+				i++;
+				if (glob[i + 1] === "/") i++;
+			} else re += "[^/]*";
+		} else if (c === "?") re += "[^/]";
+		else re += c.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+	}
+	return new RegExp(`^${re}$`, "i");
+}
+
+/**
+ * ¿Coincide la ruta de un archivo con lo que se busca? Con comodines es un patrón (sin `/`, solo
+ * sobre el nombre del archivo); sin comodines, todas las palabras tienen que estar en la ruta.
+ */
+export function fileMatcher(pattern: string): (path: string) => boolean {
+	const clean = pattern.trim().replace(/\\/g, "/").replace(/^\.?\/+/, "");
+	if (/[*?]/.test(clean)) {
+		const re = globToRegExp(clean);
+		if (!clean.includes("/")) return (path) => re.test(path.slice(path.lastIndexOf("/") + 1));
+		// El modelo puede escribir la ruta con o sin el nombre de la carpeta del proyecto delante.
+		return (path) => re.test(path) || re.test(path.slice(path.indexOf("/") + 1));
+	}
+	const words = fold(clean).split(/\s+/).filter(Boolean);
+	return (path) => {
+		const folded = fold(path);
+		return words.length > 0 && words.every((w) => folded.includes(w));
+	};
+}
+
+/** Archivos que se recorren como mucho al buscar por nombre. */
+const FIND_MAX_FILES = 20_000;
+
+/** Archivos del proyecto cuyo nombre o ruta coincide con `query` (palabras o patrón con comodines). */
+export function findProjectFiles(p: Project, query: string, under?: ResolvedPath, max = 100): { files: ProjectFile[]; total: number; partial: boolean } {
+	const all = listProjectFiles(p, under, FIND_MAX_FILES);
+	const matches = all.filter((f) => fileMatcher(query)(f.path));
+	return { files: matches.slice(0, max), total: matches.length, partial: all.length >= FIND_MAX_FILES };
+}
+
 /** Límites de una búsqueda: archivos que se miran y tiempo máximo (carpetas enormes como la de GitHub). */
 const SEARCH_MAX_FILES = 3000;
 const SEARCH_MAX_MS = 8000;
+/** Con la lista de resultados ya llena, se sigue contando solo este rato. */
+const SEARCH_COUNT_MS = 1500;
 
 /** Archivos que la búsqueda lee: texto de hasta 1 MB, PDF y Word de hasta 5 MB. */
 const searchable = (f: ProjectFile) => isReadableDocument(f.path) && f.size <= (isTextFile(f.path) ? 1 : 5) * 1024 * 1024;
 
+export type SearchOptions = {
+	/** Líneas que se devuelven en total. */
+	maxResults?: number;
+	/** Solo en los archivos que coinciden (`*.ts`, `src/**`). */
+	files?: string;
+	/** Líneas de alrededor que se enseñan con cada coincidencia (0 a 3). */
+	context?: number;
+	/** Líneas por archivo: así los resultados no se quedan todos en los primeros archivos. */
+	perFile?: number;
+};
+
+export type SearchResult = {
+	results: string[];
+	/** No dio tiempo a mirar todos los archivos (conviene buscar en una carpeta concreta). */
+	partial: boolean;
+	/** Líneas que coinciden y en cuántos archivos (si `more`, al menos esas). */
+	total: number;
+	files: number;
+	more: boolean;
+};
+
 /**
- * Busca texto en los archivos del proyecto: líneas que contienen todas las palabras (o la frase).
- * `partial`: no dio tiempo a mirar todos los archivos (conviene buscar en una carpeta concreta).
+ * Busca texto en los archivos del proyecto: líneas que contienen todas las palabras (con «|», las de alguna alternativa).
+ * Es por palabras, sin expresiones regulares: una mal escrita podría colgar el servidor.
  */
-export async function searchProject(p: Project, query: string, under?: ResolvedPath, maxResults = 40): Promise<{ results: string[]; partial: boolean }> {
-	const words = fold(query).split(/\s+/).filter((w) => w.length > 1);
-	const results: string[] = [];
-	if (!words.length) return { results, partial: false };
+export async function searchProject(p: Project, query: string, under?: ResolvedPath, opts: SearchOptions = {}): Promise<SearchResult> {
+	const maxResults = opts.maxResults ?? 40;
+	const perFile = opts.perFile ?? 5;
+	const context = Math.max(0, Math.min(3, Math.floor(opts.context ?? 0)));
+	// Los modelos escriben a menudo «a|b» o «a.*b» por costumbre: «|» separa alternativas y «.*» es «y».
+	const alternatives = query
+		.split("|")
+		.map((alt) => fold(alt.replace(/\.[*+]\??/g, " ")).split(/\s+/).filter((w) => w.length > 1))
+		.filter((alt) => alt.length > 0);
+	const hits = (text: string) => alternatives.some((alt) => alt.every((w) => text.includes(w)));
+	const out: SearchResult = { results: [], partial: false, total: 0, files: 0, more: false };
+	if (!alternatives.length) return out;
 	const all = listProjectFiles(p, under, SEARCH_MAX_FILES * 3);
-	const candidates = all.filter(searchable);
+	const matches = opts.files ? fileMatcher(opts.files) : null;
+	const candidates = all.filter((f) => searchable(f) && (!matches || matches(f.path)));
 	const files = candidates.slice(0, SEARCH_MAX_FILES);
-	let partial = all.length >= SEARCH_MAX_FILES * 3 || candidates.length > files.length;
+	out.partial = all.length >= SEARCH_MAX_FILES * 3 || candidates.length > files.length;
 	const started = Date.now();
+	let shown = 0;
 	for (const f of files) {
-		if (Date.now() - started > SEARCH_MAX_MS) {
-			partial = true;
+		const elapsed = Date.now() - started;
+		if (elapsed > SEARCH_MAX_MS) {
+			out.partial = true;
+			break;
+		}
+		if (shown >= maxResults && elapsed > SEARCH_COUNT_MS) {
+			out.more = true;
 			break;
 		}
 		const r = resolveProjectPath(p, f.path);
@@ -480,19 +597,31 @@ export async function searchProject(p: Project, query: string, under?: ResolvedP
 		} catch {
 			continue;
 		}
-		const nameHit = words.every((w) => fold(f.path).includes(w));
-		if (nameHit) results.push(`${f.path}: (el nombre del archivo coincide)`);
+		if (shown < maxResults && hits(fold(f.path))) out.results.push(`${f.path}: (el nombre del archivo coincide)`);
 		const lines = text.split(/\r?\n/);
-		for (let i = 0; i < lines.length && results.length < maxResults; i++) {
+		let inFile = 0;
+		for (let i = 0; i < lines.length; i++) {
 			const line = fold(lines[i]!);
-			if (words.every((w) => line.includes(w))) {
-				const snippet = lines[i]!.trim();
-				results.push(`${f.path}:${i + 1}: ${snippet.length > 200 ? snippet.slice(0, 197) + "…" : snippet}`);
+			if (!hits(line)) continue;
+			inFile++;
+			if (inFile > perFile || shown >= maxResults) continue;
+			shown++;
+			const snippet = lines[i]!.trim();
+			out.results.push(`${f.path}:${i + 1}: ${snippet.length > 200 ? snippet.slice(0, 197) + "…" : snippet}`);
+			for (let j = Math.max(0, i - context); context && j <= Math.min(lines.length - 1, i + context); j++) {
+				if (j === i || !lines[j]!.trim()) continue;
+				const near = lines[j]!.trimEnd();
+				out.results.push(`    ${j + 1}| ${near.length > 200 ? near.slice(0, 197) + "…" : near}`);
 			}
 		}
-		if (results.length >= maxResults) break;
+		if (!inFile) continue;
+		out.total += inFile;
+		out.files++;
+		const hidden = inFile - Math.min(inFile, perFile);
+		if (hidden > 0 && shown <= maxResults) out.results.push(`${f.path}: (+${hidden} coincidencias más en este archivo)`);
 	}
-	return { results, partial };
+	if (out.total > shown) out.more = out.more || shown >= maxResults;
+	return out;
 }
 
 /** Escribe un archivo de texto dentro del proyecto (la aprobación la pide el registro de tools). */
@@ -504,6 +633,81 @@ export function writeProjectFile(p: Project, pathArg: string, content: string): 
 	mkdirSync(dirname(r.full), { recursive: true });
 	writeFileSync(r.full, content, "utf-8");
 	return r;
+}
+
+export type EditResult = { path: string; line: number; replaced: number; linesBefore: number; linesAfter: number };
+
+/** Archivos que se editan por trozos como mucho. */
+const EDIT_MAX_BYTES = 2 * 1024 * 1024;
+
+const countLines = (s: string) => (s ? s.split("\n").length : 0);
+const lineOf = (text: string, index: number) => text.slice(0, index).split("\n").length;
+
+/** Dónde empieza cada aparición de `needle` (sin solaparse). */
+function occurrences(text: string, needle: string): number[] {
+	const out: number[] = [];
+	for (let i = text.indexOf(needle); i >= 0; i = text.indexOf(needle, i + needle.length)) out.push(i);
+	return out;
+}
+
+/**
+ * Cambia un trozo de un archivo de texto del proyecto: `oldText` tiene que estar tal cual y una sola
+ * vez (o todas, con `replaceAll`). Así no hay que reescribir el archivo entero para tocar una línea.
+ * Conserva los saltos de línea del archivo (Windows o Unix). La aprobación la pide el registro de tools.
+ */
+export function editProjectFile(p: Project, pathArg: string, oldText: string, newText: string, replaceAll = false): EditResult {
+	const r = resolveProjectPath(p, pathArg);
+	if (!r || r.full === resolve(r.source.root)) throw new Error(`La ruta ${pathArg} no está dentro del proyecto. Empieza por el nombre de una de sus carpetas (${projectSources(p).map((s) => s.label + "/").join(", ")}).`);
+	if (!existsSync(r.full) || !statSync(r.full).isFile()) throw new Error(`No existe ${r.path}. Para crear un archivo nuevo usa action=write.`);
+	if (!isTextFile(r.full)) throw new Error("Solo puedo editar archivos de texto (.txt, .md, .csv, código…), no PDF ni Word.");
+	if (statSync(r.full).size > EDIT_MAX_BYTES) throw new Error("El archivo es demasiado grande para editarlo (máx. 2 MB).");
+
+	const raw = readFileSync(r.full, "utf-8");
+	const bom = raw.startsWith("﻿") ? "﻿" : "";
+	const crlf = raw.includes("\r\n");
+	const unix = (s: string) => s.replace(/\r\n/g, "\n");
+	const text = unix(bom ? raw.slice(1) : raw);
+	const from = unix(oldText);
+	const to = unix(newText);
+	if (!from) throw new Error("Indica en old_text el trozo exacto que hay ahora en el archivo.");
+	if (from === to) throw new Error("old_text y new_text son iguales: no hay nada que cambiar.");
+
+	// Trozos a cambiar: [inicio, fin) en `text`.
+	let spans = occurrences(text, from).map((i): [number, number] => [i, i + from.length]);
+	if (!spans.length) {
+		// Segunda oportunidad: los modelos suelen perder los espacios del final de las líneas.
+		const trim = (s: string) => s.split("\n").map((l) => l.trimEnd());
+		const lines = text.split("\n");
+		const trimmed = lines.map((l) => l.trimEnd());
+		const starts: number[] = [];
+		for (let i = 0, at = 0; i < lines.length; i++) {
+			starts.push(at);
+			at += lines[i]!.length + 1;
+		}
+		const joined = trimmed.join("\n");
+		const needle = trim(from).join("\n");
+		// De una posición en el texto sin espacios finales a la misma posición en el original.
+		const real = (index: number) => {
+			const before = joined.slice(0, index).split("\n");
+			return starts[before.length - 1]! + before[before.length - 1]!.length;
+		};
+		if (needle.trim()) spans = occurrences(joined, needle).map((i): [number, number] => [real(i), real(i + needle.length)]);
+	}
+	if (!spans.length) {
+		const first = from.split("\n").find((l) => l.trim())?.trim() ?? "";
+		const at = first ? text.split("\n").findIndex((l) => l.includes(first)) : -1;
+		const hint = at >= 0 ? ` Su primera línea aparece en la línea ${at + 1}: lee ese tramo con action=read (line=${Math.max(1, at - 2)}) y copia el trozo tal cual.` : " Lee esa parte con action=read y copia el trozo tal cual, con sus espacios.";
+		throw new Error(`No encontré ese texto en ${r.path}.${hint}`);
+	}
+	if (spans.length > 1 && !replaceAll) {
+		const where = spans.slice(0, 6).map(([i]) => lineOf(text, i)).join(", ");
+		throw new Error(`Ese texto aparece ${spans.length} veces en ${r.path} (líneas ${where}). Añade a old_text más líneas de alrededor para que sea único, o usa replace_all=true para cambiarlas todas.`);
+	}
+
+	let result = text;
+	for (const [start, end] of [...spans].reverse()) result = result.slice(0, start) + to + result.slice(end);
+	writeFileSync(r.full, bom + (crlf ? result.replace(/\n/g, "\r\n") : result), "utf-8");
+	return { path: r.path, line: lineOf(text, spans[0]![0]), replaced: spans.length, linesBefore: countLines(from), linesAfter: countLines(to) };
 }
 
 // ───────────────────────────── proyecto activo ─────────────────────────────

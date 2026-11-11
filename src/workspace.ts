@@ -1,7 +1,7 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, join, dirname } from "node:path";
 import { DATA_DIR, getConfig, setConfig } from "./config/config.js";
-import { DEFAULT_SYSTEM_PROMPT } from "./core/soul/defaultPrompt.js";
+import { DEFAULT_SYSTEM_PROMPT, LEGACY_SYSTEM_PROMPTS } from "./core/soul/defaultPrompt.js";
 import { OBSIDIAN_FOLDER, frontValue, normalizeHeading, obsidianRoot, parseFrontmatter, yamlValue } from "./storage/obsidian.js";
 import { currentStorage, type StorageSettings } from "./storage/storage.js";
 import { readAppFile } from "./runtime.js";
@@ -97,7 +97,20 @@ _No eres un chatbot. Estás siendo alguien._
 Cada sesión empieza fresca. SOUL.md, MEMORY.md y memory/YYYY-MM-DD.md son tu memoria. Actualízalos cuando aprendas algo que deba persistir.
 `;
 
+/** Qué herramienta usar para cada cosa ya se lo dice Aku al modelo en cada respuesta (environment.ts): aquí van solo las reglas del usuario. */
 const TOOLS_TEMPLATE = `# TOOLS.md — Guía de herramientas
+
+Tus reglas sobre cómo usar las herramientas. Qué herramienta sirve para cada cosa ya lo sabe por su cuenta.
+
+## Principios
+
+- Usa la herramienta más segura que resuelva la tarea.
+- Lee antes de escribir o ejecutar.
+- Si una acción es destructiva (borrar, sobrescribir, ejecutar comandos riesgosos), pide confirmación.
+`;
+
+/** TOOLS.md que se creaba antes: nombraba herramientas que no eran las de los proyectos. Si nadie lo cambió, pasa al nuevo. */
+const OLD_TOOLS_TEMPLATE = `# TOOLS.md — Guía de herramientas
 
 Reglas prácticas para elegir herramientas de forma consistente.
 
@@ -217,6 +230,19 @@ export const NOTE_TEMPLATES: Record<string, string> = {
 	[PROFILE_NOTE]: PROFILE_TEMPLATE,
 };
 
+/** Textos con los que se creaba antes cada nota: quien los tenga sin cambiar recibe el de ahora. */
+const LEGACY_TEMPLATES: Record<string, string[]> = {
+	"TOOLS.md": [OLD_TOOLS_TEMPLATE],
+	[INSTRUCTIONS_NOTE]: LEGACY_SYSTEM_PROMPTS,
+};
+
+/** ¿La nota sigue con su texto por defecto (el de ahora o uno anterior), es decir, el usuario no la cambió? */
+export function isDefaultNote(file: string, text: string | null): boolean {
+	const template = NOTE_TEMPLATES[file];
+	if (template === undefined) return false;
+	return sameText(text, template) || (LEGACY_TEMPLATES[file] ?? []).some((old) => sameText(text, old));
+}
+
 /** Notas del workspace que van en el system prompt y se editan en Ajustes → Personalización. */
 export const EDITABLE_NOTES = {
 	soul: { file: "SOUL.md", template: SOUL_TEMPLATE },
@@ -257,6 +283,16 @@ export function ensureWorkspace(): void {
 	const soul = join(dir, "SOUL.md");
 	if (readFileSafe(soul) === OLD_SOUL_TEMPLATE.trim()) writeFileSync(soul, SOUL_TEMPLATE, "utf-8");
 	adoptLegacySettings(dir);
+	// Notas que siguen con un texto por defecto anterior (nadie las cambió): pasan al de ahora.
+	let updated = false;
+	for (const [file, olds] of Object.entries(LEGACY_TEMPLATES)) {
+		const current = readFileSafe(join(dir, file));
+		if (current !== null && olds.some((old) => sameText(current, old))) {
+			writeFileSync(join(dir, file), NOTE_TEMPLATES[file]!, "utf-8");
+			updated = true;
+		}
+	}
+	if (updated) notesChanged();
 	for (const [file, template] of Object.entries(NOTE_TEMPLATES)) writeIfMissing(join(dir, file), template);
 	ensureDir(join(LOCAL_WORKSPACE_DIR, "skills"));
 	seedBundledSkills();
@@ -271,7 +307,7 @@ function adoptLegacySettings(dir: string): void {
 	const instructions = join(dir, INSTRUCTIONS_NOTE);
 	const legacyPrompt = getConfig().systemPrompt?.trim();
 	if (legacyPrompt) {
-		if (!existsSync(instructions) || sameText(readFileSafe(instructions), DEFAULT_SYSTEM_PROMPT)) writeFileSync(instructions, legacyPrompt + "\n", "utf-8");
+		if (!existsSync(instructions) || isDefaultNote(INSTRUCTIONS_NOTE, readFileSafe(instructions))) writeFileSync(instructions, legacyPrompt + "\n", "utf-8");
 		setConfig({ systemPrompt: undefined });
 	}
 	const legacyProfile = join(DATA_DIR, "user-profile.json");
@@ -418,7 +454,7 @@ export function readSoul(): string | null {
 export function readInstructions(): string | null {
 	ensureWorkspace();
 	const text = readFileSafe(join(getWorkspaceDir(), INSTRUCTIONS_NOTE));
-	return text && !sameText(text, DEFAULT_SYSTEM_PROMPT) ? text.replace(/\r\n/g, "\n") : null;
+	return text && !isDefaultNote(INSTRUCTIONS_NOTE, text) ? text.replace(/\r\n/g, "\n") : null;
 }
 
 /** Guarda las instrucciones base; sin texto, vuelven las de por defecto. */

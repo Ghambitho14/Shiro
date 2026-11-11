@@ -13,12 +13,14 @@ import { initSettings, loadSettings, paintSuggestions } from "./settings.js";
 import { initReminders, pollNotifications } from "./reminders.js";
 import { initVoice, reader, stopReading, voice } from "./voiceMode.js";
 import { initMiniVoice, isMiniVoice } from "./miniVoice.js";
+import { initWorkFolder } from "./workFolder.js";
 
 // Botones y eventos de cada parte, en el mismo orden que cuando todo estaba en este archivo.
 initMessages();
 initComposer();
 initContextMeter();
 initSidebar();
+initWorkFolder();
 initSettings();
 initReminders();
 initVoice();

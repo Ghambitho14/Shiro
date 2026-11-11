@@ -307,3 +307,80 @@ test("Tokens gastados: se leen en OpenAI (también en streaming) y en Ollama, y 
 		{ input: 1200, output: 50, reasoning: 20 },
 	]);
 });
+
+// ---------- Trabajos largos: pasos, recorte de resultados y rescate ----------
+
+type ChatMsg = { role: string; content: string };
+
+/** Un modelo que pide una herramienta en cada vuelta hasta que le dicen que llegó al límite (o tras `stopAfter` vueltas). */
+async function runLoop(opts: { saverLimits?: boolean; contextTokens?: number; result?: string; stopAfter?: number }) {
+	requests.length = 0;
+	let n = 0;
+	handler = (_p, body) => {
+		const msgs = body.messages as ChatMsg[];
+		const last = msgs[msgs.length - 1];
+		if ((last.role === "user" && /límite de pasos/.test(last.content)) || (opts.stopAfter !== undefined && n >= opts.stopAfter)) {
+			return { json: { message: { content: "Resumen final." } } };
+		}
+		return { json: { message: { content: "", tool_calls: [{ function: { name: "get_weather", arguments: { city: `c${n++}` } } }] } } };
+	};
+	let calls = 0;
+	const reply = await createLLMClient(settings("ollama")).chatWithTools(
+		[{ role: "user", content: "x" }],
+		TOOLS,
+		async () => {
+			calls++;
+			return { ok: true, content: opts.result ?? "soleado" };
+		},
+		{ saverLimits: opts.saverLimits, contextTokens: opts.contextTokens },
+	);
+	return { reply, calls, last: requests[requests.length - 1].body.messages as ChatMsg[] };
+}
+
+test("Pasos: 8 en Chat con ahorro y el triple en Code; avisa antes del límite y pide cerrar con lo que falta", async () => {
+	const chat = await runLoop({});
+	strictEqual(chat.calls, 8);
+	strictEqual(chat.reply, "Resumen final.");
+	const results = chat.last.filter((m) => m.role === "tool");
+	// El aviso llega cuando quedan 2 pasos, no antes.
+	ok(results[5].content.includes("te quedan 2 pasos"));
+	ok(!results[4].content.includes("te quedan"));
+	ok(/qué falta/.test(chat.last[chat.last.length - 1].content));
+	// Code, Hacking y Planear: el triple de «Pasos máximos».
+	strictEqual((await runLoop({ saverLimits: false })).calls, 30);
+});
+
+test("Trabajo largo: los resultados viejos se recortan antes de llenar el contexto; los dos últimos quedan enteros", async () => {
+	// Contexto de 4.000 tokens: cada resultado cabe hasta 2.333 letras y entre todos, 5.600.
+	const r = await runLoop({ saverLimits: false, contextTokens: 4000, result: "y".repeat(5000), stopAfter: 3 });
+	strictEqual(r.calls, 3);
+	const results = r.last.filter((m) => m.role === "tool");
+	strictEqual(results.length, 3);
+	ok(results[0].content.endsWith("vuelve a pedirlo]"), results[0].content.slice(-60));
+	ok(results[0].content.length < 500);
+	ok(results[1].content.length > 2000 && results[2].content.length > 2000);
+	ok(results[2].content.length <= 2333);
+});
+
+test("Si el contexto se llena a mitad de trabajo, recorta los resultados y reintenta una vez", async () => {
+	requests.length = 0;
+	let turn = 0;
+	let failed = false;
+	handler = () => {
+		turn++;
+		if (turn <= 2) return { json: { message: { content: "", tool_calls: [{ function: { name: "get_weather", arguments: { city: `c${turn}` } } }] } } };
+		if (!failed) {
+			failed = true;
+			return { status: 400, json: { error: "request (9907 tokens) exceeds the available context size (8192 tokens)" } };
+		}
+		return { json: { message: { content: "Hecho con lo que cabía." } } };
+	};
+	const reply = await createLLMClient(settings("ollama")).chatWithTools([{ role: "user", content: "x" }], TOOLS, async () => ({ ok: true, content: "z".repeat(3000) }), {
+		saverLimits: false,
+	});
+	strictEqual(reply, "Hecho con lo que cabía.");
+	strictEqual(requests.length, 4);
+	const results = (requests[3].body.messages as ChatMsg[]).filter((m) => m.role === "tool");
+	ok(results[0].content.endsWith("vuelve a pedirlo]"));
+	strictEqual(results[1].content.length, 3000);
+});

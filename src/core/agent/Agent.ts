@@ -23,10 +23,14 @@ import { getConfig } from "../../config/config.js";
 import { runWithApprover, type Approver } from "../tools/approval.js";
 import { mcpManager } from "../mcp/McpManager.js";
 import { getEnabledSkills, getSkillInstructions } from "../skills/SkillLoader.js";
-import { getProject, inlineProjectText, projectIndex, runWithProject, type Project } from "../projects/projects.js";
+import { getProject, inlineProjectText, projectIndex, projectSources, runWithProject, type Project } from "../projects/projects.js";
 import { measureContext, type ContextReport, type PromptSections } from "./contextUsage.js";
 import { contextLimit } from "../llm/contextLimit.js";
-import { normalizeToolResult } from "../llm/toolRuntime.js";
+import { normalizeToolResult, toolResultLimit } from "../llm/toolRuntime.js";
+import { buildToolGuide, collectEnvironment, formatEnvironment } from "./environment.js";
+import { buildPreviousWork, withSystemNote, type PreviousStep, type TodoItem } from "./previousWork.js";
+import { describeFolder, formatFolderInfo } from "../projects/folderInfo.js";
+import { terminal } from "../terminal/terminal.js";
 import { claudeCodeLauncher } from "../claudeCode/claudeCode.js";
 import { loadAgents } from "../agents/registry.js";
 import { runWithAgentContext, type AgentRunContext } from "./runContext.js";
@@ -58,7 +62,8 @@ export type AgentOptions = {
 	 * - on: lista corta de tools usadas
 	 */
 	explainMode?: "off" | "brief" | "on";
-	conversation?: Array<{ role: "user" | "assistant"; content: string | ContentPart[] }>;
+	/** `tools` y `todo`: lo que hizo en cada respuesta (la web lo manda), para que sepa qué miró en la anterior. */
+	conversation?: Array<{ role: "user" | "assistant"; content: string | ContentPart[]; tools?: PreviousStep[]; todo?: TodoItem[] }>;
 	userProfile?: UserProfileForAgent | null;
 	/** Recibe el texto a medida que el modelo lo genera (streaming real). */
 	onStreamDelta?: (chunk: string) => void;
@@ -73,6 +78,8 @@ export type AgentOptions = {
 	approver?: Approver;
 	/** Avisa del inicio y fin de cada herramienta. */
 	onToolEvent?: (e: ToolEvent) => void;
+	/** La lista de tareas cambió (tool `todo`): la web la pinta en el chat. */
+	onTodo?: (items: TodoItem[]) => void;
 	/** Cancela la respuesta (botón "Detener" de la web). */
 	signal?: AbortSignal;
 	/** El usuario habla por voz: respuestas breves y sin formato. */
@@ -101,6 +108,9 @@ export type AgentOptions = {
 	subagent?: { boss: string };
 };
 
+/** Herramientas que en Code, dentro de un proyecto, se confunden con `project` (ver prepareRun). */
+export const PROJECT_OVERLAP_TOOLS = ["read_file", "write_file", "list_dir", "write_file_system"];
+
 /** Veces que se permite repetir exactamente la misma llamada (nombre + args) en una respuesta. */
 const MAX_IDENTICAL_TOOL_CALLS = 2;
 /** Lo que ocupa una captura en el contexto, en letras (≈800 tokens, como en historyBudget). */
@@ -128,7 +138,7 @@ export function resolveTools(
 ): string[] | undefined {
 	let tools = requested;
 	// Ajustes → Modelo: cada modelo puede tener su perfil (pocas o todas las herramientas).
-	// CodeHacking y Planear ya son listas elegidas a propósito: no se vuelven a recortar.
+	// Code, Hacking y Planear ya son listas elegidas a propósito: no se vuelven a recortar.
 	const profile = activeModelTuning(ref).toolProfile;
 	const lite = mode === "chat" && !planning && (profile === "lite" || (profile === "auto" && localModel));
 	if (lite) {
@@ -136,9 +146,9 @@ export function resolveTools(
 	}
 	// El control del PC solo se ofrece donde se puede pedir permiso al usuario (web, terminal).
 	// En WhatsApp, Telegram o tareas programadas cualquiera que escriba podría abrir cosas o mirar la pantalla.
-	// CodeHacking se activa a propósito: conserva su terminal (cada comando sigue pidiendo
+	// Code y Hacking se activan a propósito: conservan su terminal (cada comando sigue pidiendo
 	// permiso), pero solo donde hay approver (canAskUser).
-	const stripPc = !canAskUser || (!getConfig().pcControl && mode !== "hacking");
+	const stripPc = !canAskUser || (!getConfig().pcControl && mode === "chat");
 	if (stripPc) {
 		tools = (tools ?? getAllToolNames()).filter((t) => !PC_TOOLS.includes(t));
 	}
@@ -201,6 +211,9 @@ type PreparedRun = {
 	/** La conversación que se envía (ya recortada) y cuántos mensajes tiene el chat. */
 	sentMessages: Message[];
 	totalMessages: number;
+	/** Tamaño del contexto del modelo en tokens, si se sabe, y lo que cabe en cada resultado de herramienta. */
+	contextTokens: number | undefined;
+	resultChars: number;
 };
 
 async function prepareRun(goal: string, opts: AgentOptions, workspaceContext?: string): Promise<PreparedRun> {
@@ -229,16 +242,22 @@ async function prepareRun(goal: string, opts: AgentOptions, workspaceContext?: s
 	} else if ((effectiveTools ?? getAllToolNames()).includes("project")) {
 		effectiveTools = (effectiveTools ?? getAllToolNames()).filter((t) => t !== "project");
 	}
+	// En Code con un proyecto, `project` hace todo el trabajo con archivos. Las de notas (read_file…) y la de
+	// escribir en cualquier parte se le parecen demasiado: los modelos chicos las eligen por el nombre, fallan
+	// o reescriben archivos enteros pidiendo permiso hasta para leer. Lo de fuera del proyecto, con la terminal.
+	if (project && mode === "code" && opts.textOnly !== true) {
+		effectiveTools = (effectiveTools ?? getAllToolNames()).filter((t) => !PROJECT_OVERLAP_TOOLS.includes(t));
+	}
 	// Claude Code solo en un proyecto con carpeta vinculada y si está instalado en este equipo.
 	const canUseClaudeCode = Boolean(project?.folders.length) && claudeCodeLauncher() !== null;
 	if (!canUseClaudeCode && (effectiveTools ?? getAllToolNames()).includes("claude_code")) {
 		effectiveTools = (effectiveTools ?? getAllToolNames()).filter((t) => t !== "claude_code");
 	}
-	// Los ayudantes no crean otros ayudantes: solo reparte el jefe.
-	if (opts.subagent && (effectiveTools ?? getAllToolNames()).includes("delegate")) {
-		effectiveTools = (effectiveTools ?? getAllToolNames()).filter((t) => t !== "delegate");
+	// Los ayudantes no crean otros ayudantes ni llevan la lista de tareas: eso es del jefe.
+	if (opts.subagent && (effectiveTools ?? getAllToolNames()).some((t) => t === "delegate" || t === "todo")) {
+		effectiveTools = (effectiveTools ?? getAllToolNames()).filter((t) => t !== "delegate" && t !== "todo");
 	}
-	// Modo ahorro: solo en Chat. CodeHacking y Planear ya tienen listas completas para su tarea;
+	// Modo ahorro: solo en Chat. Code, Hacking y Planear ya tienen listas completas para su tarea;
 	// quitarles herramientas por palabras clave o limitar sus pasos los dejaría cojos a mitad de trabajo.
 	const saverLimits = mode === "chat" && !planning;
 	if (saverOn(ref) && opts.textOnly !== true && saverLimits) {
@@ -259,7 +278,10 @@ async function prepareRun(goal: string, opts: AgentOptions, workspaceContext?: s
 	const wantExplain = /\b(explica|explicame|explícame|que hiciste|qué hiciste|como lo hiciste|cómo lo hiciste|pasos|tools|herramientas)\b/i.test(goal || "");
 	const effectiveExplainMode = wantExplain && explainMode === "off" ? "brief" : explainMode;
 
-	const projectTool = !textOnly && (effectiveTools ?? getAllToolNames()).includes("project");
+	const toolNames = textOnly ? [] : (effectiveTools ?? getAllToolNames());
+	const projectTool = toolNames.includes("project");
+	// Dónde está la terminal: solo si el modelo la tiene (abrirla no hace falta para saberlo).
+	const shell = toolNames.includes("terminal") ? terminal.shellInfo() : undefined;
 	const projectContext = project
 		? {
 				name: project.name,
@@ -268,8 +290,29 @@ async function prepareRun(goal: string, opts: AgentOptions, workspaceContext?: s
 				index: projectIndex(project),
 				inline: await inlineProjectText(project).catch(() => null),
 				hasTool: projectTool,
+				folders: projectSources(project)
+					.filter((s) => s.kind === "folder")
+					.map((s) => ({ path: s.root, note: formatFolderInfo(describeFolder(s.root), s.label) || undefined })),
+				terminalCwd: shell?.cwd,
 			}
 		: undefined;
+
+	// El contexto del modelo decide cuánto cabe en cada resultado de herramienta.
+	const contextTokens = await limitFor(ref);
+	const resultChars = toolResultLimit(ref, saverLimits && saverOn(ref), contextTokens);
+	// Entorno y guía de herramientas: solo donde hay a quién pedir permiso (web y terminal). Por WhatsApp o
+	// Telegram escribe cualquiera: no se le cuenta cómo es el equipo.
+	const trusted = approver !== undefined && !textOnly;
+	const environment = trusted
+		? formatEnvironment(collectEnvironment({ hacking: mode === "hacking", shell }), {
+				mode,
+				permissions,
+				tools: toolNames,
+				contextLimit: contextTokens,
+				approvalMode: getConfig().approvalMode,
+			})
+		: undefined;
+	const toolGuide = trusted ? buildToolGuide(toolNames, { mode, planning, pcBlock: hasPcTools, pcControlOff: !getConfig().pcControl }) || undefined : undefined;
 
 	const { system, messages, sections } = buildContext({
 		goal,
@@ -295,6 +338,8 @@ async function prepareRun(goal: string, opts: AgentOptions, workspaceContext?: s
 			!textOnly && (effectiveTools ?? getAllToolNames()).includes("delegate")
 				? loadAgents().agents.map((a) => ({ name: a.name, description: a.description || undefined }))
 				: undefined,
+		environment,
+		toolGuide,
 	});
 
 	const history: Message[] = (conversation ?? [])
@@ -313,7 +358,10 @@ async function prepareRun(goal: string, opts: AgentOptions, workspaceContext?: s
 	// Solo se manda la parte del chat que cabe en el presupuesto (Ajustes → Modelo → "Conversación
 	// que se envía"): cada vuelta con herramientas reenvía todo, y un chat largo gasta muchísimo.
 	const sentHistory = history.length ? trimToBudget(history, system.length + JSON.stringify(toolsDef ?? []).length, ref) : history;
-	const sentMessages = sentHistory.length ? sentHistory : messages;
+	// Qué hizo en su respuesta anterior va pegado al mensaje nuevo, que es donde el modelo mira (arriba, en las
+	// instrucciones, los modelos chicos no lo ven). Un ayudante empieza de cero: lo anterior es de su jefe.
+	const previous = opts.subagent || textOnly ? undefined : buildPreviousWork(conversation);
+	const sentMessages = withSystemNote(sentHistory.length ? sentHistory : messages, previous);
 	const fullMessages: Message[] = [{ role: "system", content: system }, ...sentMessages];
 
 	return {
@@ -332,6 +380,8 @@ async function prepareRun(goal: string, opts: AgentOptions, workspaceContext?: s
 		sections,
 		sentMessages,
 		totalMessages: history.length || sentMessages.length,
+		contextTokens,
+		resultChars,
 	};
 }
 
@@ -379,7 +429,7 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 				tools: toolsDef,
 				toolResultChars,
 				realInput: lastInput,
-				limit: await limitFor(ref),
+				limit: prep.contextTokens ?? (await limitFor(ref)),
 			}),
 		);
 	};
@@ -444,7 +494,7 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 		if (opts.onContext) {
 			// Como lo recibe el modelo (client.ts lo recorta igual), más la llamada y una captura si la hay.
 			const raw = out.ok ? out.content : `Error: ${out.error ?? "desconocido"}`;
-			const given = name === "use_skill" ? raw : normalizeToolResult(raw, ref, saverLimits && saverOn(ref));
+			const given = name === "use_skill" ? raw : normalizeToolResult(raw, ref, saverLimits && saverOn(ref), prep.resultChars);
 			toolResultChars += given.length + JSON.stringify(args ?? {}).length + name.length + 60 + (out.image ? IMAGE_CHARS : 0);
 		}
 		return out;
@@ -475,6 +525,8 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 		projectId: project?.id,
 		subagent: opts.subagent !== undefined,
 		launched: 0,
+		resultChars: prep.resultChars,
+		onTodo: opts.onTodo,
 	};
 	let content = "";
 	try {
@@ -487,7 +539,16 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 							() =>
 								textOnly
 									? llm.chat(fullMessages, { onDelta, onUsage: trackUsage, signal, sessionId, thinking: opts.thinking })
-									: llm.chatWithTools(fullMessages, toolsDef, executeTool, { onDelta, onUsage: trackUsage, signal, sessionId, thinking: opts.thinking, saverLimits }),
+									: llm.chatWithTools(fullMessages, toolsDef, executeTool, {
+										onDelta,
+										onUsage: trackUsage,
+										signal,
+										sessionId,
+										thinking: opts.thinking,
+										saverLimits,
+										resultChars: prep.resultChars,
+										contextTokens: prep.contextTokens,
+									}),
 							permissions,
 						),
 					),

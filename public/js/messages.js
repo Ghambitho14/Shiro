@@ -59,6 +59,7 @@ export function fromServer(m) {
 	if (m.usage?.turns) out.usage = m.usage;
 	if (m.context?.used) out.context = m.context;
 	if (m.summary === true) out.summary = true;
+	if (Array.isArray(m.todo) && m.todo.length) out.todo = m.todo;
 	if (Array.isArray(m.tools)) out.tools = m.tools.map((t, i) => ({ id: `h${i}`, name: t.name, label: t.label, status: t.ok === false ? "fail" : "ok", image: t.image }));
 	return out;
 }
@@ -71,6 +72,7 @@ export function serialize(m) {
 	if (m.usage) o.usage = m.usage;
 	if (m.context) o.context = m.context;
 	if (m.summary) o.summary = true;
+	if (m.todo?.length) o.todo = m.todo;
 	if (m.tools?.length) {
 		o.tools = m.tools.map((t) => ({ name: t.name, label: t.label, ok: t.status !== "fail", ...(t.image ? { image: t.image } : {}) }));
 	}
@@ -132,6 +134,7 @@ export function buildAssistant(m) {
 		`<div class="avatar"><img src="/icons/icon-64.png" alt=""></div>
 		<div class="body">
 			<div class="msg-author" hidden></div>
+			<div class="todo" hidden><div class="todo-head"></div><div class="todo-list"></div></div>
 			<div class="steps" hidden><button type="button" class="steps-toggle">${icon("chevronDown", "sm")}<span></span></button><div class="steps-list"></div></div>
 			<div class="approvals"></div>
 			<div class="md"></div>
@@ -143,6 +146,9 @@ export function buildAssistant(m) {
 		root,
 		avatar: $(".avatar", root),
 		author: $(".msg-author", root),
+		todo: $(".todo", root),
+		todoHead: $(".todo-head", root),
+		todoList: $(".todo-list", root),
 		steps: $(".steps", root),
 		stepsLabel: $(".steps-toggle span", root),
 		stepsList: $(".steps-list", root),
@@ -160,7 +166,7 @@ export function buildAssistant(m) {
 		el("span", "msg-usage"),
 	);
 	refs.set(m, r);
-	if ((m.tools?.length ?? 0) > 3) r.steps.classList.add("collapsed");
+	if ((m.tools?.filter((t) => t.name !== "todo").length ?? 0) > 3) r.steps.classList.add("collapsed");
 	paintAssistant(m);
 	return root;
 }
@@ -168,7 +174,8 @@ export function buildAssistant(m) {
 export function paintSteps(m) {
 	const r = refs.get(m);
 	if (!r?.steps) return;
-	const tools = m.tools || [];
+	// Las llamadas a la lista de tareas no son pasos: la lista se pinta aparte (paintTodo).
+	const tools = (m.tools || []).filter((t) => t.name !== "todo");
 	// Solo se repinta si cambió algo (evita que las capturas parpadeen mientras llega el texto).
 	const sig = JSON.stringify(tools.map((t) => [t.id, t.status, t.error, t.image]));
 	if (r.stepsSig === sig) return;
@@ -191,6 +198,28 @@ export function paintSteps(m) {
 			})
 			.catch(() => img.remove());
 	}
+}
+
+/** La lista de tareas de un trabajo largo (tool todo): se va tachando mientras el modelo avanza. */
+export function paintTodo(m) {
+	const r = refs.get(m);
+	if (!r?.todo) return;
+	const items = m.todo || [];
+	const sig = JSON.stringify([items, Boolean(m.streaming)]);
+	if (r.todoSig === sig) return;
+	r.todoSig = sig;
+	r.todo.hidden = items.length === 0;
+	if (!items.length) return;
+	const done = items.filter((t) => t.status === "done").length;
+	r.todoHead.textContent = `Tareas · ${done} de ${items.length}`;
+	r.todoList.innerHTML = items
+		.map((t) => {
+			// Mientras responde, la tarea en curso gira; al terminar queda como "a medias".
+			const live = t.status === "in_progress" && m.streaming;
+			const ico = t.status === "done" ? "check" : live ? "loader" : "circle";
+			return `<div class="todo-item ${t.status}${live ? " live" : ""}">${icon(ico, "sm")}<span>${escapeHtml(t.text)}</span></div>`;
+		})
+		.join("");
 }
 
 /** El agente de un mensaje (por su id), o uno con solo el nombre si ya no existe. */
@@ -220,6 +249,7 @@ export function paintAssistant(m) {
 	if (!r?.md) return;
 	r.root.classList.toggle("streaming", Boolean(m.streaming));
 	paintAuthor(m);
+	paintTodo(m);
 	paintSteps(m);
 	const waiting = m.streaming && !m.content && !(m.tools || []).some((t) => t.status === "running") && !r.cards.some((c) => !c.done);
 	if (m.content) r.md.innerHTML = renderMarkdown(m.content, { streaming: m.streaming });

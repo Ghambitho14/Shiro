@@ -66,10 +66,28 @@ test("sanitizeMessages guarda el modo del usuario y descarta valores inválidos"
 	]);
 	assert.deepEqual(out, [
 		{ role: "user", content: "pentest", mode: "hacking" },
-		// El antiguo modo Code ahora es CodeHacking.
-		{ role: "user", content: "programa", mode: "hacking" },
+		{ role: "user", content: "programa", mode: "code" },
 		{ role: "assistant", content: "respuesta" },
 		{ role: "user", content: "modo inventado" },
 		{ role: "user", content: "chat viejo" },
 	]);
+});
+
+test("sanitizeMessages guarda la lista de tareas solo en respuestas del asistente y con estados válidos", () => {
+	const [user, bot, empty] = sanitizeMessages([
+		{ role: "user", content: "hola", todo: [{ text: "x", status: "done" }] },
+		{
+			role: "assistant",
+			content: "voy",
+			todo: [{ text: " Leer ", status: "done" }, { text: "Arreglar", status: "in_progress" }, { text: "Probar", status: "raro" }, { text: "", status: "done" }, "basura"],
+		},
+		{ role: "assistant", content: "nada", todo: [] },
+	]);
+	assert.equal(user.todo, undefined);
+	assert.deepEqual(bot.todo, [
+		{ text: "Leer", status: "done" },
+		{ text: "Arreglar", status: "in_progress" },
+		{ text: "Probar", status: "pending" },
+	]);
+	assert.equal(empty.todo, undefined);
 });

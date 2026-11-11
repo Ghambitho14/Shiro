@@ -231,10 +231,112 @@ test("lectura por trozos de archivos largos", async () => {
 	const p = projects.createProject({ name: "Largo" });
 	projects.saveUpload(p.id, "libro.txt", Buffer.from("a".repeat(30_000)));
 	await projects.runWithProject(p, async () => {
+		// Una sola línea enorme no cabe: se sigue por letras.
 		const first = await executeTool("project", { action: "read", path: "Subidos/libro.txt" });
-		assert.match(out(first), /offset=12000/);
+		assert.match(out(first), /caracteres 0–11700 de 30000/);
+		assert.match(out(first), /offset=11700/);
 		const second = await executeTool("project", { action: "read", path: "Subidos/libro.txt", offset: 24000 });
 		assert.ok(second.ok && !/offset=/.test(second.content.split("\n\n").pop() ?? ""));
+	});
+});
+
+test("project read: un archivo con líneas se lee por tramos y dice cómo seguir", async () => {
+	const p = projects.createProject({ name: "Tramos" });
+	const lines = Array.from({ length: 500 }, (_, i) => `línea ${i + 1} ${"x".repeat(60)}`);
+	projects.saveUpload(p.id, "codigo.ts", Buffer.from(lines.join("\r\n") + "\r\n"));
+	projects.saveUpload(p.id, "corto.md", Buffer.from("uno\ndos\n"));
+	await projects.runWithProject(p, async () => {
+		const whole = out(await executeTool("project", { action: "read", path: "Subidos/corto.md" }));
+		assert.equal(whole, "Archivo: Subidos/corto.md\n\nuno\ndos");
+		const first = out(await executeTool("project", { action: "read", path: "Subidos/codigo.ts" }));
+		const m = /\(líneas 1–(\d+) de 500\)/.exec(first);
+		assert.ok(m, first.slice(0, 80));
+		assert.match(first, new RegExp(`Sigue con line=${Number(m[1]) + 1}\\.`));
+		assert.ok(first.length <= 12_000);
+		const part = out(await executeTool("project", { action: "read", path: "Subidos/codigo.ts", line: 120, lines: 3 }));
+		assert.match(part, /\(líneas 120–122 de 500\)/);
+		assert.match(part, /línea 120 x+\nlínea 121 x+\nlínea 122 x+\n\n\[…continúa: quedan 378 líneas\. Sigue con line=123\.\]$/);
+		const last = out(await executeTool("project", { action: "read", path: "Subidos/codigo.ts", line: 499 }));
+		assert.match(last, /\(líneas 499–500 de 500\)/);
+		assert.doesNotMatch(last, /continúa/);
+		const beyond = await executeTool("project", { action: "read", path: "Subidos/codigo.ts", line: 900 });
+		assert.ok(!beyond.ok && /solo tiene 500 líneas/.test(beyond.error ?? ""));
+	});
+});
+
+test("project find: encuentra archivos por nombre o patrón", async () => {
+	const p = projects.createProject({ name: "Nombres" });
+	for (const f of ["src/api/usuarios.ts", "src/api/usuarios.test.ts", "src/web/login.tsx", "docs/Guía de API.md", "README.md"]) {
+		projects.saveUpload(p.id, f, Buffer.from("x"));
+	}
+	await projects.runWithProject(p, async () => {
+		const tests = out(await executeTool("project", { action: "find", query: "*.test.ts" }));
+		assert.match(tests, /Subidos\/src\/api\/usuarios\.test\.ts/);
+		assert.doesNotMatch(tests, /usuarios\.ts \(/);
+		// Sin comodines: todas las palabras en la ruta, sin tildes ni mayúsculas.
+		const guia = out(await executeTool("project", { action: "find", query: "guia api" }));
+		assert.match(guia, /Guía de API\.md/);
+		// Con carpetas: `*` no las cruza, `**` sí; con o sin el nombre de la carpeta del proyecto.
+		assert.match(out(await executeTool("project", { action: "find", query: "src/**/*.ts" })), /usuarios\.ts/);
+		assert.match(out(await executeTool("project", { action: "find", query: "Subidos/src/*/login.tsx" })), /login\.tsx/);
+		assert.match(out(await executeTool("project", { action: "find", query: "src/*.ts" })), /No hay archivos/);
+		assert.match(out(await executeTool("project", { action: "find", query: "nada-de-nada" })), /No hay archivos/);
+		assert.ok(!(await executeTool("project", { action: "find" })).ok);
+	});
+	assert.equal(projects.globToRegExp("a.b").test("axb"), false);
+});
+
+test("project search: filtro de archivos, líneas de alrededor y reparto entre archivos", async () => {
+	const p = projects.createProject({ name: "Busca" });
+	projects.saveUpload(p.id, "a.ts", Buffer.from(["// cabecera", "function sumar(a, b) {", "  return a + b;", "}", ...Array.from({ length: 9 }, (_, i) => `sumar(${i}, 1);`)].join("\n")));
+	projects.saveUpload(p.id, "b.md", Buffer.from("Para sumar usa la función.\n"));
+	await projects.runWithProject(p, async () => {
+		const all = out(await executeTool("project", { action: "search", query: "sumar" }));
+		assert.match(all, /^11 coincidencias en 2 archivos:/);
+		// Como mucho 5 líneas por archivo, y avisa de las que no enseña.
+		assert.equal((all.match(/Subidos\/a\.ts:\d+:/g) ?? []).length, 5);
+		assert.match(all, /Subidos\/a\.ts: \(\+5 coincidencias más en este archivo\)/);
+		assert.match(all, /Subidos\/b\.md:1: Para sumar/);
+		const onlyMd = out(await executeTool("project", { action: "search", query: "sumar", files: "*.md" }));
+		assert.match(onlyMd, /^1 coincidencia en 1 archivo:/);
+		assert.doesNotMatch(onlyMd, /a\.ts/);
+		const ctx = out(await executeTool("project", { action: "search", query: "function sumar", context: 1 }));
+		assert.match(ctx, /Subidos\/a\.ts:2: function sumar\(a, b\) \{\n {4}1\| \/\/ cabecera\n {4}3\| {3}return a \+ b;/);
+		assert.match(out(await executeTool("project", { action: "search", query: "no-existe" })), /No encontré/);
+		// Como lo escriben los modelos por costumbre: «|» separa alternativas y «.*» vale por «y».
+		assert.match(out(await executeTool("project", { action: "search", query: "no-existe|cabecera" })), /^1 coincidencia en 1 archivo:\nSubidos\/a\.ts:1: \/\/ cabecera/);
+		assert.match(out(await executeTool("project", { action: "search", query: "function.*sumar" })), /Subidos\/a\.ts:2: function sumar/);
+	});
+});
+
+test("project edit: cambia un trozo, conserva los saltos de línea y explica los fallos", async () => {
+	const { writeFileSync: write, readFileSync: read, mkdirSync: mkdir } = await import("node:fs");
+	const dir = join(TMP, "editar");
+	mkdir(dir, { recursive: true });
+	const file = join(dir, "app.ts");
+	write(file, "const a = 1;\r\nconst b = 2;   \r\nconst c = 3;\r\nconst b2 = 2;\r\n");
+	const created = projects.createProject({ name: "Editar" });
+	const p = projects.addFolder(created.id, dir)!;
+	await projects.runWithProject(p, async () => {
+		const edit = (args: Record<string, unknown>) => executeTool("project", { action: "edit", path: "editar/app.ts", ...args });
+		const ok = await edit({ old_text: "const a = 1;", new_text: "const a = 10;\nconst extra = true;" });
+		assert.match(out(ok), /Cambiado editar\/app\.ts \(línea 1\): 1 línea → 2\./);
+		assert.equal(read(file, "utf-8"), "const a = 10;\r\nconst extra = true;\r\nconst b = 2;   \r\nconst c = 3;\r\nconst b2 = 2;\r\n");
+		// Los espacios del final de línea que el modelo pierde no impiden encontrar el trozo.
+		assert.ok((await edit({ old_text: "const b = 2;\nconst c = 3;", new_text: "const b = 20;\nconst c = 30;" })).ok);
+		assert.match(read(file, "utf-8"), /const b = 20;\r\nconst c = 30;\r\n/);
+		// Repetido: hay que desambiguar o pedir todas.
+		const twice = await edit({ old_text: "= 2", new_text: "= 5" });
+		assert.ok(!twice.ok && /aparece 2 veces/.test(twice.error ?? ""), out(twice));
+		assert.match(out(await edit({ old_text: "= 2", new_text: "= 5", replace_all: true })), /2 veces/);
+		assert.match(read(file, "utf-8"), /const b = 50;[\s\S]*const b2 = 5;/);
+		// No está: dice dónde mirar.
+		const missing = await edit({ old_text: "const c = 30;\nconst zzz = 0;", new_text: "x" });
+		assert.ok(!missing.ok && /No encontré ese texto/.test(missing.error ?? "") && /línea 4/.test(missing.error ?? ""), out(missing));
+		assert.ok(!(await edit({ old_text: "const c = 30;", new_text: "const c = 30;" })).ok);
+		assert.ok(!(await executeTool("project", { action: "edit", path: "editar/no.ts", old_text: "a", new_text: "b" })).ok);
+		assert.ok(!(await executeTool("project", { action: "edit", path: "editar/../../fuera.ts", old_text: "a", new_text: "b" })).ok);
+		assert.ok(!(await executeTool("project", { action: "edit", path: "editar/app.ts", new_text: "b" })).ok);
 	});
 });
 
@@ -254,4 +356,31 @@ test("el system prompt incluye el proyecto con sus instrucciones", async () => {
 	assert.match(system, /Subidos\/itinerario\.md/);
 	assert.match(system, /Día 1: Tokio/);
 	assert.match(system, /tool project/);
+});
+
+test("carpeta del modo Code: reutiliza el proyecto que ya la tiene o crea uno con su nombre", () => {
+	const dir = join(TMP, "mi-app");
+	mkdirSync(dir, { recursive: true });
+	const first = projects.projectForFolder(dir);
+	assert.equal(first.name, "mi-app");
+	assert.equal(first.folders.length, 1);
+	// La misma carpeta (escrita con otra barra al final) da el mismo proyecto, sin duplicarlo.
+	assert.equal(projects.projectForFolder(dir + "\\").id, first.id);
+	assert.equal(projects.listProjects().filter((p) => p.name === "mi-app").length, 1);
+	assert.throws(() => projects.projectForFolder(join(TMP, "no-existe")), /No encuentro la carpeta/);
+	assert.throws(() => projects.projectForFolder(parse(TMP).root), /demasiado grande/);
+	const recent = projects.recentFolders();
+	assert.ok(recent.some((f) => f.projectId === first.id && f.name === "mi-app" && f.exists));
+	assert.equal(new Set(recent.map((f) => f.path.toLowerCase())).size, recent.length);
+});
+
+test("el modelo sabe en qué carpetas del equipo está el proyecto (para la terminal)", () => {
+	const { system } = buildContext({
+		goal: "Corre las pruebas",
+		agentName: "Shiro",
+		tokenBudget: 8000,
+		project: { name: "mi-app", index: "(vacío)", hasTool: true, folders: [{ path: "/srv/mi-app" }] },
+	});
+	assert.ok(system.includes("### Carpetas en este equipo\n- /srv/mi-app\n"));
+	assert.match(system, /entra en la que toque \(cd\)/);
 });

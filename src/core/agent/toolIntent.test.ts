@@ -42,3 +42,8 @@ test("Modo ahorro: nunca deja la lista vacía", () => {
 	assert.deepEqual(selectToolsByIntent(["pc_open"], ["hola"]), ["pc_open"]);
 	assert.deepEqual(selectToolsByIntent([], ["hola"]), []);
 });
+
+test("Modo ahorro: la lista de tareas solo se ofrece en trabajos largos", () => {
+	assert.ok(!selectToolsByIntent(ALL, ["¿Quién ganó el mundial de 2010?"]).includes("todo"));
+	assert.ok(selectToolsByIntent(ALL, ["Investiga los tres mejores portátiles y compáralos"]).includes("todo"));
+});

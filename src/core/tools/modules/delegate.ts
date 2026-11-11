@@ -26,7 +26,8 @@ export function findAgentByName(agents: AgentProfile[], name: string): AgentProf
 
 /** Las herramientas del ayudante: las de su jefe (sin `delegate`), recortadas a las del agente si tiene lista propia. */
 export function subagentTools(bossTools: string[] | undefined, profile?: AgentProfile): string[] {
-	const base = (bossTools ?? getAllToolNames()).filter((t) => t !== "delegate");
+	// Sin `todo`: la lista de tareas que ve el usuario es la del jefe.
+	const base = (bossTools ?? getAllToolNames()).filter((t) => t !== "delegate" && t !== "todo");
 	if (!profile || profile.tools === "inherit") return base;
 	if (profile.tools === "none") return [];
 	return base.filter((t) => (profile.tools as string[]).includes(t));

@@ -79,7 +79,8 @@
 					</button>
 					<div class="mode-seg" id="mode-seg" role="tablist" aria-label="Modo de Aku">
 						<button type="button" class="mode-opt active" data-mode="chat" role="tab" aria-selected="true" title="Chat normal"><span data-icon="sparkles" data-size="sm"></span><span>Chat</span></button>
-						<button type="button" class="mode-opt" data-mode="hacking" role="tab" aria-selected="false" title="CodeHacking: programar y probar la seguridad (pentesting) de tus propios sistemas"><span data-icon="shield" data-size="sm"></span><span>CodeHacking</span></button>
+						<button type="button" class="mode-opt" data-mode="code" role="tab" aria-selected="false" title="Code: programar en tus proyectos"><span data-icon="braces" data-size="sm"></span><span>Code</span></button>
+						<button type="button" class="mode-opt" data-mode="hacking" role="tab" aria-selected="false" title="Hacking: probar la seguridad (pentesting) de tus propios sistemas, pensado para Kali"><span data-icon="shield" data-size="sm"></span><span>Hacking</span></button>
 					</div>
 					<button class="crumb-btn" id="project-crumb" hidden title="Ir a la página del proyecto"><span data-icon="folder" data-size="sm"></span><span class="crumb-name"></span></button>
 					<div class="spacer"></div>
@@ -119,6 +120,7 @@
 							<textarea id="input" rows="1" placeholder="Pregunta o pide lo que quieras" enterkeyhint="send"></textarea>
 							<div class="composer-bar">
 								<button type="button" class="icon-btn" id="attach-btn" title="Añadir archivos o una carpeta" aria-label="Añadir archivos o una carpeta" aria-haspopup="menu" data-icon="plus"></button>
+								<button type="button" class="composer-chip" id="folder-btn" aria-haspopup="menu" hidden><span data-icon="folder" data-size="sm"></span><span class="chip-text" id="folder-label">Elegir carpeta</span><span data-icon="chevronDown" data-size="sm"></span></button>
 								<button type="button" class="composer-chip" id="perm-btn" aria-haspopup="menu"><span id="perm-icon" data-size="sm"></span><span id="perm-label">Preguntar</span><span data-icon="chevronDown" data-size="sm"></span></button>
 								<button type="button" class="composer-chip" id="reason-btn" aria-pressed="false"><span data-icon="brain" data-size="sm"></span><span class="chip-text">Más razonamiento</span></button>
 								<button type="button" class="composer-chip ctx-btn" id="ctx-btn" aria-haspopup="dialog" hidden><svg class="ctx-ring" viewBox="0 0 20 20" aria-hidden="true"><circle class="ctx-ring-bg" cx="10" cy="10" r="8"></circle><circle class="ctx-ring-fg" id="ctx-ring" cx="10" cy="10" r="8"></circle></svg><span class="chip-text" id="ctx-label"></span></button>

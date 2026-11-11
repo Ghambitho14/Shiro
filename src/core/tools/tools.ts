@@ -29,7 +29,12 @@ import { executeBrowser, executeTerminal } from "./modules/workbench.js";
 import { executeProject } from "./modules/project.js";
 import { executeClaudeCode } from "./modules/claudeCode.js";
 import { executeDelegate } from "./modules/delegate.js";
+import { executeTodo } from "./modules/todo.js";
 import { isWithinRoot } from "./paths.js";
+import { gitWorkDir } from "./gitDir.js";
+import { currentProject } from "../projects/projects.js";
+import { sliceText } from "./textSlice.js";
+import { currentResultBudget } from "../agent/runContext.js";
 import { splitCommandLine } from "../mcp/mcpConfig.js";
 import { isPotentiallyDangerousCommand } from "../sanitizeResponse.js";
 
@@ -56,6 +61,7 @@ registerToolExecutor("use_skill", executeUseSkill);
 registerToolExecutor("project", executeProject);
 registerToolExecutor("claude_code", executeClaudeCode);
 registerToolExecutor("delegate", executeDelegate);
+registerToolExecutor("todo", executeTodo);
 
 /** Raíz de read_file/write_file/list_dir: data/workspace, o la carpeta "Shiro" de la bóveda con Obsidian. */
 export function getWorkspaceDir(): string {
@@ -71,7 +77,19 @@ function getSystemRoot(): string {
 	return resolve(process.cwd());
 }
 
-const MAX_FILE_SIZE = 512 * 1024;
+/** Los archivos se leen por partes (line, lines), así que caben más grandes que antes. */
+const MAX_FILE_SIZE = 5 * 1024 * 1024;
+
+/** El archivo entero si cabe; si no (o si se pide un tramo), la parte pedida con la nota de cómo seguir. */
+function readSlice(text: string, args: Record<string, unknown>): string {
+	const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+	const line = num(args.line);
+	const lines = num(args.lines);
+	const maxChars = currentResultBudget() - 300;
+	if (line === undefined && lines === undefined && text.length <= maxChars) return text;
+	const s = sliceText(text, { line, lines, maxChars });
+	return `${s.range ? `[${s.range.trim().replace(/^\(|\)$/g, "")}]\n` : ""}${s.body}${s.note}`;
+}
 
 function resolveWorkspacePath(relativePath: string): string | null {
 	const workspace = getWorkspaceDir();
@@ -92,6 +110,11 @@ function resolveSystemPath(pathArg: string): string | null {
 	const rootReal = resolve(root);
 	if (!isWithinRoot(full, rootReal, true)) return null;
 	return full;
+}
+
+/** read_file y list_dir miran las notas de Aku: en un chat de un proyecto, el modelo suele querer los archivos del proyecto. */
+function notesHint(): string {
+	return currentProject() ? " Esta herramienta solo ve tus notas (la carpeta de Aku). Los archivos del proyecto se buscan y leen con project (action=find, action=read)." : "";
 }
 
 function validateArgs(name: string, args: Record<string, unknown>): { ok: true; data: Record<string, unknown> } | { ok: false; error: string } {
@@ -140,11 +163,11 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 				const pathArg = String(args_.path ?? "").trim();
 				const filePath = resolveWorkspacePath(pathArg);
 				if (!filePath) return { ok: false, error: "Path fuera del workspace." };
-				if (!existsSync(filePath)) return { ok: false, error: "Archivo no encontrado." };
+				if (!existsSync(filePath)) return { ok: false, error: "Archivo no encontrado." + notesHint() };
 				const stat = statSync(filePath);
 				if (!stat.isFile()) return { ok: false, error: "No es un archivo." };
-				if (stat.size > MAX_FILE_SIZE) return { ok: false, error: "Archivo demasiado grande (máx 512 KB)." };
-				return { ok: true, content: readFileSync(filePath, "utf-8") };
+				if (stat.size > MAX_FILE_SIZE) return { ok: false, error: "Archivo demasiado grande (máx 5 MB)." };
+				return { ok: true, content: readSlice(readFileSync(filePath, "utf-8"), args_) };
 			}
 			case "write_file": {
 				const pathArg = String(args_.path ?? "").trim();
@@ -159,7 +182,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 				const pathArg = String(args_.path ?? "").trim();
 				const workspace = getWorkspaceDir();
 				const dirPath = pathArg ? resolveWorkspacePath(pathArg) : workspace;
-				if (!dirPath || !existsSync(dirPath)) return { ok: false, error: "Directorio no encontrado." };
+				if (!dirPath || !existsSync(dirPath)) return { ok: false, error: "Directorio no encontrado." + notesHint() };
 				const st = statSync(dirPath);
 				if (!st.isDirectory()) return { ok: false, error: "No es un directorio." };
 				const entries = readdirSync(dirPath, { withFileTypes: true });
@@ -172,8 +195,8 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 				if (!existsSync(filePath)) return { ok: false, error: "Archivo no encontrado." };
 				const stat = statSync(filePath);
 				if (!stat.isFile()) return { ok: false, error: "No es un archivo." };
-				if (stat.size > MAX_FILE_SIZE) return { ok: false, error: "Archivo demasiado grande (máx 512 KB)." };
-				return { ok: true, content: readFileSync(filePath, "utf-8") };
+				if (stat.size > MAX_FILE_SIZE) return { ok: false, error: "Archivo demasiado grande (máx 5 MB)." };
+				return { ok: true, content: readSlice(readFileSync(filePath, "utf-8"), args_) };
 			}
 			case "write_file_system": {
 				const pathArg = String(args_.path ?? "").trim();
@@ -553,7 +576,8 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 				if (!command) return { ok: false, error: "El comando git es requerido" };
 
 				const { execFile } = await import("node:child_process");
-				const cwd = resolve(getWorkspaceDir(), repoPath);
+				// Sin carpeta indicada, la del proyecto del chat (si tiene una); si no, la de Aku.
+				const cwd = gitWorkDir(repoPath);
 				if (!existsSync(cwd) || !statSync(cwd).isDirectory()) return { ok: false, error: `La carpeta ${repoPath} no existe.` };
 				// Sin intérprete de comandos: &, | o > llegan a git como texto y no encadenan otro programa.
 				const argv = splitCommandLine(command);

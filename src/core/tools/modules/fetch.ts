@@ -1,4 +1,6 @@
 import { isShiroUrl } from "../../browser/pageModel.js";
+import { currentResultBudget } from "../../agent/runContext.js";
+import { findInText, sliceText } from "../textSlice.js";
 
 /**
  * Así se presenta fetch_url. El servidor de Shiro rechaza su API con este agente: una página
@@ -75,6 +77,31 @@ async function readLimited(res: Response, maxBytes: number): Promise<{ buf: Uint
 	return { buf, cut };
 }
 
+/** Páginas ya leídas: para seguir con offset o buscar con find sin volver a bajarlas. */
+const PAGE_TTL_MS = 10 * 60_000;
+const PAGE_CACHE_MAX = 6;
+const pages = new Map<string, { text: string; at: number }>();
+
+function remember(url: string, text: string): void {
+	pages.delete(url);
+	if (pages.size >= PAGE_CACHE_MAX) pages.delete(pages.keys().next().value!);
+	pages.set(url, { text, at: Date.now() });
+}
+
+/** La parte de la página que cabe en el resultado: desde `offset`, o solo los párrafos con las palabras de `find`. */
+export function pagePart(text: string, args: { offset?: unknown; find?: unknown }, budget = currentResultBudget() - 300): string {
+	const find = typeof args.find === "string" ? args.find.trim() : "";
+	if (find) {
+		const r = findInText(text, find, { context: 1, maxChars: budget });
+		if (!r.hits) return `No encontré «${find}» en la página (${text.length} caracteres). Prueba con otras palabras o léela por partes con offset.`;
+		return `${r.hits} ${r.hits === 1 ? "coincidencia" : "coincidencias"} de «${find}» en la página${r.shown < r.hits ? ` (van las primeras ${r.shown})` : ""}:\n\n${r.body}`;
+	}
+	const offset = typeof args.offset === "number" && Number.isFinite(args.offset) ? Math.max(0, Math.floor(args.offset)) : 0;
+	if (!offset && text.length <= budget) return text;
+	const s = sliceText(text, { offset, maxChars: budget });
+	return `[Página${s.range}]\n${s.body}${s.note}`;
+}
+
 export async function executeFetchUrl(args: Record<string, unknown>): Promise<{ ok: boolean; content: string }> {
 	const url = String(args.url ?? "").trim();
 	if (!url) return { ok: false, content: "URL requerida" };
@@ -89,6 +116,15 @@ export async function executeFetchUrl(args: Record<string, unknown>): Promise<{ 
 		return { ok: false, content: "Solo se permiten URLs http o https" };
 	}
 	if (isShiroUrl(parsed.href)) return { ok: false, content: "La web de Aku no se lee con fetch_url." };
+
+	const cached = pages.get(parsed.href);
+	if (cached && Date.now() - cached.at < PAGE_TTL_MS) {
+		try {
+			return { ok: true, content: pagePart(cached.text, args) };
+		} catch (e) {
+			return { ok: false, content: e instanceof Error ? e.message : String(e) };
+		}
+	}
 
 	const controller = new AbortController();
 	const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -118,7 +154,9 @@ export async function executeFetchUrl(args: Record<string, unknown>): Promise<{ 
 		const isHtml = contentType.includes("html") || /^\s*(<!doctype html|<html)/i.test(raw);
 		const text = (isHtml ? htmlToText(raw) : raw).trim();
 		const note = cut ? `\n\n(página recortada: solo se leyeron los primeros ${FETCH_MAX_BYTES / 1024 / 1024} MB)` : "";
-		return { ok: true, content: (text || "(Contenido vacío)") + note };
+		const full = (text || "(Contenido vacío)") + note;
+		remember(parsed.href, full);
+		return { ok: true, content: pagePart(full, args) };
 	} catch (e) {
 		clearTimeout(timeoutId);
 		if (e instanceof Error) {

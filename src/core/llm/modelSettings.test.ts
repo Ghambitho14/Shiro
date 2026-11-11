@@ -108,11 +108,23 @@ test("modo ahorro: automático en locales y OpenCode, no en OpenRouter; limita p
 	const { normalizeToolResult } = await import("./toolRuntime.js");
 	setConfig({ llmProvider: "ollama", llmModel: "qwen3:8b", maxToolIterations: 10, saver: "auto", modelSettings: {} });
 	assert.equal(saverOn(), true);
-	assert.equal(getMaxToolIterations(), 4);
+	assert.equal(getMaxToolIterations(), 8);
 	assert.ok(normalizeToolResult("x".repeat(10_000)).length < 4100);
-	// CodeHacking y Planear no aplican sus límites aunque esté encendido.
+	// Code, Hacking y Planear no aplican sus límites aunque esté encendido, y tienen el triple de pasos.
 	assert.equal(getMaxToolIterations(undefined, false), 10);
+	assert.equal(getMaxToolIterations(undefined, false, true), 30);
 	assert.equal(normalizeToolResult("x".repeat(10_000), undefined, false).length, 10_000);
+	// Con poco contexto, cada resultado ocupa como mucho una sexta parte (y nunca menos de 1.500 letras).
+	const { toolResultLimit, toolResultsBudget } = await import("./toolRuntime.js");
+	assert.equal(toolResultLimit(undefined, false), 12_000);
+	assert.equal(toolResultLimit(undefined, false, 8192), Math.floor((8192 * 3.5) / 6));
+	assert.equal(toolResultLimit(undefined, false, 1000), 1500);
+	assert.equal(toolResultLimit(undefined, false, 200_000), 12_000);
+	assert.equal(toolResultLimit(undefined, true, 200_000), 4000);
+	// Lo que pueden sumar los resultados de una respuesta antes de recortar los viejos.
+	assert.equal(toolResultsBudget(10_000, true), 14_000);
+	assert.equal(toolResultsBudget(undefined, true), 24_000);
+	assert.equal(toolResultsBudget(undefined, false), 80_000);
 	// En automático, la nube "normal" lo tiene apagado; OpenCode encendido.
 	assert.equal(saverOn({ provider: "openrouter", model: "openai/gpt-4o-mini" }), false);
 	assert.equal(saverOn({ provider: "opencode-go", model: "glm-5.3-flash" }), true);

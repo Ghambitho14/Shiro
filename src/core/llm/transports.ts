@@ -257,7 +257,7 @@ async function toHttpError(settings: LLMSettings, res: Response): Promise<LLMErr
 			: settings.local
 				? `Aumenta el contexto en ${label} o empieza un chat nuevo.`
 				: "Empieza un chat nuevo o elige un modelo con más contexto.";
-		return new LLMError(`La conversación no cabe en la memoria del modelo${sizes}. ${fix}`, "bad_request", res.status);
+		return new LLMError(`La conversación no cabe en la memoria del modelo${sizes}. ${fix}`, "context_overflow", res.status);
 	}
 	if (/does not support thinking|thinking is not supported/.test(lower)) {
 		return new LLMError(`El modelo ${settings.model} no sabe «pensar antes de responder». Ponlo en «Lo que diga el modelo» en Ajustes → Modelo.`, "reasoning_unsupported", res.status);

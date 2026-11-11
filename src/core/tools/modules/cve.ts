@@ -1,5 +1,5 @@
 /**
- * Consulta de CVE (vulnerabilidades) por API, para el modo CodeHacking.
+ * Consulta de CVE (vulnerabilidades) por API, para el modo Hacking.
  *
  * Fuente: CIRCL (https://cve.circl.lu), gratis y sin llave. Se puede cambiar con la variable
  * de entorno SHIRO_CVE_API (por si la API de CIRCL cambia de dirección).

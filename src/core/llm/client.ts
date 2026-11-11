@@ -7,7 +7,8 @@ import { acquireModel, gateTarget } from "./modelGate.js";
 import { sendTurn } from "./transports.js";
 import { StreamFilter } from "./streamFilter.js";
 import { buildTextToolInstructions, formatTextToolResult, parseTextToolCalls, stripToolCalls } from "./textTools.js";
-import { getMaxToolIterations, normalizeToolResult } from "./toolRuntime.js";
+import { getMaxToolIterations, normalizeToolResult, toolResultLimit, toolResultsBudget } from "./toolRuntime.js";
+import { compactToolResults } from "./toolCompaction.js";
 import { wrapExternal } from "../tools/untrusted.js";
 
 /** Modelos que ya rechazaron tools nativas en esta ejecución: se usan en modo texto. */
@@ -117,7 +118,13 @@ function buildClient(resolve: () => LLMSettings, real: Real | null, ref?: ModelR
 			let msgs = textMode ? withTextToolInstructions(messages, toolsDef) : [...messages];
 			let emittedText = false;
 			const saver = opts.saverLimits !== false && saverOn(ref);
-			const maxIterations = getMaxToolIterations(ref, saver);
+			// Code, Hacking y Planear (sin los límites del ahorro) son trabajos largos: más pasos.
+			const maxIterations = getMaxToolIterations(ref, saver, opts.saverLimits === false);
+			const resultChars = opts.resultChars ?? toolResultLimit(ref, saver, opts.contextTokens);
+			const resultsBudget = toolResultsBudget(opts.contextTokens, settings.local);
+			/** Donde empiezan los mensajes de esta respuesta (lo anterior es la conversación). */
+			const firstOwn = msgs.length;
+			let rescued = false;
 			const toolImageMsgs = new Set<Message>();
 
 			for (let i = 0; i < maxIterations; i++) {
@@ -136,6 +143,11 @@ function buildClient(resolve: () => LLMSettings, real: Real | null, ref?: ModelR
 						})
 					: null;
 
+				// Los resultados viejos se recortan antes de que llenen el contexto.
+				if (i > 0) {
+					const n = compactToolResults(msgs, firstOwn, resultsBudget);
+					if (n) logger.info(`🧹 Resultados viejos recortados para ahorrar contexto: ${n}`);
+				}
 				let turn;
 				try {
 					({ settings, release } = await begin(opts.signal));
@@ -154,6 +166,16 @@ function buildClient(resolve: () => LLMSettings, real: Real | null, ref?: ModelR
 						msgs = withTextToolInstructions(msgs, toolsDef);
 						i--;
 						continue;
+					}
+					// Se llenó el contexto a mitad de trabajo: se recorta todo menos el último resultado y se reintenta una vez.
+					if (err instanceof LLMError && err.kind === "context_overflow" && i > 0 && !rescued) {
+						rescued = true;
+						const n = compactToolResults(msgs, firstOwn, 0, 1);
+						if (n) {
+							logger.warn(`El contexto se llenó: recorté ${n} resultados y reintento.`);
+							i--;
+							continue;
+						}
 					}
 					throw err;
 				} finally {
@@ -190,10 +212,16 @@ function buildClient(resolve: () => LLMSettings, real: Real | null, ref?: ModelR
 					const r = await executeTool(call.function.name, args);
 					const raw = r.ok ? r.content : `Error: ${r.error ?? "desconocido"}`;
 					// use_skill ya entrega por partes (SkillLoader): recortarlo perdería instrucciones.
-					const content = call.function.name === "use_skill" ? raw : normalizeToolResult(raw, ref, saver);
+					const content = call.function.name === "use_skill" ? raw : normalizeToolResult(raw, ref, saver, resultChars);
 					// Se envuelve después de recortar, para que la marca de cierre no se pierda.
 					results.push({ call, content: r.ok ? wrapExternal(call.function.name, content) : content });
 					if (r.ok && r.image) images.push(r.image);
+				}
+
+				// Cerca del límite se le avisa, para que cierre con lo que tiene en vez de quedarse a medias.
+				const left = maxIterations - 1 - i;
+				if (left === 2 && maxIterations >= 5 && results.length) {
+					results[results.length - 1]!.content += "\n\n[Aviso: te quedan 2 pasos con herramientas en esta respuesta. Ve cerrando con lo que ya tienes.]";
 				}
 
 				// Las imágenes (capturas) van en un mensaje de usuario: los mensajes "tool" solo admiten texto.
@@ -221,7 +249,8 @@ function buildClient(resolve: () => LLMSettings, real: Real | null, ref?: ModelR
 			// Se acabaron las rondas: pedir una respuesta final con lo que ya tiene.
 			msgs.push({
 				role: "user",
-				content: "Llegaste al límite de herramientas. Responde ahora al usuario con la información que ya tienes, sin usar más herramientas.",
+				content:
+					"Llegaste al límite de pasos de esta respuesta. Sin usar más herramientas, responde ahora al usuario: qué hiciste y qué encontraste, y qué falta por hacer (puede decirte «sigue» para continuar).",
 			});
 			return this.chat(msgs, opts);
 		},

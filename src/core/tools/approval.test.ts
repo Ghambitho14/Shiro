@@ -179,3 +179,33 @@ test("Omitir permisos no pregunta nada, pero Ajustes → Bloquear manda y sin ap
 	// Planear no da permisos: pregunta como siempre lo que le quede.
 	strictEqual((await runWithApprover(approver, () => requestApproval("exec", { command: "dir" }), "plan")).ok, false);
 });
+
+test("project edit pide permiso enseñando el antes y el después; buscar y leer no", () => {
+	strictEqual(describeRiskyAction("project", { action: "find", query: "x" }), null);
+	strictEqual(describeRiskyAction("project", { action: "read", path: "app/a.ts", line: 10 }), null);
+	strictEqual(describeRiskyAction("project", { action: "search", query: "x" }), null);
+	const summary = describeRiskyAction("project", { action: "edit", path: "app/a.ts", old_text: "const a = 1;", new_text: "const a = 2;" });
+	ok(summary?.startsWith("Cambiar un trozo de app/a.ts:"), summary ?? "");
+	ok(summary?.includes("— Antes:\nconst a = 1;\n— Después:\nconst a = 2;"));
+	const erase = describeRiskyAction("project", { action: "edit", path: "app/a.ts", old_text: "x".repeat(900), new_text: "", replace_all: true });
+	ok(erase?.includes("(todas las veces que aparece)") && erase.includes("(se borra)") && erase.length < 600);
+});
+
+test("git de solo lectura va sin permiso también en las carpetas del proyecto del chat", async () => {
+	const { addFolder, createProject, runWithProject } = await import("../projects/projects.js");
+	const { mkdirSync } = await import("node:fs");
+	const repo = join(TMP, "mi-repo");
+	mkdirSync(join(repo, "src"), { recursive: true });
+	const p = addFolder(createProject({ name: "Repo" }).id, repo)!;
+	// Fuera de un chat de ese proyecto, la carpeta pregunta.
+	ok(describeRiskyAction("git", { command: "status", repoPath: repo }));
+	await runWithProject(p, async () => {
+		// Sin indicar carpeta, git corre en la del proyecto.
+		strictEqual(describeRiskyAction("git", { command: "status" }), null);
+		strictEqual(describeRiskyAction("git", { command: "log --oneline -5", repoPath: join(repo, "src") }), null);
+		strictEqual(describeRiskyAction("git", { command: "diff" }), null);
+		// Lo que cambia algo y lo de fuera del proyecto siguen preguntando.
+		ok(describeRiskyAction("git", { command: "commit -m x" }));
+		ok(describeRiskyAction("git", { command: "status", repoPath: TMP }));
+	});
+});

@@ -36,6 +36,8 @@ const GROUPS: { tools: string[]; words: RegExp; raw?: RegExp }[] = [
 	},
 	{ tools: ["git"], words: /\b(git|commits?|ramas?|repo\w*|diff|push|cambios)\b/ },
 	{ tools: ["sessions_list", "sessions_history"], words: /\b(chats? anterior\w*|conversacion\w* anterior\w*|otros? chats?|otra conversacion|historial|hablamos|dijimos)\b/ },
+	// La lista de tareas solo para trabajos largos: en una pregunta normal sería ruido.
+	{ tools: ["todo"], words: /\b(investig\w*|analiz\w*|audit\w*|revis\w*|compar\w*|paso a paso|plan\w*|organiz\w*|migr\w*|tareas?)\b/ },
 	{ tools: ["claude_code"], words: /\b(claude|codigo|program\w*|bugs?|errores?|error|funcion\w*|arregl\w*|implement\w*|proyecto|refactor\w*)\b/ },
 ];
 

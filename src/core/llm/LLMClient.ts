@@ -41,8 +41,12 @@ export type ChatOptions = {
 	sessionId?: string;
 	/** Cuánto piensa en esta respuesta, si no es lo de Ajustes → Modelo («Más razonamiento» del chat). */
 	thinking?: ThinkingLevel;
-	/** false: esta respuesta no aplica los límites del modo ahorro (CodeHacking y Planear). */
+	/** false: esta respuesta no aplica los límites del modo ahorro (Code, Hacking y Planear) y tiene más pasos. */
 	saverLimits?: boolean;
+	/** Letras que caben en cada resultado de herramienta (Agent.ts lo calcula con el contexto del modelo). */
+	resultChars?: number;
+	/** Tamaño del contexto del modelo en tokens, si se sabe: para recortar resultados viejos antes de llenarlo. */
+	contextTokens?: number;
 };
 
 export interface LLMClient {
@@ -70,6 +74,8 @@ export type LLMErrorKind =
 	| "rate_limit"
 	| "server"
 	| "bad_request"
+	/** La petición no cabe en el contexto del modelo (client.ts recorta resultados viejos y reintenta una vez). */
+	| "context_overflow"
 	/** El modelo no acepta la forma de pedirle cuánto pensar (transports.ts prueba otra). */
 	| "reasoning_unsupported"
 	| "cancelled";

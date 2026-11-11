@@ -8,7 +8,7 @@ import { chatBackendFor, mirrorChatToObsidian } from "../chat/backends.js";
 import { sanitizeMessages } from "../chat/ChatStore.js";
 import { memoryBackendFor } from "../core/memory/memories.js";
 import { reminderBackendFor, type Reminder } from "../core/reminders/reminders.js";
-import { NOTE_TEMPLATES, workspaceDirFor } from "../workspace.js";
+import { isDefaultNote, NOTE_TEMPLATES, workspaceDirFor } from "../workspace.js";
 import { vaultOf, type StorageSettings } from "./storage.js";
 
 export type MigrationResult = { chats: number; memories: number; reminders: number; files: number };
@@ -96,7 +96,7 @@ function mergeNote(name: string, fromFile: string, toFile: string): boolean {
 	const incoming = readText(fromFile);
 	const current = readText(toFile);
 	if (!incoming || incoming === current) return false;
-	if (!current || current === template) {
+	if (!current || isDefaultNote(name, current)) {
 		cpSync(fromFile, toFile, { force: true });
 		return true;
 	}

@@ -17,7 +17,7 @@ import { addUsage, newUsage } from "./core/llm/LLMClient.js";
 import { estimateContext, runAgent } from "./core/agent/Agent.js";
 import type { ContextReport } from "./core/agent/contextUsage.js";
 import { parseChatMode, parsePermissionMode, type ChatMode, type PermissionMode } from "./core/agent/chatMode.js";
-import { getAllToolNames, HACKING_TOOLS, planToolsFor } from "./core/tools/ToolRegistry.js";
+import { CODE_TOOLS, getAllToolNames, HACKING_TOOLS, planToolsFor } from "./core/tools/ToolRegistry.js";
 import { matchSkillCommand, parseCommand } from "./commands.js";
 import { deleteRoom, getRoom, isValidSessionId, saveRoom } from "./core/rooms/roomStore.js";
 import { currentAgents, planRoomTurn, prepareAgentTurn, publicAgent, publicRoom, type AgentTurn, type RoomPlan } from "./core/rooms/roomTurn.js";
@@ -92,13 +92,13 @@ function sanitizeAllowedTools(input: unknown): string[] | undefined {
 
 /**
  * Las herramientas de una petición según el modo, los permisos y el interruptor general.
- * Elegir CodeHacking o Planear es una decisión explícita: no depende del interruptor general de
+ * Elegir Code, Hacking o Planear es una decisión explícita: no depende del interruptor general de
  * herramientas. Al planear, la lista de solo lectura manda sobre cualquier ajuste.
  */
 function requestTools(mode: ChatMode, permissions: PermissionMode, allowedTools: string[] | undefined, autonomous: boolean) {
 	const webTools = ["search_web", "fetch_url", "get_weather"];
 	const planning = permissions === "plan";
-	const modeTools = planning ? planToolsFor(mode) : mode === "hacking" ? HACKING_TOOLS : undefined;
+	const modeTools = planning ? planToolsFor(mode) : mode === "code" ? CODE_TOOLS : mode === "hacking" ? HACKING_TOOLS : undefined;
 	const effectiveAllowedTools = modeTools ??
 		(autonomous
 			? allowedTools
@@ -158,11 +158,13 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 		}
 		let initialMessages: ChatMessage[] = [];
 		let projectId = "";
+		let chatMode: ChatMode | undefined;
 		try {
 			if (body.trim()) {
-				const parsed = JSON.parse(body) as { messages?: unknown; projectId?: unknown };
+				const parsed = JSON.parse(body) as { messages?: unknown; projectId?: unknown; mode?: unknown };
 				initialMessages = sanitizeMessages(parsed.messages);
 				projectId = typeof parsed.projectId === "string" ? parsed.projectId : "";
+				if (parsed.mode !== undefined) chatMode = parseChatMode(parsed.mode);
 			}
 		} catch {
 			sendJson(res, 400, { error: "Invalid JSON" });
@@ -172,7 +174,7 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 			sendJson(res, 404, { error: "No encontré el proyecto." });
 			return true;
 		}
-		const session = await createChatSession(initialMessages);
+		const session = await createChatSession(initialMessages, chatMode);
 		// Chat nuevo dentro de un proyecto (desde la página del proyecto).
 		if (projectId) attachChat(projectId, session.id);
 		sendJson(res, 201, { session });
@@ -481,7 +483,7 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 				});
 			}
 			// Un agente con una lista propia nunca puede recuperar herramientas que el modo quitó.
-			// En Chat se conserva su comportamiento; en CodeHacking o al planear se cruza con la del modo.
+			// En Chat se conserva su comportamiento; en Code, Hacking o al planear se cruza con la del modo.
 			const responseTools =
 				turn && modeTools && effectiveAllowedTools
 					? (turn.allowedTools ?? effectiveAllowedTools).filter((t) => effectiveAllowedTools.includes(t))
@@ -537,6 +539,7 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 						},
 						onToolEvent: (e) =>
 							sendSseData(res, e.phase === "end" ? { type: "tool", ...e, image: screenshotUrl(e.image) } : { type: "tool", ...e }),
+						onTodo: (items) => sendSseData(res, { type: "todo", items }),
 						approver: createSseApprover(res, sessionId ?? "web-default"),
 						signal: abort.signal,
 						voice,

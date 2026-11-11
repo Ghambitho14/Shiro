@@ -9,6 +9,7 @@ import type { Approver } from "../tools/approval.js";
 import type { UserProfileForAgent } from "./Agent.js";
 import type { ThinkingLevel } from "../../config/config.js";
 import type { ChatMode, PermissionMode } from "./chatMode.js";
+import type { TodoItem } from "./previousWork.js";
 
 export type AgentRunContext = {
 	llm: LLMClient;
@@ -29,7 +30,20 @@ export type AgentRunContext = {
 	subagent: boolean;
 	/** Ayudantes creados en esta respuesta (hay un máximo). */
 	launched: number;
+	/** Letras que caben en cada resultado de herramienta (las que leen por partes cortan ahí con su nota). */
+	resultChars?: number;
+	/** La lista de tareas de esta respuesta (tool `todo`) y a quién avisar cuando cambia. */
+	todo?: TodoItem[];
+	onTodo?: (items: TodoItem[]) => void;
 };
+
+/** Lo que cabe en un resultado si no se sabe (fuera de una respuesta, o en las pruebas). */
+const DEFAULT_RESULT_CHARS = 12_000;
+
+/** Letras que puede ocupar el resultado de una herramienta en la respuesta en curso. */
+export function currentResultBudget(): number {
+	return store.getStore()?.resultChars ?? DEFAULT_RESULT_CHARS;
+}
 
 const store = new AsyncLocalStorage<AgentRunContext>();
 

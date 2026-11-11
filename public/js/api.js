@@ -59,7 +59,7 @@ export async function api(url, opts = {}) {
 
 /**
  * Envía el chat y va recibiendo la respuesta por partes (Server-Sent Events).
- * handlers: onDelta(textoCompleto), onTool(evento), onApproval(evento), onDone(evento),
+ * handlers: onDelta(textoCompleto), onTool(evento), onTodo(lista de tareas), onApproval(evento), onDone(evento),
  * y en salas onAgent(agente que responde) y onRoom({ room, openVoice }).
  */
 export async function streamChat(body, handlers, signal) {
@@ -113,6 +113,8 @@ export async function streamChat(body, handlers, signal) {
 					handlers.onDelta?.(full, evt.text);
 				} else if (evt.type === "tool") {
 					handlers.onTool?.(evt);
+				} else if (evt.type === "todo") {
+					handlers.onTodo?.(evt.items);
 				} else if (evt.type === "approval") {
 					handlers.onApproval?.(evt);
 				} else if (evt.type === "agent") {

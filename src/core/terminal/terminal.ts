@@ -50,7 +50,7 @@ export type TermEvent =
 export type TermOutcome = "finished" | "input" | "password" | "timeout" | "aborted";
 export type TermRunResult = { outcome: TermOutcome; exitCode: number | null; cwd: string; output: string };
 
-type ShellKind = "pwsh" | "powershell" | "bash" | "sh";
+export type ShellKind = "pwsh" | "powershell" | "bash" | "sh";
 type Shell = { kind: ShellKind; file: string; args: string[]; env?: Record<string, string> };
 
 const MAX_BLOCKS = 20;
@@ -262,6 +262,12 @@ class TerminalSession {
 	get shellName(): string {
 		const kind = this.shell?.kind;
 		return kind ? (kind === "pwsh" ? "PowerShell 7" : kind === "powershell" ? "Windows PowerShell" : kind) : process.platform === "win32" ? "PowerShell" : "bash";
+	}
+
+	/** Qué consola es y en qué carpeta está, sin abrirla (se le cuenta al modelo en «Entorno»). */
+	shellInfo(): { name: string; kind: ShellKind; cwd: string } {
+		this.shell ??= findShell(this.token);
+		return { name: this.shellName, kind: this.shell.kind, cwd: this.cwd };
 	}
 
 	subscribe(fn: (e: TermEvent) => void): () => void {
