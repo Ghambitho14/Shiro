@@ -1098,6 +1098,28 @@ a {
 	overflow-wrap: anywhere;
 }
 
+.step .step-undo {
+	margin-left: 8px;
+	padding: 1px 8px;
+	font-size: 12px;
+	color: var(--text-2);
+	background: transparent;
+	border: 1px solid var(--border-strong);
+	border-radius: 999px;
+	cursor: pointer;
+}
+
+.step .step-undo:hover {
+	color: var(--accent);
+	border-color: var(--accent);
+}
+
+.step .step-undone {
+	margin-left: 8px;
+	font-size: 12px;
+	color: var(--text-3);
+}
+
 .step .step-error {
 	display: block;
 	font-size: 12.5px;

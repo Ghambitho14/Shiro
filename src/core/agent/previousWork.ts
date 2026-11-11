@@ -32,7 +32,7 @@ export function withSystemNote(messages: Message[], note: string | undefined): M
 }
 
 /** La nota con lo que hizo en la respuesta anterior, o undefined si no usó herramientas. */
-export function buildPreviousWork(conversation: readonly WorkMessage[] | undefined, maxChars = 900): string | undefined {
+export function buildPreviousWork(conversation: readonly WorkMessage[] | undefined, maxChars = 1300): string | undefined {
 	const last = [...(conversation ?? [])].reverse().find((m) => m.role === "assistant");
 	if (!last) return undefined;
 	// La lista de tareas va aparte: sus llamadas no cuentan como pasos.
@@ -55,5 +55,23 @@ export function buildPreviousWork(conversation: readonly WorkMessage[] | undefin
 		shown = shown.slice(1);
 		text = build();
 	}
-	return text.slice(0, maxChars);
+	return (text + olderWork(conversation ?? [], last, maxChars - text.length)).slice(0, maxChars);
+}
+
+/** Respuestas de antes de la última que también se recuerdan, y pasos de cada una. */
+const OLDER_RESPONSES = 2;
+const OLDER_STEPS = 4;
+
+/** Lo último que hizo en las dos respuestas de antes, si cabe en `room` letras: para no repetir lo ya mirado. */
+function olderWork(conversation: readonly WorkMessage[], last: WorkMessage, room: number): string {
+	const before = conversation.slice(0, conversation.indexOf(last)).filter((m) => m.role === "assistant");
+	const lines: string[] = [];
+	for (const m of before.reverse()) {
+		const steps = (m.tools ?? []).filter((t) => t.name !== "todo" && t.label?.trim());
+		if (!steps.length) continue;
+		if (lines.length >= OLDER_RESPONSES) break;
+		lines.push(`- ${steps.slice(-OLDER_STEPS).map((t) => `${t.ok === false ? "✗" : "✓"} ${t.label.trim().slice(0, 80)}`).join("; ")}`);
+	}
+	const text = lines.length ? `\nEn las respuestas de antes (de la más reciente a la más vieja):\n${lines.join("\n")}` : "";
+	return text.length <= room ? text : "";
 }

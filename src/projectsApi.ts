@@ -23,6 +23,7 @@ import {
 	type Project,
 } from "./core/projects/projects.js";
 import { canPickFolder, pickFolder } from "./core/pc/pickFolder.js";
+import { undoChange } from "./core/projects/undoStore.js";
 
 type Helpers = {
 	readJson: <T>(req: IncomingMessage) => Promise<T>;
@@ -92,6 +93,16 @@ export async function handleProjectsApi(req: IncomingMessage, res: ServerRespons
 			return reply(200, { project: summary(projectForFolder(typeof d?.path === "string" ? d.path : "")) });
 		} catch (err) {
 			return fail(400, err);
+		}
+	}
+
+	// Botón «Deshacer» de un paso del chat: devuelve el archivo a como estaba antes del cambio de Aku.
+	if (pathname === "/api/projects/undo" && method === "POST") {
+		const d = await body();
+		try {
+			return reply(200, undoChange(typeof d?.id === "string" ? d.id : "", d?.force === true));
+		} catch (err) {
+			return fail(500, err);
 		}
 	}
 

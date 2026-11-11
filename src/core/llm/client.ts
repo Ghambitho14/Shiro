@@ -8,7 +8,10 @@ import { sendTurn } from "./transports.js";
 import { StreamFilter } from "./streamFilter.js";
 import { buildTextToolInstructions, formatTextToolResult, parseTextToolCalls, stripToolCalls } from "./textTools.js";
 import { getMaxToolIterations, normalizeToolResult, toolResultLimit, toolResultsBudget } from "./toolRuntime.js";
-import { compactToolResults } from "./toolCompaction.js";
+import { compactable, compactToolResults, summaryPrompt } from "./toolCompaction.js";
+
+/** Resúmenes de resultados viejos por respuesta, como mucho (cada uno es una vuelta más con el modelo). */
+const MAX_SUMMARIES = 3;
 import { wrapExternal } from "../tools/untrusted.js";
 
 /** Modelos que ya rechazaron tools nativas en esta ejecución: se usan en modo texto. */
@@ -27,6 +30,8 @@ function withTextToolInstructions(messages: Message[], tools: ToolDef[]): Messag
 function finalText(raw: string): string {
 	return sanitizeModelResponse(stripToolCalls(raw)).trim();
 }
+
+const joinText = (before: string, after: string) => (before && after ? `${before}\n\n${after}` : before || after);
 
 const OLD_IMAGE_NOTE = "[imagen anterior omitida para ahorrar contexto]";
 
@@ -125,6 +130,28 @@ function buildClient(resolve: () => LLMSettings, real: Real | null, ref?: ModelR
 			/** Donde empiezan los mensajes de esta respuesta (lo anterior es la conversación). */
 			const firstOwn = msgs.length;
 			let rescued = false;
+			let nudged = false;
+			let said = "";
+			let summaries = 0;
+			const task = [...messages].reverse().find((m) => m.role === "user");
+			const taskText = typeof task?.content === "string" ? task.content : (task?.content.find((p) => p.type === "text") as { text?: string } | undefined)?.text ?? "";
+			/** Resumen de los resultados que se van a recortar; undefined si el modelo falla o no dice nada (se recorta igual). */
+			const summarize = async (indexes: number[]): Promise<string | undefined> => {
+				let free = () => {};
+				try {
+					const started = await begin(opts.signal);
+					free = started.release;
+					const turn = await sendTurn({ ...started.settings, thinking: "off" }, { messages: summaryPrompt(msgs, indexes, taskText), signal: opts.signal, sessionId: opts.sessionId });
+					if (turn.usage) opts.onUsage?.(turn.usage);
+					return finalText(turn.content) || undefined;
+				} catch (err) {
+					if (opts.signal?.aborted) throw err;
+					logger.warn(`No pude resumir los resultados viejos: ${err instanceof Error ? err.message : String(err)}`);
+					return undefined;
+				} finally {
+					free();
+				}
+			};
 			const toolImageMsgs = new Set<Message>();
 
 			for (let i = 0; i < maxIterations; i++) {
@@ -145,8 +172,12 @@ function buildClient(resolve: () => LLMSettings, real: Real | null, ref?: ModelR
 
 				// Los resultados viejos se recortan antes de que llenen el contexto.
 				if (i > 0) {
-					const n = compactToolResults(msgs, firstOwn, resultsBudget);
-					if (n) logger.info(`🧹 Resultados viejos recortados para ahorrar contexto: ${n}`);
+					const old = compactable(msgs, firstOwn, resultsBudget);
+					// Antes de recortar, el modelo apunta lo que encontró en ellos (pocas veces por respuesta: cuesta una vuelta).
+					const summary = old.length && summaries < MAX_SUMMARIES ? await summarize(old) : undefined;
+					if (summary) summaries++;
+					const n = compactToolResults(msgs, firstOwn, resultsBudget, 2, summary);
+					if (n) logger.info(`🧹 Resultados viejos recortados para ahorrar contexto: ${n}${summary ? " (con resumen)" : ""}`);
 				}
 				let turn;
 				try {
@@ -194,7 +225,16 @@ function buildClient(resolve: () => LLMSettings, real: Real | null, ref?: ModelR
 					}));
 				}
 
-				if (!calls.length) return finalText(turn.content);
+				if (!calls.length) {
+					// Antes de dar por terminado: quien llama puede pedirle una cosa más (una sola vez y si quedan pasos).
+					const nudge = !nudged && i < maxIterations - 1 ? opts.beforeFinish?.() : undefined;
+					if (!nudge) return joinText(said, finalText(turn.content));
+					nudged = true;
+					// Lo que ya dijo se mostró al usuario: se conserva delante de lo que diga después.
+					said = finalText(turn.content);
+					msgs.push({ role: "assistant", content: turn.content || "" }, { role: "user", content: nudge });
+					continue;
+				}
 
 				// Secuencial: las tools pueden pedir confirmación al usuario o tener efectos.
 				const results: { call: ToolCallSpec; content: string }[] = [];
@@ -252,7 +292,7 @@ function buildClient(resolve: () => LLMSettings, real: Real | null, ref?: ModelR
 				content:
 					"Llegaste al límite de pasos de esta respuesta. Sin usar más herramientas, responde ahora al usuario: qué hiciste y qué encontraste, y qué falta por hacer (puede decirte «sigue» para continuar).",
 			});
-			return this.chat(msgs, opts);
+			return joinText(said, await this.chat(msgs, opts));
 		},
 
 		getConfig() {

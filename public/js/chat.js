@@ -237,6 +237,7 @@ export function applyToolEvent(m, evt) {
 	t.status = evt.ok ? "ok" : "fail";
 	if (evt.error) t.error = friendlyToolError(evt.error);
 	if (evt.image) t.image = evt.image;
+	if (evt.undo) t.undo = evt.undo;
 }
 
 export function addApprovalCard(m, evt) {

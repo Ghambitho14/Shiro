@@ -35,6 +35,8 @@ export type AgentRunContext = {
 	/** La lista de tareas de esta respuesta (tool `todo`) y a quién avisar cuando cambia. */
 	todo?: TodoItem[];
 	onTodo?: (items: TodoItem[]) => void;
+	/** Id de la copia para deshacer el último cambio de archivo (project edit o write); runAgent lo manda con el paso. */
+	undo?: string;
 };
 
 /** Lo que cabe en un resultado si no se sabe (fuera de una respuesta, o en las pruebas). */

@@ -313,12 +313,18 @@ test("Tokens gastados: se leen en OpenAI (también en streaming) y en Ollama, y 
 type ChatMsg = { role: string; content: string };
 
 /** Un modelo que pide una herramienta en cada vuelta hasta que le dicen que llegó al límite (o tras `stopAfter` vueltas). */
-async function runLoop(opts: { saverLimits?: boolean; contextTokens?: number; result?: string; stopAfter?: number }) {
+async function runLoop(opts: { saverLimits?: boolean; contextTokens?: number; result?: string; stopAfter?: number; summary?: string }) {
 	requests.length = 0;
+	const summaryRequests: string[] = [];
 	let n = 0;
 	handler = (_p, body) => {
 		const msgs = body.messages as ChatMsg[];
 		const last = msgs[msgs.length - 1];
+		// La vuelta extra que resume los resultados antes de recortarlos.
+		if (msgs[0].role === "system" && msgs[0].content.startsWith("Apuntas datos")) {
+			summaryRequests.push(last.content);
+			return { json: { message: { content: opts.summary ?? "" } } };
+		}
 		if ((last.role === "user" && /límite de pasos/.test(last.content)) || (opts.stopAfter !== undefined && n >= opts.stopAfter)) {
 			return { json: { message: { content: "Resumen final." } } };
 		}
@@ -334,7 +340,7 @@ async function runLoop(opts: { saverLimits?: boolean; contextTokens?: number; re
 		},
 		{ saverLimits: opts.saverLimits, contextTokens: opts.contextTokens },
 	);
-	return { reply, calls, last: requests[requests.length - 1].body.messages as ChatMsg[] };
+	return { reply, calls, summaryRequests, last: requests[requests.length - 1].body.messages as ChatMsg[] };
 }
 
 test("Pasos: 8 en Chat con ahorro y el triple en Code; avisa antes del límite y pide cerrar con lo que falta", async () => {
@@ -362,6 +368,16 @@ test("Trabajo largo: los resultados viejos se recortan antes de llenar el contex
 	ok(results[2].content.length <= 2333);
 });
 
+test("Trabajo largo: antes de recortar pide un resumen de lo encontrado y lo deja en el primer resultado recortado", async () => {
+	const r = await runLoop({ saverLimits: false, contextTokens: 4000, result: "dato-importante " + "y".repeat(5000), stopAfter: 3, summary: "- src/a.ts línea 12: el límite es 8" });
+	strictEqual(r.summaryRequests.length, 1);
+	ok(r.summaryRequests[0].includes("dato-importante") && r.summaryRequests[0].includes("Tarea: x"));
+	const results = r.last.filter((m) => m.role === "tool");
+	ok(results[0].content.includes("[Resumen de lo que había en los resultados recortados]\n- src/a.ts línea 12: el límite es 8"));
+	ok(results[0].content.endsWith("vuelve a pedirlo]"));
+	strictEqual(r.reply, "Resumen final.");
+});
+
 test("Si el contexto se llena a mitad de trabajo, recorta los resultados y reintenta una vez", async () => {
 	requests.length = 0;
 	let turn = 0;
@@ -383,4 +399,24 @@ test("Si el contexto se llena a mitad de trabajo, recorta los resultados y reint
 	const results = (requests[3].body.messages as ChatMsg[]).filter((m) => m.role === "tool");
 	ok(results[0].content.endsWith("vuelve a pedirlo]"));
 	strictEqual(results[1].content.length, 3000);
+});
+
+test("Antes de terminar: la nota de beforeFinish se manda una sola vez y lo ya dicho se conserva", async () => {
+	requests.length = 0;
+	let turn = 0;
+	handler = () => ({ json: { message: { content: ++turn === 1 ? "Listo, cambiado." : "Corrí las pruebas: pasan." } } });
+	let asked = 0;
+	const reply = await createLLMClient(settings("ollama")).chatWithTools([{ role: "user", content: "x" }], TOOLS, async () => ({ ok: true, content: "" }), {
+		saverLimits: false,
+		beforeFinish: () => {
+			asked++;
+			return "Comprueba tu cambio.";
+		},
+	});
+	strictEqual(reply, "Listo, cambiado.\n\nCorrí las pruebas: pasan.");
+	strictEqual(asked, 1);
+	strictEqual(requests.length, 2);
+	const sent = requests[1].body.messages as ChatMsg[];
+	strictEqual(sent[sent.length - 2].content, "Listo, cambiado.");
+	strictEqual(sent[sent.length - 1].content, "Comprueba tu cambio.");
 });

@@ -1,5 +1,6 @@
 import { existsSync, statSync } from "node:fs";
-import { currentResultBudget } from "../../agent/runContext.js";
+import { currentAgentRun, currentResultBudget } from "../../agent/runContext.js";
+import { beginUndo, commitUndo, type PendingUndo } from "../../projects/undoStore.js";
 import { extractText, isTextFile } from "../../projects/documents.js";
 import {
 	currentProject,
@@ -23,6 +24,13 @@ function sourcesHint(p: Project): string {
 	return projectSources(p)
 		.map((s) => `${s.label}/`)
 		.join(", ");
+}
+
+/** Guarda la copia de antes del cambio y deja su id para el botón «Deshacer» del chat. */
+function offerUndo(pending: PendingUndo | undefined): void {
+	const id = commitUndo(pending);
+	const run = currentAgentRun();
+	if (id && run) run.undo = id;
 }
 
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
@@ -93,12 +101,16 @@ export async function executeProject(args: Record<string, unknown>): Promise<{ o
 				return { ok: true, content: head + r.results.join("\n") + note };
 			}
 			case "edit": {
+				const undo = target ? beginUndo(target.full, target.path) : undefined;
 				const r = editProjectFile(p, pathArg, String(args.old_text ?? ""), String(args.new_text ?? ""), args.replace_all === true);
+				offerUndo(undo);
 				const times = r.replaced > 1 ? `${r.replaced} veces, la primera en la línea ${r.line}` : `línea ${r.line}`;
 				return { ok: true, content: `Cambiado ${r.path} (${times}): ${r.linesBefore} ${r.linesBefore === 1 ? "línea" : "líneas"} → ${r.linesAfter}.` };
 			}
 			case "write": {
+				const undo = target ? beginUndo(target.full, target.path) : undefined;
 				const r = writeProjectFile(p, pathArg, String(args.content ?? ""));
+				offerUndo(undo);
 				return { ok: true, content: `Guardado ${r.path}.` };
 			}
 			default:

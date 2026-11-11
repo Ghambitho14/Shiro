@@ -8,6 +8,7 @@ import { currentProject, resolveProjectPath } from "../projects/projects.js";
 import { terminal } from "../terminal/terminal.js";
 import type { PermissionMode } from "../agent/chatMode.js";
 import { gitWorkDir, isGitReadableDir } from "./gitDir.js";
+import { isFreeReadCommand, isReadOnlyGitArgs } from "./readOnlyCommand.js";
 
 /**
  * Aprobación de acciones peligrosas.
@@ -46,12 +47,6 @@ function externalReadInThisResponse(): boolean {
 const AFTER_WEB = " (en esta respuesta leí contenido de una web o de un servidor MCP)";
 
 const SHELL_META = /[;&|`$(){}\[\]<>\n\r]/;
-const READ_ONLY_GIT = new Set(["status", "log", "diff", "show", "branch", "remote", "rev-parse", "ls-files"]);
-/** `branch` y `remote` solo listan con estas opciones (con otras crean, borran o cambian). */
-const GIT_LIST_ARGS: Record<string, Set<string>> = {
-	branch: new Set(["-a", "-r", "-v", "-vv", "-l", "--all", "--remotes", "--list", "--verbose", "--show-current"]),
-	remote: new Set(["-v", "--verbose"]),
-};
 
 /**
  * git sin pedir permiso: solo subcomandos que leen, en el workspace o en una carpeta del proyecto del chat, sin encadenar comandos,
@@ -59,11 +54,7 @@ const GIT_LIST_ARGS: Record<string, Set<string>> = {
  */
 function isReadOnlyGit(command: string, repoPath: string): boolean {
 	if (SHELL_META.test(command)) return false;
-	const [sub = "", ...rest] = command.replace(/^git\s+/i, "").split(/\s+/);
-	if (!READ_ONLY_GIT.has(sub)) return false;
-	if (rest.some((a) => /^--(output|no-index)\b/.test(a))) return false;
-	const listArgs = GIT_LIST_ARGS[sub];
-	if (listArgs && !rest.every((a) => listArgs.has(a))) return false;
+	if (!isReadOnlyGitArgs(command.replace(/^git\s+/i, "").split(/\s+/))) return false;
 	return isGitReadableDir(gitWorkDir(repoPath));
 }
 
@@ -72,7 +63,9 @@ function str(v: unknown): string {
 }
 
 /** Comandos de la lista "sin preguntar" (Ajustes), siempre que no encadenen otros: null. */
-function describeCommand(prefix: string, command: string, where = ""): string | null {
+function describeCommand(prefix: string, command: string, where = "", cwd?: string): string | null {
+	// Mirar dentro del proyecto del chat no se pregunta (como project read), salvo tras leer algo de afuera.
+	if (!externalReadInThisResponse() && isFreeReadCommand(command, cwd)) return null;
 	const first = command.split(/\s+/)[0]?.toLowerCase() ?? "";
 	const allow = getConfig().execAllowlist.map((c) => c.toLowerCase());
 	if (first && allow.includes(first) && !SHELL_META.test(command)) return null;
@@ -92,7 +85,7 @@ function describeTerminalWrite(args: Record<string, unknown>): string {
 export function describeRiskyAction(tool: string, args: Record<string, unknown>): string | null {
 	switch (tool) {
 		case "exec":
-			return describeCommand("Ejecutar comando", str(args.command).trim(), args.workingDir ? ` (en ${str(args.workingDir)})` : "");
+			return describeCommand("Ejecutar comando", str(args.command).trim(), args.workingDir ? ` (en ${str(args.workingDir)})` : "", str(args.workingDir).trim() || undefined);
 		case "project": {
 			if (args.action !== "write" && args.action !== "edit") return null;
 			const project = currentProject();
@@ -110,7 +103,7 @@ export function describeRiskyAction(tool: string, args: Record<string, unknown>)
 		}
 		case "terminal":
 			if (args.action === "write") return describeTerminalWrite(args);
-			return args.action === "run" ? describeCommand("Ejecutar en la terminal", str(args.command).trim()) : null;
+			return args.action === "run" ? describeCommand("Ejecutar en la terminal", str(args.command).trim(), "", terminal.shellInfo().cwd) : null;
 		case "browser": {
 			// Leer y moverse por la web no pide permiso; pulsar o escribir sí (puede enviar formularios o comprar).
 			if (args.action !== "click" && args.action !== "type") return null;

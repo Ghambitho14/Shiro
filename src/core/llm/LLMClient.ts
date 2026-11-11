@@ -47,6 +47,11 @@ export type ChatOptions = {
 	resultChars?: number;
 	/** Tamaño del contexto del modelo en tokens, si se sabe: para recortar resultados viejos antes de llenarlo. */
 	contextTokens?: number;
+	/**
+	 * Se llama cuando el modelo va a terminar (ya no pide herramientas). Si devuelve un texto, se le
+	 * manda como nota y sigue trabajando; vale una sola vez por respuesta (p. ej. «cambiaste código y no lo comprobaste»).
+	 */
+	beforeFinish?: () => string | undefined;
 };
 
 export interface LLMClient {

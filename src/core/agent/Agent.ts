@@ -30,6 +30,7 @@ import { normalizeToolResult, toolResultLimit } from "../llm/toolRuntime.js";
 import { buildToolGuide, collectEnvironment, formatEnvironment } from "./environment.js";
 import { buildPreviousWork, withSystemNote, type PreviousStep, type TodoItem } from "./previousWork.js";
 import { describeFolder, formatFolderInfo } from "../projects/folderInfo.js";
+import { createSelfCheck } from "./selfCheck.js";
 import { terminal } from "../terminal/terminal.js";
 import { claudeCodeLauncher } from "../claudeCode/claudeCode.js";
 import { loadAgents } from "../agents/registry.js";
@@ -47,7 +48,8 @@ export type UserProfileForAgent = {
 /** Progreso de las herramientas, para mostrarlo en la interfaz mientras trabajan. */
 export type ToolEvent =
 	| { phase: "start"; id: string; name: string; label: string }
-	| { phase: "end"; id: string; name: string; ok: boolean; error?: string; image?: string };
+	/** `undo`: id para deshacer el cambio de archivo que hizo este paso (botón «Deshacer» de la web). */
+	| { phase: "end"; id: string; name: string; ok: boolean; error?: string; image?: string; undo?: string };
 
 export type AgentOptions = {
 	llm: LLMClient;
@@ -434,6 +436,16 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 		);
 	};
 
+	// En Code, con terminal y un proyecto con comandos de comprobación: que no termine sin probar lo que cambió.
+	const checkCommands =
+		mode === "code" && !planning && !opts.subagent && project && toolsDef.some((t) => t.function.name === "terminal")
+			? projectSources(project)
+					.filter((s) => s.kind === "folder")
+					.flatMap((s) => describeFolder(s.root).commands)
+					.filter((c) => !/\b(dev|start|build)\b/.test(c))
+			: [];
+	const selfCheck = checkCommands.length ? createSelfCheck(checkCommands) : undefined;
+
 	const usedTools: { name: string; ok: boolean; argsKeys: string[] }[] = [];
 	const callCounts = new Map<string, number>();
 	let toolSeq = 0;
@@ -464,8 +476,12 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 				? { ok: false as const, error: "Estás planeando: es solo lectura. Para modificar archivos o ejecutar acciones, el usuario tiene que cambiar el botón de permisos del chat a Preguntar o Automático." }
 				: await executeToolSafeScoped(name, args, effectiveTools);
 		usedTools.push({ name, ok: r.ok, argsKeys });
+		selfCheck?.note(name, args, r.ok);
+		// Si el paso cambió un archivo del proyecto, va el id de su copia para poder deshacerlo.
+		const undo = runContext.undo;
+		runContext.undo = undefined;
 		onToolEvent?.(
-			r.ok ? { phase: "end", id, name, ok: true, image: r.image } : { phase: "end", id, name, ok: false, error: r.error },
+			r.ok ? { phase: "end", id, name, ok: true, image: r.image, ...(undo ? { undo } : {}) } : { phase: "end", id, name, ok: false, error: r.error },
 		);
 		if (!r.ok) {
 			logger.warn(`❌ Tool ${name} falló: ${r.error}`);
@@ -548,6 +564,7 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 										saverLimits,
 										resultChars: prep.resultChars,
 										contextTokens: prep.contextTokens,
+										beforeFinish: selfCheck?.pending,
 									}),
 							permissions,
 						),

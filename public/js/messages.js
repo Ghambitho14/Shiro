@@ -1,12 +1,12 @@
 // Contenido de los mensajes (archivos adjuntos, texto) y cómo se pintan en el hilo.
 import * as projects from "./projects.js";
 import { icon } from "./icons.js";
-import { protectedImageUrl } from "./api.js";
+import { api, protectedImageUrl } from "./api.js";
 import { escapeHtml, renderMarkdown } from "./markdown.js";
 import { agentAvatar, agentColor } from "./agents.js";
-import { $, $$, copyText, el, lightbox } from "./ui.js";
+import { $, $$, confirmDialog, copyText, el, lightbox, toast } from "./ui.js";
 import { input, messagesBox, refs, state, thread } from "./state.js";
-import { paintRoomBar, regenerate, startEdit } from "./rooms.js";
+import { paintRoomBar, persist, regenerate, startEdit } from "./rooms.js";
 import { openProject } from "./sidebar.js";
 import { readAloud } from "./voiceMode.js";
 import { refreshContextMeter } from "./contextMeter.js";
@@ -60,7 +60,7 @@ export function fromServer(m) {
 	if (m.context?.used) out.context = m.context;
 	if (m.summary === true) out.summary = true;
 	if (Array.isArray(m.todo) && m.todo.length) out.todo = m.todo;
-	if (Array.isArray(m.tools)) out.tools = m.tools.map((t, i) => ({ id: `h${i}`, name: t.name, label: t.label, status: t.ok === false ? "fail" : "ok", image: t.image }));
+	if (Array.isArray(m.tools)) out.tools = m.tools.map((t, i) => ({ id: `h${i}`, name: t.name, label: t.label, status: t.ok === false ? "fail" : "ok", image: t.image, undo: t.undo, undone: t.undone === true }));
 	return out;
 }
 
@@ -74,7 +74,7 @@ export function serialize(m) {
 	if (m.summary) o.summary = true;
 	if (m.todo?.length) o.todo = m.todo;
 	if (m.tools?.length) {
-		o.tools = m.tools.map((t) => ({ name: t.name, label: t.label, ok: t.status !== "fail", ...(t.image ? { image: t.image } : {}) }));
+		o.tools = m.tools.map((t) => ({ name: t.name, label: t.label, ok: t.status !== "fail", ...(t.image ? { image: t.image } : {}), ...(t.undo ? { undo: t.undo } : {}), ...(t.undone ? { undone: true } : {}) }));
 	}
 	return o;
 }
@@ -177,7 +177,7 @@ export function paintSteps(m) {
 	// Las llamadas a la lista de tareas no son pasos: la lista se pinta aparte (paintTodo).
 	const tools = (m.tools || []).filter((t) => t.name !== "todo");
 	// Solo se repinta si cambió algo (evita que las capturas parpadeen mientras llega el texto).
-	const sig = JSON.stringify(tools.map((t) => [t.id, t.status, t.error, t.image]));
+	const sig = JSON.stringify([!!m.streaming, ...tools.map((t) => [t.id, t.status, t.error, t.image, t.undo, t.undone])]);
 	if (r.stepsSig === sig) return;
 	r.stepsSig = sig;
 	r.steps.hidden = tools.length === 0;
@@ -187,9 +187,14 @@ export function paintSteps(m) {
 	r.stepsList.innerHTML = tools
 		.map((t) => {
 			const ico = t.status === "running" ? "loader" : t.status === "ok" ? "check" : "x";
-			return `<div class="step ${t.status}">${icon(ico, "sm")}<div class="step-text">${escapeHtml(t.label)}${t.error ? `<span class="step-error">${escapeHtml(t.error)}</span>` : ""}${t.image ? `<img class="step-shot" data-src="${escapeHtml(t.image)}" alt="Captura de pantalla">` : ""}</div></div>`;
+			// Un cambio de archivo se puede deshacer (mientras el modelo sigue trabajando, no: podría depender de él).
+			const undo = t.undone ? `<span class="step-undone">Deshecho</span>` : t.undo && !m.streaming ? `<button type="button" class="step-undo" data-undo="${escapeHtml(t.id)}">Deshacer</button>` : "";
+			return `<div class="step ${t.status}">${icon(ico, "sm")}<div class="step-text">${escapeHtml(t.label)}${undo}${t.error ? `<span class="step-error">${escapeHtml(t.error)}</span>` : ""}${t.image ? `<img class="step-shot" data-src="${escapeHtml(t.image)}" alt="Captura de pantalla">` : ""}</div></div>`;
 		})
 		.join("");
+	for (const b of $$("button[data-undo]", r.stepsList)) {
+		b.onclick = () => undoStep(m, tools.find((t) => t.id === b.dataset.undo), b);
+	}
 	for (const img of $$("img[data-src]", r.stepsList)) {
 		protectedImageUrl(img.dataset.src)
 			.then((u) => {
@@ -197,6 +202,40 @@ export function paintSteps(m) {
 				img.onclick = () => lightbox(u);
 			})
 			.catch(() => img.remove());
+	}
+}
+
+/** Botón «Deshacer» de un paso que cambió un archivo: lo devuelve a como estaba antes. */
+async function undoStep(m, t, button) {
+	if (!t?.undo) return;
+	button.disabled = true;
+	try {
+		let d = await api("/api/projects/undo", { method: "POST", json: { id: t.undo } });
+		if (!d.ok && d.reason === "changed") {
+			const sure = await confirmDialog({
+				title: "El archivo cambió después",
+				text: `${d.path || "El archivo"} se modificó después de este cambio. Si lo deshaces, se pierde también lo que se cambió después.`,
+				ok: "Deshacer igual",
+				danger: true,
+			});
+			if (!sure) return;
+			d = await api("/api/projects/undo", { method: "POST", json: { id: t.undo, force: true } });
+		}
+		if (!d.ok) {
+			toast("Ya no se puede deshacer: la copia de este cambio ya no está.", "error");
+			delete t.undo;
+		} else {
+			toast(d.deleted ? `Se borró ${d.path} (no existía antes).` : `${d.path} volvió a como estaba.`);
+			delete t.undo;
+			t.undone = true;
+		}
+		paintSteps(m);
+		// Se guarda con el chat para que el botón no vuelva a salir al recargar.
+		if (state.messages.includes(m)) await persist();
+	} catch (err) {
+		toast(err.message, "error");
+	} finally {
+		button.disabled = false;
 	}
 }
 

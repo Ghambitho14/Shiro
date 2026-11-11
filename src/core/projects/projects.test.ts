@@ -382,5 +382,5 @@ test("el modelo sabe en qué carpetas del equipo está el proyecto (para la term
 		project: { name: "mi-app", index: "(vacío)", hasTool: true, folders: [{ path: "/srv/mi-app" }] },
 	});
 	assert.ok(system.includes("### Carpetas en este equipo\n- /srv/mi-app\n"));
-	assert.match(system, /entra en la que toque \(cd\)/);
+	assert.match(system, /entra en la que toque con su ruta completa/);
 });

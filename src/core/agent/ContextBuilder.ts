@@ -132,7 +132,7 @@ export function buildProjectBlock(p: ProjectContext, maxChars: number): string {
 		const inside = cwd ? p.folders.some((f) => isWithinRoot(cwd, f.path, true)) : false;
 		const where = inside
 			? `La terminal ya está dentro del proyecto (${cwd}).`
-			: "La terminal es compartida y no empieza en estas carpetas: antes de correr comandos del proyecto, entra en la que toque (cd).";
+			: "La terminal es compartida y no empieza en estas carpetas: antes de correr comandos del proyecto, entra en la que toque con su ruta completa de arriba (cd \"ruta\"); el nombre corto de la carpeta solo vale en la herramienta project.";
 		parts.push(`### Carpetas en este equipo\n${p.folders.map((f) => `- ${f.path}${f.note ? ` — ${f.note}` : ""}`).join("\n")}\n${where}`);
 	}
 	if (p.hasTool) {

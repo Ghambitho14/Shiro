@@ -103,7 +103,7 @@ function permissionsText(v: EnvironmentView): string {
 	if (v.permissions === "plan") return "Planear, solo lectura";
 	if (v.permissions === "bypass" || v.approvalMode === "allow") return "sin preguntar; lo que hagas se ejecuta directo, así que cuidado con borrar o sobrescribir";
 	if (v.permissions === "auto") return "Automático; comandos y archivos van sin preguntar, salvo lo destructivo";
-	return "Preguntar; leer y buscar no pide permiso, ejecutar comandos y escribir archivos sí (el usuario lo aprueba con un clic): pide lo justo";
+	return "Preguntar; leer y buscar no pide permiso, tampoco los comandos que solo miran (ls, cat, grep, git status) dentro del proyecto; el resto de comandos y escribir archivos sí (el usuario lo aprueba con un clic): pide lo justo";
 }
 
 /** El bloque `## Entorno` del system prompt. */
