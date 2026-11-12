@@ -765,6 +765,8 @@ export const LITE_TOOLS = [
 	"terminal",
 	"project",
 	"claude_code",
+	// Ayudantes de la Oficina: sin ella, en Chat con un modelo local no sabía que podía repartir tareas.
+	"delegate",
 ];
 
 /** Herramientas que controlan el PC (se pueden desactivar todas con `pcControl: false`). */

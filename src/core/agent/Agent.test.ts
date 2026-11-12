@@ -26,6 +26,11 @@ test("en la web o la terminal (con approver) sí se ofrece, también a modelos l
 	}
 });
 
+test("en Chat con un modelo local (perfil lite) también tiene los ayudantes de la Oficina", () => {
+	if (activeModelTuning().toolProfile === "full") return;
+	assert.ok(resolveTools(undefined, true, true)?.includes("delegate"));
+});
+
 test("los modos y permisos se validan, y al planear las acciones mixtas se limitan a lectura", () => {
 	assert.equal(parseChatMode("hacking"), "hacking");
 	assert.equal(parseChatMode("code"), "code");

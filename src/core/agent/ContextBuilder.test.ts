@@ -34,6 +34,18 @@ test("buildContext respects token budget and includes soul", () => {
 	strictEqual(out.messages[0].content, "List files");
 });
 
+test("buildContext: siempre explica los agentes de la app; la Oficina con delegate solo si la tiene; nunca a un ayudante", () => {
+	const plain = buildContext({ goal: "crea un agente", agentName: "A", tokenBudget: 4000 }).system;
+	strictEqual(plain.includes("## Agentes de esta app"), true);
+	strictEqual(plain.includes("Ajustes → Agentes"), true);
+	strictEqual(plain.includes("## Tus ayudantes"), false);
+	const boss = buildContext({ goal: "crea un agente", agentName: "A", tokenBudget: 4000, helpers: [{ name: "Viernes" }] }).system;
+	strictEqual(boss.includes("con la tool delegate"), true);
+	strictEqual(boss.includes("## Tus ayudantes"), true);
+	const helper = buildContext({ goal: "tarea", agentName: "A", tokenBudget: 4000, subagent: { boss: "Aku" } }).system;
+	strictEqual(helper.includes("## Agentes de esta app"), false);
+});
+
 test("el system prompt no repite la conversación (va aparte, como mensajes)", () => {
 	const { system } = buildContext({ goal: "Continue", agentName: "A", tokenBudget: 4000 });
 	strictEqual(/Eventos recientes|Memoria a largo plazo/.test(system), false);

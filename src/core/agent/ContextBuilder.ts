@@ -78,6 +78,21 @@ export function buildHelpersBlock(helpers: { name: string; description?: string 
 	return lines.join("\n");
 }
 
+/**
+ * Qué es un agente aquí. Va siempre (salvo a los ayudantes): sin esto, a «crea un agente» el modelo
+ * respondía preguntando la tecnología, como si hubiera que programarlo.
+ */
+export function buildAgentsBlock(canDelegate: boolean): string {
+	return [
+		"## Agentes de esta app",
+		"- Si el usuario pide «crear un agente» sin más, pregúntale primero si quiere un agente aquí, en la app, o programar un agente (un programa). No des por hecho que es programar.",
+		"- Un agente de la app se crea en Ajustes → Agentes: nombre, forma de ser, modelo (uno propio o el de Ajustes), herramientas y voz. Tú no lo puedes crear: explícale dónde y qué poner.",
+		`- Esos agentes conversan con el usuario en salas (botón «Abrir sala» de Ajustes → Agentes, o pidiendo «agrega a <nombre>» en el chat)${
+			canDelegate ? " y te sirven como ayudantes en la Oficina con la tool delegate" : " y sirven como ayudantes en el panel «Oficina»"
+		}.`,
+	].join("\n");
+}
+
 export type PersonaContext = {
 	/** Texto del usuario; admite {{nombre}}, {{usuario}}, {{carpeta}} y {{fecha}}. */
 	prompt: string;
@@ -281,9 +296,9 @@ export function buildContext(input: ContextInput): { system: string; messages: M
 	const safetyBlock = textOnly ? "" : "\n\n" + SAFETY_BLOCK;
 	const teamBlock = input.subagent
 		? "\n\n" + buildSubagentBlock(input.subagent.boss)
-		: input.helpers && !textOnly
-			? "\n\n" + buildHelpersBlock(input.helpers)
-			: "";
+		: "\n\n" +
+			buildAgentsBlock(!!input.helpers && !textOnly) +
+			(input.helpers && !textOnly ? "\n\n" + buildHelpersBlock(input.helpers) : "");
 	// Método, entorno y guía de herramientas: solo cuando hay herramientas con las que trabajar.
 	const methodBlock =
 		textOnly ? "" : "\n\n" + WORK_BLOCK + (input.environment ? "\n\n" + input.environment : "") + (input.toolGuide ? "\n\n" + input.toolGuide : "");
