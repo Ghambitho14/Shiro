@@ -14,6 +14,7 @@
     "mcp": "node --import tsx src/index.ts mcp",
     "exe": "node --import tsx src/buildExe.ts",
     "instalador": "node --import tsx src/buildExe.ts --instalador",
+    "publicar": "node --import tsx src/publish.ts",
     "ayuda": "node --import tsx src/index.ts --help",
     "check": "tsc --noEmit -p .",
     "test": "node --import tsx --import ./src/test-setup.ts --test \"src/**/*.test.ts\""
@@ -32,6 +33,7 @@
     "puppeteer-core": "^24.38.0",
     "qrcode": "^1.5.4",
     "qrcode-terminal": "^0.12.0",
+    "sherpa-onnx-node": "1.13.8",
     "sql.js": "^1.11.0",
     "unpdf": "^1.8.1",
     "whatsapp-web.js": "^1.34.6",

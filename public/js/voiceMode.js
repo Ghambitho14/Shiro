@@ -16,7 +16,8 @@ export function ttsSettings(agent = null) {
 	const v = state.settings?.voice;
 	const av = (agent && (state.agents.find((a) => a.id === agent.id) || agent).voice) || {};
 	return {
-		engine: v?.ttsEngine === "server" && v.ttsBaseUrl ? "server" : "browser",
+		// "local" = la voz de Aku sin internet; para la web es como un servidor (pide el audio a /api/voice/speak).
+		engine: v?.ttsEngine === "local" ? "local" : v?.ttsEngine === "server" && v.ttsBaseUrl ? "server" : "browser",
 		voiceURI: av.browserVoiceURI || prefs.ttsVoice,
 		rate: av.rate || prefs.ttsRate,
 		lang: prefs.lang,

@@ -9,7 +9,7 @@ import { initComposer, paintComposer, stopGeneration } from "./chat.js";
 import { initContextMeter } from "./contextMeter.js";
 import { refreshAgents } from "./rooms.js";
 import { initSidebar, loadSessions, newChat, openSearch, route } from "./sidebar.js";
-import { initSettings, loadSettings, paintSuggestions } from "./settings.js";
+import { checkUpdateNow, initSettings, loadSettings, openSettings, paintSuggestions } from "./settings.js";
 import { initReminders, pollNotifications } from "./reminders.js";
 import { initVoice, reader, stopReading, voice } from "./voiceMode.js";
 import { initMiniVoice, isMiniVoice } from "./miniVoice.js";
@@ -68,6 +68,11 @@ async function init() {
 	await Promise.all([projects.loadProjects(), loadSessions(), loadSettings().catch((err) => toast(err.message, "error")), refreshAgents()]);
 	route();
 	if (state.settings?.needsSetup) openSetup({ firstRun: true });
+	// «Buscar actualizaciones» del menú de la bandeja abre la ventana con ?actualizar=1.
+	else if (new URLSearchParams(location.search).has("actualizar")) {
+		history.replaceState(null, "", location.pathname + location.hash);
+		openSettings("general").then(checkUpdateNow);
+	}
 	setInterval(pollNotifications, 20_000);
 	if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 	input.focus();

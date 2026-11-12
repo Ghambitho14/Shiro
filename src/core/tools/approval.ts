@@ -8,6 +8,8 @@ import { currentProject, resolveProjectPath } from "../projects/projects.js";
 import { terminal } from "../terminal/terminal.js";
 import type { PermissionMode } from "../agent/chatMode.js";
 import { gitWorkDir, isGitReadableDir } from "./gitDir.js";
+import { currentAgentRun } from "../agent/runContext.js";
+import { targetsOutOfScope } from "../pentest/engagement.js";
 import { isFreeReadCommand, isReadOnlyGitArgs } from "./readOnlyCommand.js";
 
 /**
@@ -81,8 +83,40 @@ function describeTerminalWrite(args: Record<string, unknown>): string {
 	return `Escribir en la terminal: ${parts.join(" y ") || "Enter"}${enter && parts.length ? " y pulsar Enter" : ""}`;
 }
 
+/** Empieza así la tarjeta de un comando que apunta fuera del alcance del pentest: siempre se pregunta. */
+export const OUT_OF_SCOPE_MARK = "⚠ FUERA DEL ALCANCE";
+
+/**
+ * En Hacking, con alcance anotado (tool pentest): qué objetivos del comando no están autorizados.
+ * Devuelve el aviso para la tarjeta, o "" si todo está dentro (o no hay alcance con qué comparar).
+ */
+function scopeWarning(command: string): string {
+	const run = currentAgentRun();
+	if (run?.mode !== "hacking" || !run.sessionId || !command) return "";
+	let check: ReturnType<typeof targetsOutOfScope>;
+	try {
+		check = targetsOutOfScope(run.sessionId, command);
+	} catch {
+		return "";
+	}
+	if (!check || (!check.outside.length && !check.excluded.length)) return "";
+	const parts: string[] = [];
+	if (check.excluded.length) parts.push(`marcado como fuera del alcance: ${check.excluded.join(", ")}`);
+	if (check.outside.length) parts.push(`no está en el alcance: ${check.outside.join(", ")}`);
+	return `${OUT_OF_SCOPE_MARK} (${parts.join("; ")}). Apruébalo solo si ese objetivo también es tuyo o está autorizado.
+`;
+}
+
 /** Devuelve la descripción de la acción si necesita aprobación, o null si es segura. */
 export function describeRiskyAction(tool: string, args: Record<string, unknown>): string | null {
+	const summary = describeRiskyActionBase(tool, args);
+	if (tool !== "exec" && !(tool === "terminal" && args.action === "run")) return summary;
+	const warning = scopeWarning(str(args.command).trim());
+	if (!warning) return summary;
+	return warning + (summary ?? `Ejecutar: ${str(args.command).trim()}`);
+}
+
+function describeRiskyActionBase(tool: string, args: Record<string, unknown>): string | null {
 	switch (tool) {
 		case "exec":
 			return describeCommand("Ejecutar comando", str(args.command).trim(), args.workingDir ? ` (en ${str(args.workingDir)})` : "", str(args.workingDir).trim() || undefined);
@@ -137,7 +171,26 @@ export function describeRiskyAction(tool: string, args: Record<string, unknown>)
 			return `Ejecutar git ${command}${repoPath && repoPath !== "." ? ` (en ${repoPath})` : ""}`;
 		}
 		case "cron_create":
-			return args.action === "exec" ? `Programar el comando "${str(args.command)}" (${str(args.expression)})` : null;
+			if (args.action === "exec") return `Programar el comando "${str(args.command)}" (${str(args.expression)})`;
+			// Una tarea se repite sola: si la idea vino de algo leído afuera, el usuario lo confirma.
+			return externalReadInThisResponse()
+				? `Programar la tarea "${str(args.name)}" (${str(args.expression)}): ${str(args.prompt ?? args.message).slice(0, 300)}${AFTER_WEB}`
+				: null;
+
+		// ---------- Correo y calendario (Google) ----------
+		case "email": {
+			if (args.action !== "send") return null;
+			const to = str(args.to).trim() || (args.reply_to_id ? "quien te escribió ese correo" : "(sin destinatario)");
+			const cc = str(args.cc).trim() ? `\nCC: ${str(args.cc).trim()}` : "";
+			const reply = args.reply_to_id ? " (respuesta)" : "";
+			return `Enviar un correo${reply} a ${to}${cc}\nAsunto: ${str(args.subject).trim() || "(el del correo original)"}\n\n${str(args.body).slice(0, 1500)}`;
+		}
+		case "calendar": {
+			if (args.action !== "create") return null;
+			const attendees = Array.isArray(args.attendees) && args.attendees.length ? `\nSe enviará una invitación a: ${args.attendees.map(String).join(", ")}` : "";
+			const where = str(args.location).trim() ? `, en ${str(args.location).trim()}` : "";
+			return `Crear el evento «${str(args.title)}» el ${str(args.start)}${args.end ? ` hasta ${str(args.end)}` : ""}${where} en tu Google Calendar${attendees}`;
+		}
 
 		// ---------- Control del PC ----------
 		case "pc_open": {
@@ -244,16 +297,24 @@ export function isHardToUndo(tool: string, args: Record<string, unknown>): boole
 	return isDestructiveCommand(typed);
 }
 
+/** Lo que sale en nombre del usuario: se pregunta siempre, sea cual sea el permiso del chat. */
+export function alwaysAsksUser(tool: string, args: Record<string, unknown>): boolean {
+	return (tool === "email" && args.action === "send") || (tool === "calendar" && args.action === "create");
+}
+
 export async function requestApproval(tool: string, args: Record<string, unknown>): Promise<{ ok: true } | { ok: false; error: string }> {
 	const summary = describeRiskyAction(tool, args);
 	if (!summary) return { ok: true };
 
 	const mode = getConfig().approvalMode;
-	if (mode === "allow") return { ok: true };
+	// Se preguntan siempre, también en «Automático» y «Omitir permisos»: un objetivo fuera del alcance del pentest,
+	// enviar un correo y crear un evento del calendario (salen a otras personas en tu nombre).
+	const alwaysAsk = summary.startsWith(OUT_OF_SCOPE_MARK) || alwaysAsksUser(tool, args);
+	if (mode === "allow" && !alwaysAsk) return { ok: true };
 	if (mode === "deny") return { ok: false, error: `Acción bloqueada por configuración (approvalMode=deny): ${summary}` };
 
 	const store = approverStore.getStore();
-	if (store?.approver) {
+	if (store?.approver && !alwaysAsk) {
 		if (store.permissions === "bypass") return { ok: true };
 		// Tras leer una web o un MCP se vuelve a preguntar todo: podría traer órdenes escondidas.
 		if (store.permissions === "auto" && !store.externalRead && !isHardToUndo(tool, args)) return { ok: true };

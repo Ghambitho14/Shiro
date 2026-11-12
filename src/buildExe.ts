@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { build } from "esbuild";
 import { runPowerShell } from "./core/pc/powershell.js";
 import { ptyPackageDir } from "./core/terminal/ptyLoader.js";
+import { sherpaPackageDirs } from "./core/voice/sherpaLoader.js";
 import { APP_DIR, APP_VERSION, SQL_WASM_FILE, VENDOR_FILES } from "./runtime.js";
 
 const DIST = join(APP_DIR, "dist");
@@ -60,6 +61,8 @@ function collectAssets(): Record<string, string> {
 	// La consola de la terminal: ptyLoader.ts la copia fuera del .exe para poder abrir sus binarios.
 	// Los .pdb (10 MB) solo sirven para depurar la propia librería.
 	walk(ptyPackageDir(), /\.pdb$/i);
+	// La voz sin internet: sherpaLoader.ts la copia fuera del .exe, igual que la consola. Las voces no van: se descargan.
+	for (const dir of sherpaPackageDirs()) walk(dir, /\.pdb$/i);
 	for (const rel of Object.values(VENDOR_FILES)) add(rel);
 	add(SQL_WASM_FILE);
 	add("package.json");

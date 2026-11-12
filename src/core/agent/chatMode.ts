@@ -23,7 +23,7 @@ export function parsePermissionMode(value: unknown): PermissionMode {
  * no basta: esta comprobación se hace otra vez justo antes de ejecutar cada llamada.
  */
 export function isPlanToolCall(name: string, args: Record<string, unknown>): boolean {
-	if (name === "project") return ["list", "find", "read", "search"].includes(String(args.action ?? "list"));
+	if (name === "project") return ["list", "find", "read", "search", "semantic"].includes(String(args.action ?? "list"));
 	if (name === "terminal") return args.action === "read";
 	if (name === "browser") return ["open", "read", "scroll", "back", "screenshot"].includes(String(args.action));
 	return true;

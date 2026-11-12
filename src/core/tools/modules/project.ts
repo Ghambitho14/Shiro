@@ -5,6 +5,7 @@ import { extractText, isTextFile } from "../../projects/documents.js";
 import {
 	currentProject,
 	editProjectFile,
+	fileMatcher,
 	findProjectFiles,
 	formatSize,
 	getProject,
@@ -16,6 +17,7 @@ import {
 	type Project,
 } from "../../projects/projects.js";
 import { sliceText } from "../textSlice.js";
+import { semanticSearch } from "../../projects/semanticIndex.js";
 
 const LIST_MAX_LINES = 300;
 const FIND_MAX = 100;
@@ -85,6 +87,24 @@ export async function executeProject(args: Record<string, unknown>): Promise<{ o
 					maxChars: currentResultBudget() - 300,
 				});
 				return { ok: true, content: `Archivo: ${target.path}${s.range}\n\n${s.body}${s.note}` };
+			}
+			case "semantic": {
+				const query = String(args.query ?? "").trim();
+				const files = typeof args.files === "string" && args.files.trim() ? args.files.trim() : undefined;
+				let r: Awaited<ReturnType<typeof semanticSearch>>;
+				try {
+					r = await semanticSearch(p, query, { files: files ? fileMatcher(files) : undefined, signal: currentAgentRun()?.signal });
+				} catch (err) {
+					return { ok: false, content: err instanceof Error ? err.message : String(err) };
+				}
+				const pending = r.pending
+					? `\n\n[Índice a medias: faltan ${r.pending} archivos por leer; se completan en las próximas búsquedas. Si no aparece lo que buscas, prueba también action=search.]`
+					: "";
+				if (!r.hits.length) return { ok: true, content: `No encontré nada parecido a "${query}". Prueba con otras palabras o con action=search.${pending}` };
+				const blocks = r.hits.map((h, i) => `${i + 1}. ${h.path} (líneas ${h.start}-${h.end}, parecido ${Math.round(h.score * 100)} %)\n${h.preview}`);
+				const head = `Lo más parecido a "${query}" (búsqueda por significado; lee el archivo con action=read para ver el contexto completo):\n\n`;
+				const s = sliceText(head + blocks.join("\n\n"), { maxChars: currentResultBudget() - 300 });
+				return { ok: true, content: `${s.body}${s.note}${pending}` };
 			}
 			case "search": {
 				const query = String(args.query ?? "").trim();

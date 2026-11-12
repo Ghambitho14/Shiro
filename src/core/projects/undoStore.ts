@@ -7,6 +7,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DATA_DIR } from "../../config/config.js";
+import { diffHunks, type DiffHunk } from "./diff.js";
 
 const UNDO_DIR = join(DATA_DIR, "cache", "undo");
 /** Cuántas copias se guardan como mucho. */
@@ -91,4 +92,106 @@ export function undoChange(id: string, force = false): UndoResult {
 	}
 	rmSync(fileOf(id), { force: true });
 	return { ok: true, path: entry.path, deleted: !entry.existed };
+}
+
+// ───────────────────────── cambios de una respuesta (tarjeta «Cambios») ─────────────────────────
+
+function readEntry(id: string): UndoEntry | null {
+	if (!ID_PATTERN.test(id) || !existsSync(fileOf(id))) return null;
+	try {
+		return JSON.parse(readFileSync(fileOf(id), "utf-8")) as UndoEntry;
+	} catch {
+		return null;
+	}
+}
+
+/** Las copias de esos ids agrupadas por archivo, de la más vieja a la más nueva. */
+function groupByFile(ids: string[]): Map<string, UndoEntry[]> {
+	const groups = new Map<string, UndoEntry[]>();
+	for (const id of [...new Set(ids)]) {
+		const e = readEntry(id);
+		if (!e) continue;
+		const list = groups.get(e.full) ?? [];
+		list.push(e);
+		groups.set(e.full, list);
+	}
+	for (const list of groups.values()) list.sort((a, b) => a.ts - b.ts);
+	return groups;
+}
+
+/** Un archivo con un byte 0 no es de texto: no se enseñan sus diferencias. */
+const isBinary = (data: Buffer) => data.subarray(0, 8000).includes(0);
+
+export type FileChange = {
+	path: string;
+	ids: string[];
+	/** No existía antes de la respuesta / ya no existe ahora. */
+	created: boolean;
+	deleted: boolean;
+	/** Alguien lo cambió después de Aku: deshacer pisaría eso. */
+	changedAfter: boolean;
+	binary: boolean;
+	adds: number;
+	dels: number;
+	hunks: DiffHunk[];
+	truncated: boolean;
+};
+
+/** Qué cambió en cada archivo entre antes de la respuesta y ahora. Los ids que ya no tienen copia se saltan. */
+export function describeChanges(ids: string[]): FileChange[] {
+	const out: FileChange[] = [];
+	for (const [full, list] of groupByFile(ids)) {
+		const first = list[0];
+		const last = list[list.length - 1];
+		const exists = existsSync(full);
+		const current = exists ? readFileSync(full) : Buffer.alloc(0);
+		const before = first.existed ? Buffer.from(first.before ?? "", "base64") : Buffer.alloc(0);
+		const binary = isBinary(before) || isBinary(current);
+		const diff = binary ? { adds: 0, dels: 0, hunks: [], truncated: false } : diffHunks(before.toString("utf-8"), current.toString("utf-8"));
+		out.push({
+			path: first.path,
+			ids: list.map((e) => e.id),
+			created: !first.existed,
+			deleted: !exists,
+			changedAfter: (exists ? hashOf(current) : "") !== last.afterHash,
+			binary,
+			...diff,
+		});
+	}
+	return out.sort((a, b) => a.path.localeCompare(b.path));
+}
+
+export type GroupUndoResult = {
+	/** Archivos devueltos a como estaban (o borrados, si no existían). */
+	undone: { path: string; deleted: boolean; ids: string[] }[];
+	/** Archivos que cambiaron después de Aku: no se tocaron (con `force` se pisan). */
+	changed: string[];
+	/** Ids sin copia (ya se deshicieron o se borraron por viejos). */
+	gone: string[];
+};
+
+/** Deshace varios cambios de una vez: cada archivo vuelve a como estaba antes del primero. */
+export function undoChanges(ids: string[], force = false): GroupUndoResult {
+	const result: GroupUndoResult = { undone: [], changed: [], gone: [] };
+	const groups = groupByFile(ids);
+	const found = new Set([...groups.values()].flat().map((e) => e.id));
+	result.gone = [...new Set(ids)].filter((id) => !found.has(id));
+	for (const [full, list] of groups) {
+		const first = list[0];
+		const last = list[list.length - 1];
+		const now = existsSync(full) ? hashOf(readFileSync(full)) : "";
+		if (now !== last.afterHash && !force) {
+			result.changed.push(first.path);
+			continue;
+		}
+		if (first.existed) {
+			mkdirSync(dirname(full), { recursive: true });
+			writeFileSync(full, Buffer.from(first.before ?? "", "base64"));
+		} else {
+			rmSync(full, { force: true });
+		}
+		for (const e of list) rmSync(fileOf(e.id), { force: true });
+		result.undone.push({ path: first.path, deleted: !first.existed, ids: list.map((e) => e.id) });
+	}
+	return result;
 }

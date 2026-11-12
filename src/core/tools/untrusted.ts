@@ -11,6 +11,9 @@ const WEB_TOOLS: Record<string, string> = {
 	browser: "una página del navegador",
 	// Lo que devuelven los ayudantes puede traer texto de las webs que leyeron.
 	delegate: "tus ayudantes (pueden traer texto de webs)",
+	// Correos e invitaciones los escribe cualquiera.
+	email: "el correo (Gmail)",
+	calendar: "el calendario (los eventos pueden venir de invitaciones de otros)",
 };
 
 const MCP_PREFIX = "mcp__";

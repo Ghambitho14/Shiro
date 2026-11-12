@@ -9,6 +9,7 @@ import { ensureSession, runAssistant } from "./chat.js";
 import { openChat, paintSidebar, setDocTitle, upsertSession } from "./sidebar.js";
 import { settingsDlg } from "./settings.js";
 import { voice } from "./voiceMode.js";
+import { renderMarkdown } from "./markdown.js";
 
 // ───────────────────────────── salas con varios agentes ─────────────────────────────
 
@@ -91,7 +92,9 @@ async function closeConversation(btn) {
 export function paintRoomBar() {
 	const room = state.room;
 	const closable = canCloseChat() || state.closing;
-	roomBar.hidden = !room && !state.agents.length && !closable;
+	// Modo Hacking: el informe del pentest guiado de este chat (alcance y hallazgos que anotó Aku).
+	const reportable = state.mode === "hacking" && !!state.activeId && state.messages.length > 0;
+	roomBar.hidden = !room && !state.agents.length && !closable && !reportable;
 	roomBar.innerHTML = "";
 	if (roomBar.hidden) return;
 	for (const p of room?.participants || []) {
@@ -115,6 +118,13 @@ export function paintRoomBar() {
 		add.onclick = () => openMenu(add, others.map((a) => ({ label: a.name, onClick: () => roomAction("add", a.id) })));
 		roomBar.append(add);
 	}
+	if (reportable) {
+		const rep = el("button", "room-chip add", `${icon("shield", "sm")}<span>Generar informe</span>`);
+		rep.type = "button";
+		rep.title = "Arma el informe de seguridad con el alcance y los hallazgos que Aku anotó en este chat";
+		rep.onclick = () => generateReport(rep);
+		roomBar.append(rep);
+	}
 	if (closable) {
 		const close = el("button", "room-chip add close-chat", `${icon("archive", "sm")}<span></span>`);
 		close.type = "button";
@@ -124,6 +134,37 @@ export function paintRoomBar() {
 		close.onclick = () => closeConversation(close);
 		roomBar.append(close);
 	}
+}
+
+/** Arma el informe del pentest de este chat y lo enseña; queda guardado como nota. */
+async function generateReport(btn) {
+	btn.disabled = true;
+	try {
+		const d = await api(`/api/pentest/${encodeURIComponent(state.activeId)}/report`, { method: "POST" });
+		showReport(d.path, d.markdown);
+	} catch (err) {
+		toast(err.message, "error");
+	} finally {
+		btn.disabled = false;
+	}
+}
+
+function showReport(path, markdown) {
+	const d = el("dialog", "report-dialog");
+	d.innerHTML = `<div class="dialog-head"><h2>Informe de seguridad</h2><button class="icon-btn" data-close title="Cerrar" aria-label="Cerrar">${icon("x")}</button></div><div class="report-body"><p class="set-desc"></p><div class="md"></div></div>`;
+	$(".set-desc", d).textContent = `Guardado en la carpeta de Aku: ${path}`;
+	$(".md", d).innerHTML = renderMarkdown(markdown);
+	const close = () => {
+		d.close();
+		d.remove();
+	};
+	$("[data-close]", d).onclick = close;
+	d.addEventListener("cancel", (e) => {
+		e.preventDefault();
+		close();
+	});
+	document.body.append(d);
+	d.showModal();
 }
 
 /** Abre un chat nuevo que ya es una sala con este agente (Ajustes → Agentes, palabra de activación). */

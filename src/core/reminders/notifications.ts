@@ -54,3 +54,19 @@ export function startHeartbeat(): void {
 	console.log("💓 Heartbeat de recordatorios iniciado (cada 5s)");
 }
 
+
+// ───────────────────────────── avisos para la web ─────────────────────────────
+
+export type WebNotice = { id: string; title: string; description?: string; datetime: string; createdAt: string; kind?: "reminder" | "task" | "update" };
+
+/** Avisos que la web recoge con /api/notifications (solo en memoria; como mucho 50). */
+const webNotices: WebNotice[] = [];
+
+export function pushWebNotice(notice: WebNotice): void {
+	webNotices.unshift(notice);
+	if (webNotices.length > 50) webNotices.length = 50;
+}
+
+export function takeWebNotices(max = 10): WebNotice[] {
+	return webNotices.splice(0, max);
+}

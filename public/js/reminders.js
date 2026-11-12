@@ -25,7 +25,7 @@ export async function openReminders() {
 	$("#rem-when").value = localInputValue(soon);
 	remDlg.showModal();
 	if ("Notification" in window && Notification.permission === "default") Notification.requestPermission().catch(() => {});
-	await loadReminders();
+	await Promise.all([loadReminders(), loadCronTasks()]);
 }
 
 export async function loadReminders() {
@@ -65,17 +65,84 @@ export async function loadReminders() {
 	}
 }
 
+// ───────────────────────────── tareas programadas ─────────────────────────────
+
+const DELIVER = { both: "web y Telegram", web: "web", telegram: "Telegram" };
+const ACTION = { agent: "Aku lo hace", notify: "mensaje", reminder: "mensaje", exec: "comando" };
+
+function shortDate(iso) {
+	return iso ? new Date(iso).toLocaleString("es", { dateStyle: "medium", timeStyle: "short" }) : "";
+}
+
+async function cronAction(id, action) {
+	try {
+		await api(`/api/cron/${encodeURIComponent(id)}`, { method: "POST", json: { action } });
+		if (action === "run") toast("Ejecutando la tarea: el resultado te llegará como aviso.");
+	} catch (err) {
+		toast(err.message, "error");
+	}
+	loadCronTasks();
+}
+
+export async function loadCronTasks() {
+	const list = $("#cron-list");
+	try {
+		const { tasks = [] } = await api("/api/cron");
+		if (!tasks.length) {
+			list.innerHTML = '<div class="sb-empty">No tienes tareas programadas.</div>';
+			return;
+		}
+		list.innerHTML = "";
+		for (const t of tasks) {
+			const item = el("div", `rem-item${t.enabled ? "" : " done"}`, `${icon("zap")}<div class="info"><strong></strong><span class="rem-what"></span><span class="rem-when"></span></div>`);
+			$("strong", item).textContent = t.name;
+			$(".rem-what", item).textContent = `${ACTION[t.action] || t.action}: ${t.what}`;
+			$(".rem-what", item).title = t.what;
+			const state = t.running ? "ejecutándose ahora" : t.enabled ? `próxima: ${shortDate(t.nextRun)}` : "en pausa";
+			$(".rem-when", item).textContent = `${t.schedule} · llega por ${DELIVER[t.deliver] || t.deliver} · ${state}`;
+			if (t.lastError) {
+				const err = el("span", "rem-error");
+				err.textContent = `Último error: ${t.lastError}`;
+				$(".info", item).append(err);
+			}
+			if (!t.running) item.append(actionButton("zap", "Ejecutar ahora", () => cronAction(t.id, "run")));
+			item.append(
+				t.enabled
+					? actionButton("pause", "Pausar", () => cronAction(t.id, "pause"))
+					: actionButton("refresh", "Reanudar", () => cronAction(t.id, "resume")),
+				actionButton("trash", "Eliminar", () => {
+					if (!confirm(`¿Eliminar la tarea «${t.name}»?`)) return;
+					cronAction(t.id, "delete");
+				}),
+			);
+			list.append(item);
+		}
+	} catch (err) {
+		list.innerHTML = "";
+		toast(err.message, "error");
+	}
+}
+
 export async function pollNotifications() {
 	try {
 		const { notifications = [] } = await api("/api/notifications");
 		for (const n of notifications) {
-			toast(`Recordatorio: ${n.title}`, "bell", 12000);
-			notifySystem(`⏰ ${n.title}`, n.description || "Recordatorio de Aku");
+			if (n.kind === "update") {
+				toast(`${n.title}. ${n.description || ""}`, "bell", 15000);
+				notifySystem(n.title, n.description || "");
+				continue;
+			}
+			const task = n.kind === "task";
+			const label = task ? "Tarea lista" : "Recordatorio";
+			toast(`${label}: ${n.title}`, "bell", 12000);
+			const body = (n.description || "").slice(0, 240);
+			notifySystem(`⏰ ${n.title}`, body || `${label} de Aku`);
 			if (voice.active || prefs.autoRead) {
 				const sp = voice.speaker || new Speaker(ttsSettings);
-				sp.speak(`Recordatorio: ${n.title}`);
+				sp.speak(`${label}: ${n.title}`);
 			}
 		}
+		if (notifications.some((n) => n.kind === "task") && remDlg.open) loadCronTasks();
 	} catch {}
 }
 

@@ -19,6 +19,10 @@ import { handleVoiceApi } from "./voiceApi.js";
 import { handleConnectionsApi } from "./connectionsApi.js";
 import { handleChatApi } from "./chatApi.js";
 import { handleRemindersApi, startReminderNotifications } from "./remindersApi.js";
+import { handlePentestApi } from "./pentestApi.js";
+import { announceUpdate, handleUpdateApi } from "./updateApi.js";
+import { GOOGLE_CALLBACK_PATH, handleGoogleApi } from "./googleApi.js";
+import { startUpdateChecks } from "./core/update/updater.js";
 import { releaseLlamaServer } from "./core/llamacpp/engine.js";
 import { shiroBrowser } from "./core/browser/browser.js";
 import { mcpManager } from "./core/mcp/McpManager.js";
@@ -49,7 +53,8 @@ let shuttingDown = false;
  * /api/local/shutdown tiene su propia clave y se atiende antes.
  */
 function isSensitivePath(pathname: string): boolean {
-	return pathname.startsWith("/api/") && pathname !== "/api/health";
+	// La vuelta de Google (conectar el correo) la abre Google, sin la contraseña: la protege su `state` de un solo uso.
+	return pathname.startsWith("/api/") && pathname !== "/api/health" && pathname !== GOOGLE_CALLBACK_PATH;
 }
 
 /** true si la petición no viene de otra página web (sin Origin, o Origin igual al Host). */
@@ -168,12 +173,15 @@ async function handleRequest(
 	if (await handleSettingsApi(req, res, method, pathname)) return;
 	// Voz (Whisper y TTS) y capturas de pantalla.
 	if (await handleVoiceApi(req, res, method, pathname, parsedUrl)) return;
+	if (await handleGoogleApi(req, res, method, pathname, parsedUrl, PORT)) return;
 	// Conexiones: WhatsApp y Telegram.
 	if (await handleConnectionsApi(req, res, method, pathname)) return;
 	// Chats, el chat con el modelo y las aprobaciones.
 	if (await handleChatApi(req, res, method, pathname)) return;
 	// Recordatorios y sus avisos.
 	if (await handleRemindersApi(req, res, method, pathname)) return;
+	if (await handlePentestApi(req, res, method, pathname)) return;
+	if (await handleUpdateApi(req, res, method, pathname, quitServer)) return;
 
 	if (method === "GET" && pathname === "/api/health") {
 		sendJson(res, 200, {
@@ -314,8 +322,11 @@ startNotesSync();
 
 // Inicializar scheduler de tareas programadas
 import { initCronScheduler, stopCronScheduler } from "./core/scheduler/CronService.js";
+import { runScheduledTask } from "./core/scheduler/runTask.js";
 import { startNotesSync } from "./storage/notesSync.js";
-initCronScheduler();
+initCronScheduler(runScheduledTask);
+// Con Aku.exe: ¿hay una versión nueva? (como mucho una vez al día).
+startUpdateChecks(announceUpdate);
 
 process.on("SIGINT", () => {
 	stopCronScheduler();

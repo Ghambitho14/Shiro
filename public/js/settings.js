@@ -113,6 +113,7 @@ export function selectTab(tab) {
 	if (tab === "connections") {
 		refreshWhatsApp();
 		refreshTelegram();
+		refreshGoogle();
 	}
 	if (tab === "voice") paintVoices();
 	if (tab === "profile") loadPrompts();
@@ -138,6 +139,7 @@ export function fillSettings() {
 	const s = state.settings;
 	const p = state.profile || {};
 	applyTheme();
+	loadUpdate();
 	$("#set-assistant-name").value = s.assistantName;
 	$("#set-autonomous").checked = s.autonomousMode;
 	$("#set-enter-send").checked = prefs.enterSend;
@@ -155,6 +157,7 @@ export function fillSettings() {
 	$("#set-tts-url").value = v.ttsBaseUrl;
 	$("#set-tts-model").value = v.ttsModel;
 	$("#set-tts-voice").value = v.ttsVoice;
+	localVoice = v.ttsLocalVoice || "piper-claude";
 	$("#set-tts-key").value = "";
 	$("#tts-key-hint").textContent = v.hasTtsApiKey ? "Hay una clave guardada (déjalo vacío para mantenerla)." : "";
 	$("#set-lang").value = prefs.lang;
@@ -237,9 +240,79 @@ export async function putSettings(patch, okMessage = "Guardado") {
 // Voz (ajustes)
 export function paintVoiceFields() {
 	$("#stt-server-fields").hidden = $("#set-stt-engine").value !== "server";
-	const server = $("#set-tts-engine").value === "server";
-	$("#tts-server-fields").hidden = !server;
-	$("#tts-browser-fields").hidden = server;
+	const engine = $("#set-tts-engine").value;
+	$("#tts-server-fields").hidden = engine !== "server";
+	$("#tts-local-fields").hidden = engine !== "local";
+	// Con la voz de Aku se usa la velocidad, pero no la voz del navegador.
+	$("#tts-browser-fields").hidden = engine === "server";
+	$("#set-tts-voice-browser").closest("label").hidden = engine === "local";
+	if (engine === "local") loadLocalVoices();
+}
+
+// Voz de Aku sin internet: elegir, descargar y borrar voces.
+let localVoice = "piper-claude";
+let localTimer = 0;
+
+const mb = (n) => `${Math.max(1, Math.round(n / 1024 ** 2))} MB`;
+
+export async function loadLocalVoices() {
+	clearTimeout(localTimer);
+	try {
+		paintLocalVoices((await api("/api/voice/local")).voices);
+	} catch (err) {
+		$("#local-voices").textContent = err.message;
+	}
+}
+
+function paintLocalVoices(voices) {
+	const box = $("#local-voices");
+	const busy = (v) => v.state && v.state.phase !== "error";
+	box.replaceChildren(
+		...voices.map((v) => {
+			const row = el("label", "local-voice");
+			const radio = el("input");
+			Object.assign(radio, { type: "radio", name: "local-voice", value: v.id, checked: v.id === localVoice });
+			radio.onchange = () => (localVoice = v.id);
+			const text = el("span", "lv-text");
+			text.append(el("strong", "", escapeHtml(v.label)), el("small", "", escapeHtml(`${v.hint} · ${mb(v.size)}`)));
+			const side = el("span", "lv-side");
+			if (busy(v)) {
+				const pct = v.state.total ? Math.floor((v.state.received / v.state.total) * 100) : 0;
+				side.textContent = v.state.phase === "extracting" ? "Preparando…" : `Descargando ${pct} %`;
+			} else if (v.installed) {
+				const del = el("button", "btn sm ghost", "Borrar");
+				del.type = "button";
+				del.onclick = async (e) => {
+					e.preventDefault();
+					if (!(await confirmDialog({ title: "Borrar voz", text: `¿Borrar la voz «${v.label}»? Podrás volver a descargarla.`, ok: "Borrar", danger: true }))) return;
+					try {
+						paintLocalVoices((await api("/api/voice/local/remove", { method: "POST", json: { voice: v.id } })).voices);
+					} catch (err) {
+						toast(err.message, "error");
+					}
+				};
+				side.append(el("span", "lv-ok", "Descargada"), del);
+			} else {
+				const get = el("button", "btn sm", "Descargar");
+				get.type = "button";
+				get.onclick = async (e) => {
+					e.preventDefault();
+					localVoice = v.id;
+					try {
+						paintLocalVoices((await api("/api/voice/local/install", { method: "POST", json: { voice: v.id } })).voices);
+					} catch (err) {
+						toast(err.message, "error");
+					}
+				};
+				if (v.state?.phase === "error") side.append(el("span", "lv-error", escapeHtml(v.state.error || "Falló la descarga")));
+				side.append(get);
+			}
+			row.append(radio, text, side);
+			return row;
+		}),
+	);
+	// Mientras algo se descarga, se repinta cada segundo (solo con Ajustes abierto).
+	if (voices.some(busy) && settingsDlg.open) localTimer = setTimeout(loadLocalVoices, 1000);
 }
 
 export function paintVoices() {
@@ -262,6 +335,7 @@ export function voicePatch() {
 		ttsBaseUrl: $("#set-tts-url").value.trim(),
 		ttsModel: $("#set-tts-model").value.trim() || "tts-1",
 		ttsVoice: $("#set-tts-voice").value.trim() || "alloy",
+		ttsLocalVoice: localVoice,
 	};
 	if ($("#set-stt-key").value.trim()) patch.sttApiKey = $("#set-stt-key").value.trim();
 	if ($("#set-tts-key").value.trim()) patch.ttsApiKey = $("#set-tts-key").value.trim();
@@ -377,7 +451,76 @@ export function paintTelegram(s) {
 }
 
 /** Lo que antes se hacía al cargar la página (botones, eventos); app.js lo llama en orden. */
+// Versión de Aku y actualizaciones (Ajustes → General).
+let updateTimer = 0;
+
+function paintUpdate(u) {
+	const status = $("#update-status");
+	const install = $("#update-install");
+	const notes = $("#update-notes");
+	install.hidden = true;
+	notes.hidden = true;
+	$("#update-check").disabled = u.phase === "checking" || u.phase === "downloading" || u.phase === "installing";
+	if (u.phase === "downloading") {
+		const pct = u.total ? Math.floor((u.received / u.total) * 100) : 0;
+		status.textContent = `Descargando la versión ${u.latest?.version ?? "nueva"}… ${pct} %`;
+	} else if (u.phase === "installing") {
+		status.textContent = "Instalando: Aku se cerrará y se volverá a abrir solo en unos segundos.";
+	} else if (u.phase === "checking") {
+		status.textContent = `Tienes la ${u.current}. Buscando…`;
+	} else if (u.available) {
+		status.textContent = `Tienes la ${u.current}. Hay una nueva: ${u.latest.version} (${Math.round(u.latest.size / 1024 ** 2)} MB).`;
+		if (u.canInstall) install.hidden = false;
+		else status.textContent += " Desde el código se actualiza con git pull.";
+		if (u.latest.notes) {
+			notes.textContent = u.latest.notes;
+			notes.hidden = false;
+		}
+	} else {
+		const when = u.checkedAt ? ` (revisado ${new Date(u.checkedAt).toLocaleString()})` : "";
+		status.textContent = `Tienes la ${u.current}${u.checkedAt ? `, la más nueva${when}` : ""}.`;
+	}
+	if (u.phase === "error" && u.error) status.textContent += ` ${u.error}`;
+	clearTimeout(updateTimer);
+	if (["checking", "downloading"].includes(u.phase) && settingsDlg.open) updateTimer = setTimeout(loadUpdate, 1000);
+}
+
+export async function loadUpdate() {
+	try {
+		paintUpdate(await api("/api/update"));
+	} catch (err) {
+		$("#update-status").textContent = err.message;
+	}
+}
+
+/** Busca ahora (botón, o al abrir desde «Buscar actualizaciones» de la bandeja). */
+export async function checkUpdateNow() {
+	$("#update-status").textContent = "Buscando…";
+	try {
+		paintUpdate(await api("/api/update/check", { method: "POST" }));
+	} catch (err) {
+		$("#update-status").textContent = err.message;
+	}
+}
+
+async function installUpdateNow() {
+	const ok = await confirmDialog({
+		title: "Actualizar Aku",
+		text: "Aku bajará la versión nueva, comprobará que está entera y se cerrará para instalarla. Se volverá a abrir solo; tus chats y ajustes no se tocan.",
+		ok: "Actualizar",
+	});
+	if (!ok) return;
+	try {
+		paintUpdate(await api("/api/update/install", { method: "POST" }));
+		loadUpdate();
+	} catch (err) {
+		toast(err.message, "error");
+	}
+}
+
 export function initSettings() {
+	$("#update-check").onclick = checkUpdateNow;
+	$("#update-install").onclick = installUpdateNow;
 	$("#settings-nav").onclick = (e) => {
 		const b = e.target.closest("[data-tab]");
 		if (b) selectTab(b.dataset.tab);
@@ -498,7 +641,7 @@ export function initSettings() {
 		if (await putSettings(patch, "Voz guardada")) fillSettings();
 	};
 	$("#tts-test").onclick = async () => {
-		if ($("#set-tts-engine").value === "server") {
+		if ($("#set-tts-engine").value !== "browser") {
 			if (!(await putSettings(voicePatch(), ""))) return;
 		}
 		const sp = new Speaker(ttsSettings);
@@ -540,4 +683,67 @@ export function initSettings() {
 		}
 	};
 	settingsDlg.addEventListener("close", () => clearTimeout(tgTimer));
+	$("#g-connect").onclick = connectGoogle;
+	$("#g-disconnect").onclick = async () => {
+		const ok = await confirmDialog({ title: "Desconectar Google", text: "Aku dejará de ver tu correo y tu calendario, y el permiso se quita también en Google.", ok: "Desconectar", danger: true });
+		if (!ok) return;
+		try {
+			paintGoogle(await api("/api/google/disconnect", { method: "POST" }));
+			refreshGoogle();
+		} catch (err) {
+			toast(err.message, "error");
+		}
+	};
+	settingsDlg.addEventListener("close", () => clearTimeout(googleTimer));
+}
+
+// Google (correo y calendario)
+let googleTimer = 0;
+let googleWaitUntil = 0;
+/** Solo se puede conectar desde el navegador de este PC: Google vuelve a 127.0.0.1. */
+const onThisPc = () => ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
+
+function paintGoogle(g) {
+	const status = $("#g-status");
+	if (g.connected) {
+		status.textContent = `Conectado${g.email ? ` como ${g.email}` : ""}. Pídele a Aku cosas como «¿tengo correos sin leer?» o «¿qué tengo mañana?».`;
+		googleWaitUntil = 0;
+	} else if (googleWaitUntil > Date.now()) {
+		status.textContent = "Esperando a que aceptes en la ventana de Google…";
+	} else {
+		status.textContent = g.configured ? "Hay una credencial guardada, pero falta conectar la cuenta." : "Sin conectar.";
+	}
+	if (!onThisPc()) status.textContent += " Para conectar, abre Aku en el navegador del PC donde corre (Google vuelve a 127.0.0.1).";
+	if (g.clientId !== undefined) $("#g-client-id").value = g.clientId || "";
+	$("#g-secret-hint").textContent = g.hasSecret ? "Hay un secreto guardado (déjalo vacío para mantenerlo)." : "";
+	$("#g-disconnect").hidden = !g.connected;
+	$("#g-connect").textContent = g.connected ? "Volver a conectar" : "Conectar";
+	$("#g-guide").open = !g.configured;
+	clearTimeout(googleTimer);
+	if (googleWaitUntil > Date.now() && settingsDlg.open) googleTimer = setTimeout(refreshGoogle, 3000);
+}
+
+export async function refreshGoogle() {
+	try {
+		paintGoogle(await api("/api/google/status"));
+	} catch (err) {
+		$("#g-status").textContent = err.message;
+	}
+}
+
+async function connectGoogle() {
+	if (!onThisPc()) return toast("Conecta Google desde el navegador del PC donde corre Aku.", "error", 6000);
+	// La ventana se abre ya (con el clic), si no el navegador la bloquea; luego se le pone la dirección.
+	const win = window.open("about:blank", "_blank");
+	try {
+		const r = await api("/api/google/connect", { method: "POST", json: { clientId: $("#g-client-id").value.trim(), clientSecret: $("#g-client-secret").value.trim() } });
+		$("#g-client-secret").value = "";
+		if (win) win.location.href = r.url;
+		else location.href = r.url;
+		googleWaitUntil = Date.now() + 5 * 60_000;
+		refreshGoogle();
+	} catch (err) {
+		win?.close();
+		toast(err.message, "error", 6000);
+	}
 }

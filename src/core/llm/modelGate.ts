@@ -44,7 +44,8 @@ async function unloadOllama(server: GateTarget, keep: GateTarget): Promise<strin
 	if (!res.ok) throw new Error(`Ollama respondió ${res.status}`);
 	const data = (await res.json()) as { models?: { name?: string; model?: string }[] };
 	const loaded = (data.models ?? []).map((m) => m.name || m.model || "").filter(Boolean);
-	const drop = loaded.filter((name) => !(sameServer(server, keep) && name === keep.model));
+	// Los de embeddings (búsqueda por significado) son chicos y no compiten con el de chat: se quedan.
+	const drop = loaded.filter((name) => !(sameServer(server, keep) && name === keep.model) && !/embed/i.test(name));
 	for (const model of drop) {
 		const r = await fetch(`${server.baseUrl}/api/generate`, {
 			method: "POST",
@@ -68,9 +69,11 @@ async function unloadLmStudio(server: GateTarget, keep: GateTarget): Promise<str
 	// Un LM Studio viejo sin esta API: con «mantener solo el último modelo» descarga el anterior él solo.
 	if (res.status === 404) return [];
 	if (!res.ok) throw new Error(`LM Studio respondió ${res.status}`);
-	const data = (await res.json()) as { models?: { key?: string; loaded_instances?: { id?: string }[] }[] };
+	const data = (await res.json()) as { models?: { key?: string; type?: string; loaded_instances?: { id?: string }[] }[] };
 	const keepHere = sameServer(server, keep);
 	const drop = (data.models ?? [])
+		// Los de embeddings (búsqueda por significado) son chicos y no compiten con el de chat: se quedan.
+		.filter((m) => m.type !== "embedding" && !/embed/i.test(m.key ?? ""))
 		.filter((m) => !(keepHere && (m.key === keep.model || m.loaded_instances?.some((i) => i.id === keep.model))))
 		.flatMap((m) => m.loaded_instances ?? [])
 		.map((i) => i.id ?? "")

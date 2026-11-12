@@ -169,7 +169,7 @@ export function getInstallState(): InstallState {
 }
 
 /** Descarga un archivo de GitHub comprobando su huella sha256. Se cancela si pasa 1 minuto sin recibir datos. */
-async function downloadAsset(asset: ReleaseAsset, file: string, onBytes: (n: number) => void): Promise<void> {
+export async function downloadAsset(asset: ReleaseAsset, file: string, onBytes: (n: number) => void): Promise<void> {
 	if (!asset.browser_download_url.startsWith("https://github.com/")) throw new Error(`Dirección de descarga inesperada para ${asset.name}.`);
 	const ctrl = new AbortController();
 	let timer = setTimeout(() => ctrl.abort(), 60_000);
@@ -201,7 +201,7 @@ async function downloadAsset(asset: ReleaseAsset, file: string, onBytes: (n: num
 }
 
 /** En Windows se usa el tar del sistema (abre .zip); el de Git que puede haber en el PATH no. */
-function tarCommand(): string {
+export function tarCommand(): string {
 	return process.platform === "win32" ? join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe") : "tar";
 }
 

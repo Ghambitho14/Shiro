@@ -138,6 +138,7 @@ export function buildAssistant(m) {
 			<div class="steps" hidden><button type="button" class="steps-toggle">${icon("chevronDown", "sm")}<span></span></button><div class="steps-list"></div></div>
 			<div class="approvals"></div>
 			<div class="md"></div>
+			<div class="changes" hidden></div>
 			<div class="extra"></div>
 			<div class="msg-actions"></div>
 		</div>`,
@@ -154,6 +155,7 @@ export function buildAssistant(m) {
 		stepsList: $(".steps-list", root),
 		approvals: $(".approvals", root),
 		md: $(".md", root),
+		changes: $(".changes", root),
 		extra: $(".extra", root),
 		actions: $(".msg-actions", root),
 		cards: [],
@@ -180,6 +182,7 @@ export function paintSteps(m) {
 	const sig = JSON.stringify([!!m.streaming, ...tools.map((t) => [t.id, t.status, t.error, t.image, t.undo, t.undone])]);
 	if (r.stepsSig === sig) return;
 	r.stepsSig = sig;
+	paintChanges(m);
 	r.steps.hidden = tools.length === 0;
 	if (!tools.length) return;
 	const running = tools.some((t) => t.status === "running");
@@ -202,6 +205,144 @@ export function paintSteps(m) {
 				img.onclick = () => lightbox(u);
 			})
 			.catch(() => img.remove());
+	}
+}
+
+// ───────────────────────── tarjeta «Cambios» (archivos que cambió la respuesta) ─────────────────────────
+
+/** Ids de las copias para deshacer de esta respuesta (los pasos que cambiaron archivos y siguen sin deshacer). */
+function changeIds(m) {
+	return m.streaming ? [] : (m.tools || []).filter((t) => t.undo).map((t) => t.undo);
+}
+
+/** Al terminar la respuesta: qué archivos cambió, con sus diferencias, y deshacer todo o por archivo. */
+function paintChanges(m) {
+	const r = refs.get(m);
+	if (!r?.changes) return;
+	const ids = changeIds(m);
+	const sig = ids.join(",");
+	if (r.changesSig === sig) return;
+	r.changesSig = sig;
+	if (!ids.length) {
+		r.changes.hidden = true;
+		r.changes.innerHTML = "";
+		return;
+	}
+	api("/api/projects/changes", { method: "POST", json: { ids } })
+		.then(({ changes = [] }) => {
+			if (r.changesSig !== sig) return;
+			renderChanges(m, r.changes, changes);
+		})
+		.catch(() => {
+			if (r.changesSig === sig) r.changes.hidden = true;
+		});
+}
+
+function renderChanges(m, box, changes) {
+	box.innerHTML = "";
+	box.hidden = !changes.length;
+	if (!changes.length) return;
+	const adds = changes.reduce((n, c) => n + c.adds, 0);
+	const dels = changes.reduce((n, c) => n + c.dels, 0);
+	const head = el("div", "changes-head", `${icon("file", "sm")}<strong></strong><span class="changes-count"><span class="plus"></span> <span class="minus"></span></span>`);
+	$("strong", head).textContent = changes.length === 1 ? "1 archivo cambiado" : `${changes.length} archivos cambiados`;
+	$(".plus", head).textContent = `+${adds}`;
+	$(".minus", head).textContent = `−${dels}`;
+	const all = el("button", "changes-undo", "Deshacer todo");
+	all.type = "button";
+	all.onclick = () => undoFiles(m, changes.flatMap((c) => c.ids), all);
+	head.append(all);
+	box.append(head);
+	for (const c of changes) box.append(changeRow(m, c));
+}
+
+function changeRow(m, c) {
+	const row = el("div", "change");
+	const line = el("button", "change-line", `${icon("chevronRight", "sm")}<span class="change-path"></span><span class="change-tags"></span><span class="changes-count"><span class="plus"></span> <span class="minus"></span></span>`);
+	line.type = "button";
+	$(".change-path", line).textContent = c.path;
+	const tags = [c.created && "nuevo", c.deleted && "borrado", c.changedAfter && "cambió después", c.binary && "binario"].filter(Boolean);
+	$(".change-tags", line).textContent = tags.join(" · ");
+	$(".plus", line).textContent = `+${c.adds}`;
+	$(".minus", line).textContent = `−${c.dels}`;
+	const undo = el("button", "changes-undo", "Deshacer");
+	undo.type = "button";
+	undo.onclick = () => undoFiles(m, c.ids, undo);
+	const top = el("div", "change-top");
+	top.append(line, undo);
+	const diff = el("div", "change-diff");
+	diff.hidden = true;
+	line.onclick = () => {
+		row.classList.toggle("open");
+		diff.hidden = !row.classList.contains("open");
+		if (!diff.hidden && !diff.childElementCount) diff.append(diffView(c));
+	};
+	row.append(top, diff);
+	return row;
+}
+
+function diffView(c) {
+	const pre = el("pre", "diff");
+	if (c.binary) {
+		pre.textContent = "Archivo binario: no se muestran sus diferencias.";
+		return pre;
+	}
+	if (!c.hunks.length) {
+		pre.textContent = "Sin diferencias de texto.";
+		return pre;
+	}
+	for (const h of c.hunks) {
+		const hh = el("div", "diff-hunk");
+		hh.textContent = `@@ línea ${h.newStart || h.oldStart} @@`;
+		pre.append(hh);
+		for (const l of h.lines) {
+			const d = el("div", `diff-${l.kind}`);
+			d.textContent = `${l.kind === "add" ? "+" : l.kind === "del" ? "-" : " "} ${l.text}`;
+			pre.append(d);
+		}
+	}
+	if (c.truncated) {
+		const more = el("div", "diff-hunk");
+		more.textContent = "… (hay más diferencias; abre el archivo para verlas)";
+		pre.append(more);
+	}
+	return pre;
+}
+
+/** Deshace esos cambios (cada archivo vuelve a como estaba antes de la respuesta). */
+async function undoFiles(m, ids, button) {
+	button.disabled = true;
+	try {
+		let d = await api("/api/projects/undo-many", { method: "POST", json: { ids } });
+		if (d.changed?.length) {
+			const sure = await confirmDialog({
+				title: "Hay archivos que cambiaron después",
+				text: `${d.changed.join(", ")} se modificó después de esta respuesta. Si lo deshaces, se pierde también lo que se cambió después.`,
+				ok: "Deshacer igual",
+				danger: true,
+			});
+			if (sure) {
+				const again = await api("/api/projects/undo-many", { method: "POST", json: { ids, force: true } });
+				d = { ...again, undone: [...(d.undone || []), ...(again.undone || [])], gone: [...(d.gone || []), ...(again.gone || [])] };
+			}
+		}
+		const undone = new Set((d.undone || []).flatMap((u) => u.ids));
+		const gone = new Set(d.gone || []);
+		for (const t of m.tools || []) {
+			if (!t.undo) continue;
+			if (undone.has(t.undo)) {
+				delete t.undo;
+				t.undone = true;
+			} else if (gone.has(t.undo)) delete t.undo;
+		}
+		if (d.undone?.length) toast(d.undone.length === 1 ? `${d.undone[0].path} volvió a como estaba.` : `${d.undone.length} archivos volvieron a como estaban.`);
+		else if (gone.size) toast("Ya no se puede deshacer: las copias de estos cambios ya no están.", "error");
+		paintSteps(m);
+		if (state.messages.includes(m)) await persist();
+	} catch (err) {
+		toast(err.message, "error");
+	} finally {
+		button.disabled = false;
 	}
 }
 

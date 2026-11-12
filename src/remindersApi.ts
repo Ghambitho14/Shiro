@@ -1,23 +1,22 @@
 /**
- * Recordatorios (`/api/reminders*`) y los avisos que la web recoge cuando vence uno (`/api/notifications`).
+ * Recordatorios (`/api/reminders*`), tareas programadas (`/api/cron*`) y los avisos que la web recoge
+ * cuando vence un recordatorio o termina una tarea (`/api/notifications`).
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { startHeartbeat, setNotificationCallback } from "./core/reminders/notifications.js";
+import { startHeartbeat, setNotificationCallback, pushWebNotice, takeWebNotices } from "./core/reminders/notifications.js";
 import { readBody, sendJson } from "./http.js";
-
-const pendingNotifications: Array<{ id: string; title: string; description?: string; datetime: string; createdAt: string }> = [];
 
 /** Empieza a revisar los recordatorios; los que vencen quedan para /api/notifications. */
 export function startReminderNotifications(): void {
 	setNotificationCallback((reminder) => {
-		pendingNotifications.unshift({
+		pushWebNotice({
 			id: reminder.id,
 			title: reminder.title,
 			description: reminder.description,
 			datetime: reminder.datetime,
 			createdAt: reminder.createdAt,
+			kind: "reminder",
 		});
-		if (pendingNotifications.length > 50) pendingNotifications.length = 50;
 	});
 	startHeartbeat();
 }
@@ -95,8 +94,67 @@ export async function handleRemindersApi(req: IncomingMessage, res: ServerRespon
 		return true;
 	}
 
+	// ── Tareas programadas (se crean desde el chat; aquí se ven, pausan, borran o ejecutan ya) ──
+	if (method === "GET" && pathname === "/api/cron") {
+		const { listCronTasks, describeTaskSchedule, isCronTaskRunning } = await import("./core/scheduler/CronService.js");
+		const tasks = listCronTasks().map((t) => ({
+			id: t.id,
+			name: t.name,
+			action: t.action,
+			// Lo que hace, sin el comando entero: basta para reconocerla.
+			what: String(t.action === "agent" ? (t.payload.prompt ?? "") : t.action === "exec" ? (t.payload.command ?? "") : (t.payload.message ?? "")).slice(0, 300),
+			schedule: describeTaskSchedule(t),
+			deliver: t.deliver ?? "both",
+			enabled: t.enabled,
+			running: isCronTaskRunning(t.id),
+			nextRun: t.nextRun,
+			lastRun: t.lastRun,
+			lastError: t.lastError,
+		}));
+		sendJson(res, 200, { tasks });
+		return true;
+	}
+
+	if (method === "POST" && pathname.startsWith("/api/cron/")) {
+		const id = decodeURIComponent(pathname.slice("/api/cron/".length));
+		let action = "";
+		try {
+			action = String((JSON.parse((await readBody(req)) || "{}") as { action?: unknown }).action ?? "");
+		} catch {
+			sendJson(res, 400, { error: "Petición no válida." });
+			return true;
+		}
+		const cron = await import("./core/scheduler/CronService.js");
+		if (!cron.getCronTask(id)) {
+			sendJson(res, 404, { error: "No encontré esa tarea." });
+			return true;
+		}
+		if (action === "run") {
+			if (cron.isCronTaskRunning(id)) {
+				sendJson(res, 409, { error: "Esa tarea ya se está ejecutando." });
+				return true;
+			}
+			// Puede tardar minutos: se lanza y el resultado llega como aviso.
+			void cron.runCronTask(id).catch((err) => console.error("[Tareas]", err instanceof Error ? err.message : err));
+			sendJson(res, 202, { ok: true });
+			return true;
+		}
+		if (action === "pause" || action === "resume") {
+			cron.toggleCronTask(id, action === "resume");
+			sendJson(res, 200, { ok: true });
+			return true;
+		}
+		if (action === "delete") {
+			cron.deleteCronTask(id);
+			sendJson(res, 200, { ok: true });
+			return true;
+		}
+		sendJson(res, 400, { error: "Acción no válida." });
+		return true;
+	}
+
 	if (method === "GET" && pathname === "/api/notifications") {
-		const notifs = pendingNotifications.splice(0, 10);
+		const notifs = takeWebNotices(10);
 		sendJson(res, 200, { notifications: notifs });
 		return true;
 	}

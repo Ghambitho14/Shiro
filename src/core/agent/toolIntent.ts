@@ -21,7 +21,11 @@ const GROUPS: { tools: string[]; words: RegExp; raw?: RegExp }[] = [
 	},
 	{
 		tools: ["create_reminder", "list_reminders", "complete_reminder", "cron_create", "cron_list", "cron_delete", "cron_toggle"],
-		words: /\b(recuerd\w*|recordatorios?|avis\w*|alarmas?|programa\w*|cada (dia|semana|hora|mes|lunes|martes|miercoles|jueves|viernes|sabado|domingo)|manana|a las \d+|en \d+ (minutos?|horas?)|tareas?|pendientes?)\b/,
+		words: /\b(recuerd\w*|recordatorios?|avis\w*|alarmas?|programa\w*|cada (dia|semana|hora|mes|manana|tarde|noche|lunes|martes|miercoles|jueves|viernes|sabado|domingo)|todos los (dias|lunes|martes|miercoles|jueves|viernes|sabados|domingos)|diari\w*|semanal\w*|automatic\w*|manana|a las \d+|en \d+ (minutos?|horas?)|tareas?|pendientes?)\b/,
+	},
+	{
+		tools: ["email", "calendar"],
+		words: /\b(correos?|e-?mails?|mails?|gmail|bandeja|mensajes? nuevos?|respond\w*|contest\w*|envi\w*|calendario|agenda\w*|eventos?|reunion\w*|citas?|cumpleanos|invita\w*|que tengo (hoy|manana|el|esta|la)|ocupad\w*|libre)\b/,
 	},
 	{ tools: ["get_weather"], words: /\b(clima|tiempo hace|temperatura|llueve|lluvia|llover|pronostico|calor|frio|grados)\b/ },
 	{

@@ -267,7 +267,7 @@ export class Speaker {
 		if (!clean) return;
 		const s = this.getSettings();
 		const item = { text: clean, settings: s };
-		if (s.engine === "server") {
+		if (s.engine !== "browser") {
 			item.audio = this.#fetchAudio(clean, s);
 			item.audio.catch(() => {}); // el error se trata al reproducir
 		}

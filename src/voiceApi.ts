@@ -1,11 +1,13 @@
 /**
  * Voz con un servidor compatible con OpenAI: transcribir (Whisper, `/api/voice/transcribe`) y leer en voz alta
- * (TTS, `/api/voice/speak`). También sirve las capturas de pantalla de pc_screenshot (`/api/screenshots/`).
+ * (TTS, `/api/voice/speak`), o la voz de Aku sin internet (`ttsEngine: "local"`, `core/voice/localTts.ts`; sus
+ * voces en `/api/voice/local*`). También sirve las capturas de pantalla de pc_screenshot (`/api/screenshots/`).
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getConfig } from "./config/config.js";
+import { installVoice, listLocalVoices, removeVoice, speakLocal } from "./core/voice/localTts.js";
 import { SCREENSHOT_DIR } from "./core/pc/pc.js";
 import { readBodyBuffer, readJson, safeDecode, send, sendJson } from "./http.js";
 
@@ -52,9 +54,34 @@ export async function handleVoiceApi(req: IncomingMessage, res: ServerResponse, 
 		return true;
 	}
 
+	// === VOZ SIN INTERNET: lista, descargar y borrar voces ===
+	if (method === "GET" && pathname === "/api/voice/local") {
+		sendJson(res, 200, { voices: listLocalVoices(), selected: getConfig().ttsLocalVoice });
+		return true;
+	}
+	if (method === "POST" && (pathname === "/api/voice/local/install" || pathname === "/api/voice/local/remove")) {
+		let voice = "";
+		try {
+			const body = await readJson<{ voice?: unknown }>(req);
+			voice = typeof body.voice === "string" ? body.voice : "";
+		} catch {
+			sendJson(res, 400, { error: "Invalid JSON" });
+			return true;
+		}
+		try {
+			if (pathname.endsWith("/remove")) removeVoice(voice);
+			// La descarga sigue sola; la web mira cómo va con GET /api/voice/local.
+			else installVoice(voice).catch(() => {});
+			sendJson(res, 200, { voices: listLocalVoices() });
+		} catch (err) {
+			sendJson(res, 400, { error: err instanceof Error ? err.message : String(err) });
+		}
+		return true;
+	}
+
 	if (method === "POST" && pathname === "/api/voice/speak") {
 		const cfg = getConfig();
-		if (!cfg.ttsBaseUrl) {
+		if (cfg.ttsEngine !== "local" && !cfg.ttsBaseUrl) {
 			sendJson(res, 400, { error: "Configura el servidor de voz (TTS) en Ajustes → Voz." });
 			return true;
 		}
@@ -73,6 +100,18 @@ export async function handleVoiceApi(req: IncomingMessage, res: ServerResponse, 
 		}
 		if (!text) {
 			sendJson(res, 400, { error: "Texto vacío" });
+			return true;
+		}
+		if (cfg.ttsEngine === "local") {
+			try {
+				// La voz de un agente vale si es una de las de Aku ya descargada; si no, la de Ajustes → Voz.
+				const local = listLocalVoices().some((v) => v.id === voiceName && v.installed) ? voiceName : cfg.ttsLocalVoice;
+				const wav = await speakLocal(text, local, speed);
+				res.writeHead(200, { "Content-Type": "audio/wav", "Cache-Control": "no-store" });
+				res.end(wav);
+			} catch (err) {
+				sendJson(res, 502, { error: err instanceof Error ? err.message : String(err) });
+			}
 			return true;
 		}
 		try {

@@ -302,6 +302,16 @@
 							</div>
 						</div>
 						<div class="set-group">
+							<div class="set-row">
+								<div class="label"><strong>Versión de Aku</strong><span id="update-status">…</span></div>
+								<div class="update-actions">
+									<button class="btn sm" id="update-check">Buscar actualizaciones</button>
+									<button class="btn sm primary" id="update-install" hidden>Actualizar</button>
+								</div>
+							</div>
+							<p class="set-desc" id="update-notes" hidden></p>
+						</div>
+						<div class="set-group">
 							<h3>Atajos de teclado</h3>
 							<p class="set-desc">Ctrl+Mayús+O nuevo chat · Ctrl+K buscar chats · Ctrl+Mayús+Espacio modo voz · Esc detener la respuesta · / ir al cuadro de texto · Escribir / al empezar un mensaje muestra los comandos y las habilidades</p>
 						</div>
@@ -373,8 +383,13 @@
 								<div class="label"><strong>Motor de voz</strong><span>El navegador usa las voces de Windows (Edge trae voces "naturales" muy buenas).</span></div>
 								<select class="select" id="set-tts-engine" style="max-width: 220px">
 									<option value="browser">Navegador</option>
+									<option value="local">Aku (sin internet)</option>
 									<option value="server">Servidor TTS</option>
 								</select>
+							</div>
+							<div id="tts-local-fields" hidden>
+								<div class="local-voices" id="local-voices"></div>
+								<small class="muted">Cada voz se descarga una vez (de las versiones oficiales de sherpa-onnx en GitHub) y después habla sin internet, con el procesador.</small>
 							</div>
 							<div id="tts-browser-fields">
 								<div class="grid-2">
@@ -594,6 +609,31 @@
 							<div class="ext-list" id="tg-chats" style="margin-top: 12px"></div>
 						</div>
 						<div class="set-group">
+							<h3>Correo y calendario (Google)</h3>
+							<p class="set-desc">Aku lee y busca tus correos de Gmail, prepara borradores y respuestas, mira tu Google Calendar y crea eventos. <b>Enviar un correo o crear un evento siempre te pide permiso.</b> Se usa una credencial tuya de Google Cloud (Aku no tiene una propia) y el permiso queda solo en este equipo.</p>
+							<div id="g-status" class="notice">Consultando…</div>
+							<details class="g-guide" id="g-guide">
+								<summary>Cómo crear tu credencial de Google (una vez, unos 10 minutos)</summary>
+								<ol>
+									<li>Entra a <a href="https://console.cloud.google.com/projectcreate" target="_blank" rel="noopener">console.cloud.google.com</a> con tu cuenta de Google y crea un proyecto (por ejemplo «Aku»).</li>
+									<li>Activa dos APIs: <a href="https://console.cloud.google.com/apis/library/gmail.googleapis.com" target="_blank" rel="noopener">Gmail API</a> y <a href="https://console.cloud.google.com/apis/library/calendar-json.googleapis.com" target="_blank" rel="noopener">Google Calendar API</a> (botón «Habilitar» en cada una).</li>
+									<li>En <a href="https://console.cloud.google.com/auth/overview" target="_blank" rel="noopener">Google Auth Platform</a> pulsa «Comenzar»: nombre de la app «Aku», tu correo, público <b>Externo</b>.</li>
+									<li>En «Público», añade tu propio correo como <b>usuario de prueba</b>.</li>
+									<li>En <a href="https://console.cloud.google.com/auth/clients" target="_blank" rel="noopener">Clientes</a> → «Crear cliente», tipo <b>App de escritorio</b>. Copia el <b>ID de cliente</b> y el <b>secreto</b> y pégalos aquí abajo.</li>
+									<li>Pulsa «Conectar», elige tu cuenta y acepta. Google avisará de que la app no está verificada: es normal, la app es tuya. Pulsa «Continuar».</li>
+								</ol>
+								<p class="set-desc">Mientras la app esté «en prueba», Google pide volver a conectar cada 7 días. Para evitarlo, en «Público» pulsa «Publicar app»: sigue siendo solo tuya.</p>
+							</details>
+							<div class="grid-2">
+								<label class="field"><span>ID de cliente</span><input class="input mono" id="g-client-id" autocomplete="off" placeholder="1234…apps.googleusercontent.com" /></label>
+								<label class="field"><span>Secreto de cliente</span><input class="input mono" id="g-client-secret" type="password" autocomplete="off" placeholder="GOCSPX-…" /><small id="g-secret-hint"></small></label>
+							</div>
+							<div class="actions-row">
+								<button class="btn primary" id="g-connect">Conectar</button>
+								<button class="btn danger" id="g-disconnect" hidden>Desconectar</button>
+							</div>
+						</div>
+						<div class="set-group">
 							<h3>Instalar como aplicación</h3>
 							<p class="set-desc">Para abrir Aku en su propia ventana usa <code>npm run app</code>. Con <code>npm run app -- --acceso-directo</code> se crea un icono en el escritorio. En Edge o Chrome también puedes usar el menú ⋯ → Aplicaciones → Instalar Aku.</p>
 						</div>
@@ -624,6 +664,9 @@
 				</form>
 				<p class="set-desc">También puedes pedírselo en el chat: "recuérdame mañana a las 9 pagar la luz".</p>
 				<div class="rem-list" id="rem-list"></div>
+				<h3 class="rem-section">Tareas programadas</h3>
+				<p class="set-desc">Aku hace algo solo y te manda el resultado por aquí o por Telegram. Pídelo en el chat: "cada mañana a las 8 resúmeme las noticias de IA por Telegram" o "los viernes a las 18:00 revisa este proyecto y dime qué quedó a medias".</p>
+				<div class="rem-list" id="cron-list"></div>
 			</div>
 		</dialog>
 

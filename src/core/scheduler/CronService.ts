@@ -1,26 +1,59 @@
+/**
+ * Tareas programadas (`data/cron-tasks.json`, siempre en este equipo).
+ *
+ * - Horario con `parseSchedule` (schedule.ts): intervalos o días y hora fija, con la hora del equipo.
+ * - Un solo reloj revisa cada 30 s qué toca (`nextRun`). Si Aku estaba apagado a esa hora,
+ *   al encenderse la tarea corre una vez (no todas las que se perdió) y sigue con la próxima.
+ * - Acciones: `agent` (Aku hace lo pedido con herramientas de solo lectura y manda el resultado),
+ *   `notify`/`reminder` (manda el mensaje tal cual) y `exec` (un comando aprobado al crearla).
+ *   Lo hace `runTask.ts`; el resultado llega por la web, Telegram o ambos (`deliver`).
+ */
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DATA_DIR } from "../../config/config.js";
+import { describeSchedule, nextRunAfter, parseSchedule } from "./schedule.js";
 
 const CRON_FILE = join(DATA_DIR, "cron-tasks.json");
+const TICK_MS = 30_000;
+
+export type CronAction = "agent" | "notify" | "reminder" | "exec";
+export type CronDelivery = "web" | "telegram" | "both";
+export const CRON_ACTIONS: CronAction[] = ["agent", "notify", "reminder", "exec"];
+export const CRON_DELIVERIES: CronDelivery[] = ["web", "telegram", "both"];
 
 export interface CronTask {
 	id: string;
 	name: string;
+	/** El horario tal como se escribió («lunes a viernes 9:30»). */
 	expression: string;
-	action: "notify" | "exec" | "reminder";
+	action: CronAction;
+	/** `prompt` (agent), `message` (notify/reminder), `command` (exec). */
 	payload: Record<string, unknown>;
+	/** Por dónde llega el resultado. Las tareas de antes no lo tienen: `both`. */
+	deliver?: CronDelivery;
+	/** Proyecto en el que trabaja la tarea `agent` (sus archivos se leen con la tool project). */
+	projectId?: string;
 	enabled: boolean;
 	lastRun?: string;
 	nextRun?: string;
+	/** Lo último que mandó (recortado) y el último error, para verlo en la web. */
+	lastResult?: string;
+	lastError?: string;
 	createdAt: string;
 }
+
+export type CronRunner = (task: CronTask) => Promise<{ result?: string; error?: string }>;
+
+let runner: CronRunner | null = null;
+let ticker: ReturnType<typeof setInterval> | null = null;
+/** Tareas en marcha: la misma no corre dos veces a la vez. */
+const running = new Set<string>();
 
 function loadTasks(): CronTask[] {
 	if (!existsSync(CRON_FILE)) return [];
 	try {
-		const data = readFileSync(CRON_FILE, "utf-8");
-		return JSON.parse(data) as CronTask[];
+		const data = JSON.parse(readFileSync(CRON_FILE, "utf-8")) as unknown;
+		return Array.isArray(data) ? (data as CronTask[]) : [];
 	} catch {
 		return [];
 	}
@@ -31,66 +64,61 @@ function saveTasks(tasks: CronTask[]): void {
 	writeFileSync(CRON_FILE, JSON.stringify(tasks, null, 2), "utf-8");
 }
 
-function parseCronExpression(expression: string): { interval: number; unit: string } {
-	const parts = expression.toLowerCase().split(" ");
-	if (parts.length !== 2) {
-		throw new Error("Formato inválido. Usa: '<numero> <minutos|horas|días>'");
-	}
-	
-	const value = parseInt(parts[0], 10);
-	const unit = parts[1];
-	
-	if (isNaN(value) || value <= 0) {
-		throw new Error("El número debe ser positivo");
-	}
-	
-	const multipliers: Record<string, number> = {
-		minuto: 60 * 1000,
-		minutos: 60 * 1000,
-		hora: 60 * 60 * 1000,
-		horas: 60 * 60 * 1000,
-		día: 24 * 60 * 60 * 1000,
-		dias: 24 * 60 * 60 * 1000,
-		day: 24 * 60 * 60 * 1000,
-		days: 24 * 60 * 60 * 1000,
-		hour: 60 * 60 * 1000,
-		hours: 60 * 60 * 1000,
-		minute: 60 * 1000,
-		minutes: 60 * 1000,
-	};
-	
-	if (!multipliers[unit]) {
-		throw new Error("Unidad inválida. Usa: minutos, horas, días");
-	}
-	
-	return { interval: value * multipliers[unit], unit };
+/** Cambia una tarea releyendo el archivo (otra parte pudo cambiar otras mientras tanto). */
+function updateTask(id: string, change: (t: CronTask) => void): CronTask | undefined {
+	const tasks = loadTasks();
+	const task = tasks.find((t) => t.id === id);
+	if (!task) return undefined;
+	change(task);
+	saveTasks(tasks);
+	return task;
 }
 
-export function createCronTask(
-	name: string,
-	expression: string,
-	action: "notify" | "exec" | "reminder",
-	payload: Record<string, unknown>,
-): CronTask {
-	const tasks = loadTasks();
-	const { interval } = parseCronExpression(expression);
-	
+/** Próxima vez que toca, o undefined si el horario ya no se entiende. */
+function computeNext(task: CronTask, from: Date): string | undefined {
+	try {
+		return nextRunAfter(parseSchedule(task.expression), from).toISOString();
+	} catch {
+		return undefined;
+	}
+}
+
+export type NewCronTask = {
+	name: string;
+	expression: string;
+	action: CronAction;
+	payload: Record<string, unknown>;
+	deliver?: CronDelivery;
+	projectId?: string;
+};
+
+export function createCronTask(input: NewCronTask): CronTask {
+	const name = input.name.trim();
+	if (!name) throw new Error("Falta el nombre de la tarea.");
+	const schedule = parseSchedule(input.expression); // lanza si no se entiende
+	if (input.action === "agent" && !String(input.payload.prompt ?? "").trim()) {
+		throw new Error("Falta qué tiene que hacer Aku (prompt).");
+	}
+	if (input.action === "exec" && !String(input.payload.command ?? "").trim()) throw new Error("Falta el comando.");
+	if ((input.action === "notify" || input.action === "reminder") && !String(input.payload.message ?? "").trim()) {
+		input.payload.message = name;
+	}
+	const now = new Date();
 	const task: CronTask = {
-		id: `cron_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-		name,
-		expression,
-		action,
-		payload,
+		id: `cron_${now.getTime()}_${Math.random().toString(36).slice(2, 8)}`,
+		name: name.slice(0, 120),
+		expression: input.expression.trim(),
+		action: input.action,
+		payload: input.payload,
+		deliver: input.deliver ?? "both",
+		...(input.projectId ? { projectId: input.projectId } : {}),
 		enabled: true,
-		createdAt: new Date().toISOString(),
-		nextRun: new Date(Date.now() + interval).toISOString(),
+		createdAt: now.toISOString(),
+		nextRun: nextRunAfter(schedule, now).toISOString(),
 	};
-	
+	const tasks = loadTasks();
 	tasks.push(task);
 	saveTasks(tasks);
-	
-	scheduleTask(task);
-	
 	return task;
 }
 
@@ -98,117 +126,107 @@ export function listCronTasks(): CronTask[] {
 	return loadTasks();
 }
 
+export function getCronTask(id: string): CronTask | undefined {
+	return loadTasks().find((t) => t.id === id);
+}
+
+/** El horario en palabras, o el texto tal cual si ya no se entiende. */
+export function describeTaskSchedule(task: CronTask): string {
+	try {
+		return describeSchedule(parseSchedule(task.expression));
+	} catch {
+		return task.expression;
+	}
+}
+
 export function deleteCronTask(id: string): boolean {
 	const tasks = loadTasks();
-	const index = tasks.findIndex(t => t.id === id);
-	
+	const index = tasks.findIndex((t) => t.id === id);
 	if (index === -1) return false;
-	const existing = scheduledTimeouts.get(id);
-	if (existing) {
-		clearInterval(existing);
-		scheduledTimeouts.delete(id);
-	}
-	
 	tasks.splice(index, 1);
 	saveTasks(tasks);
-	
 	return true;
 }
 
 export function toggleCronTask(id: string, enabled: boolean): CronTask | undefined {
+	return updateTask(id, (t) => {
+		t.enabled = enabled;
+		// Al reanudar, desde ahora: no corre de golpe por lo que tocaba mientras estaba en pausa.
+		if (enabled) t.nextRun = computeNext(t, new Date());
+	});
+}
+
+/** Ejecuta la tarea ya (botón «Ejecutar ahora» o el reloj). No cambia `nextRun`. */
+export async function runCronTask(id: string): Promise<CronTask> {
+	const task = getCronTask(id);
+	if (!task) throw new Error("No encontré esa tarea.");
+	if (!runner) throw new Error("Las tareas programadas no están listas todavía.");
+	if (running.has(id)) throw new Error("Esa tarea ya se está ejecutando.");
+	running.add(id);
+	try {
+		updateTask(id, (t) => {
+			t.lastRun = new Date().toISOString();
+		});
+		let outcome: { result?: string; error?: string };
+		try {
+			outcome = await runner(task);
+		} catch (err) {
+			outcome = { error: err instanceof Error ? err.message : String(err) };
+		}
+		const saved = updateTask(id, (t) => {
+			t.lastResult = outcome.result ? outcome.result.slice(0, 500) : t.lastResult;
+			if (outcome.error) t.lastError = outcome.error.slice(0, 500);
+			else delete t.lastError;
+		});
+		if (outcome.error) console.error(`[Tareas] «${task.name}»: ${outcome.error}`);
+		return saved ?? task;
+	} finally {
+		running.delete(id);
+	}
+}
+
+export function isCronTaskRunning(id: string): boolean {
+	return running.has(id);
+}
+
+/** Una vuelta del reloj: corre lo que ya tocaba (una vez) y agenda la próxima. Devuelve los ids lanzados. */
+export function runDueTasks(now = new Date()): string[] {
 	const tasks = loadTasks();
-	const task = tasks.find(t => t.id === id);
-	
-	if (!task) return undefined;
-	
-	task.enabled = enabled;
-	saveTasks(tasks);
-	
-	if (enabled) {
-		scheduleTask(task);
-	} else {
-		const existing = scheduledTimeouts.get(id);
-		if (existing) {
-			clearInterval(existing);
-			scheduledTimeouts.delete(id);
-		}
-	}
-	
-	return task;
-}
-
-const scheduledTimeouts = new Map<string, NodeJS.Timeout>();
-
-function scheduleTask(task: CronTask): void {
-	if (!task.enabled) return;
-	
-	const existing = scheduledTimeouts.get(task.id);
-	if (existing) {
-		clearInterval(existing);
-	}
-	
-	const { interval } = parseCronExpression(task.expression);
-	
-	const timeout = setInterval(async () => {
-		// Revalidar estado en disco para evitar que tareas desactivadas/borradas sigan ejecutándose.
-		const latest = loadTasks().find(t => t.id === task.id);
-		if (!latest || !latest.enabled) {
-			const current = scheduledTimeouts.get(task.id);
-			if (current) {
-				clearInterval(current);
-				scheduledTimeouts.delete(task.id);
+	const due: string[] = [];
+	let changed = false;
+	for (const t of tasks) {
+		if (!t.enabled) continue;
+		if (!t.nextRun) {
+			// Tareas de antes o con un horario que se volvió a entender: se agendan sin correr.
+			const next = computeNext(t, now);
+			if (next) {
+				t.nextRun = next;
+				changed = true;
 			}
-			return;
+			continue;
 		}
-		task.lastRun = new Date().toISOString();
-		task.nextRun = new Date(Date.now() + interval).toISOString();
-		saveTasks(loadTasks().map(t => t.id === task.id ? task : t));
-		
-		await executeTask(task);
-	}, interval);
-	
-	scheduledTimeouts.set(task.id, timeout);
+		if (new Date(t.nextRun).getTime() > now.getTime() || running.has(t.id)) continue;
+		t.nextRun = computeNext(t, now);
+		changed = true;
+		due.push(t.id);
+	}
+	if (changed) saveTasks(tasks);
+	for (const id of due) void runCronTask(id).catch((err) => console.error(`[Tareas] ${err instanceof Error ? err.message : err}`));
+	return due;
 }
 
-async function executeTask(task: CronTask): Promise<void> {
-	console.log(`[Cron] Ejecutando: ${task.name} (${task.action})`);
-	
-	switch (task.action) {
-		case "exec":
-			if (task.payload.command) {
-				const { exec } = await import("node:child_process");
-				exec(task.payload.command as string, (error, stdout, stderr) => {
-					if (error) {
-						console.error(`[Cron] Error en ${task.name}:`, error.message);
-					} else {
-						console.log(`[Cron] Output de ${task.name}:`, stdout.slice(0, 200));
-					}
-				});
-			}
-			break;
-			
-		case "reminder":
-		case "notify":
-			console.log(`[Cron] Notificación: ${task.payload.message || task.name}`);
-			break;
-	}
-}
-
-export function initCronScheduler(): void {
-	const tasks = loadTasks();
-	console.log(`[Cron] Inicializando ${tasks.length} tareas programadas`);
-	
-	for (const task of tasks) {
-		if (task.enabled) {
-			scheduleTask(task);
-		}
-	}
+/** Arranca el reloj. `run` es quien hace cada tarea (runTask.ts). */
+export function initCronScheduler(run: CronRunner): void {
+	runner = run;
+	if (ticker) return;
+	const count = loadTasks().filter((t) => t.enabled).length;
+	if (count) console.log(`  [Tareas] ${count} tarea(s) programada(s) activa(s).`);
+	runDueTasks();
+	ticker = setInterval(() => runDueTasks(), TICK_MS);
+	ticker.unref?.();
 }
 
 export function stopCronScheduler(): void {
-	for (const timeout of scheduledTimeouts.values()) {
-		clearInterval(timeout);
-	}
-	scheduledTimeouts.clear();
-	console.log("[Cron] Scheduler detenido");
+	if (ticker) clearInterval(ticker);
+	ticker = null;
 }

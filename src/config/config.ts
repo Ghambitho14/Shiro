@@ -185,12 +185,14 @@ const configSchema = z.object({
 	 * Voz. "browser" usa el reconocimiento y la voz del navegador (sin instalar nada).
 	 * "server" usa un servidor compatible con OpenAI: Whisper (/audio/transcriptions)
 	 * y TTS (/audio/speech). Sirven OpenAI, Groq, speaches, Kokoro-FastAPI, LocalAI…
+	 * ttsEngine "local": la voz de Aku sin internet (sherpa-onnx, src/core/voice/), con la voz ttsLocalVoice.
 	 */
 	sttEngine: z.enum(["browser", "server"]).default("browser").catch("browser"),
 	sttBaseUrl: urlSchema.optional().catch(undefined),
 	sttModel: z.string().trim().min(1).default("whisper-1").catch("whisper-1"),
 	sttApiKey: optionalString,
-	ttsEngine: z.enum(["browser", "server"]).default("browser").catch("browser"),
+	ttsEngine: z.enum(["browser", "server", "local"]).default("browser").catch("browser"),
+	ttsLocalVoice: z.string().trim().min(1).max(60).default("piper-claude").catch("piper-claude"),
 	ttsBaseUrl: urlSchema.optional().catch(undefined),
 	ttsModel: z.string().trim().min(1).default("tts-1").catch("tts-1"),
 	ttsVoice: z.string().trim().min(1).default("alloy").catch("alloy"),
@@ -228,6 +230,13 @@ const configSchema = z.object({
 		.array(z.object({ id: z.string().regex(/^-?\d+$/), name: z.string().trim().max(100).catch("") }))
 		.default([])
 		.catch([]),
+
+	/**
+	 * Google (correo y calendario): la credencial OAuth «App de escritorio» que el usuario crea en su Google Cloud.
+	 * El secreto nunca se envía al navegador; los permisos concedidos quedan en data/google-token.json.
+	 */
+	googleClientId: optionalString,
+	googleClientSecret: optionalString,
 });
 
 export type AppConfig = z.infer<typeof configSchema>;

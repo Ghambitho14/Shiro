@@ -18,6 +18,7 @@ import { estimateContext, runAgent } from "./core/agent/Agent.js";
 import type { ContextReport } from "./core/agent/contextUsage.js";
 import { parseChatMode, parsePermissionMode, type ChatMode, type PermissionMode } from "./core/agent/chatMode.js";
 import { CODE_TOOLS, getAllToolNames, HACKING_TOOLS, planToolsFor } from "./core/tools/ToolRegistry.js";
+import { deleteEngagement } from "./core/pentest/engagement.js";
 import { matchSkillCommand, parseCommand } from "./commands.js";
 import { deleteRoom, getRoom, isValidSessionId, saveRoom } from "./core/rooms/roomStore.js";
 import { currentAgents, planRoomTurn, prepareAgentTurn, publicAgent, publicRoom, type AgentTurn, type RoomPlan } from "./core/rooms/roomTurn.js";
@@ -293,6 +294,7 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 			sessionApprovals.delete(sessionId);
 			forgetChat(sessionId);
 			deleteRoom(sessionId);
+			deleteEngagement(sessionId);
 			sendJson(res, 200, { ok: true });
 			return true;
 		}

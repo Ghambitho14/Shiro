@@ -37,6 +37,7 @@ function buildSettings() {
 			ttsBaseUrl: c.ttsBaseUrl ?? "",
 			ttsModel: c.ttsModel,
 			ttsVoice: c.ttsVoice,
+			ttsLocalVoice: c.ttsLocalVoice,
 			hasTtsApiKey: Boolean(c.ttsApiKey),
 		},
 	};
@@ -51,7 +52,7 @@ function applySettings(d: Record<string, unknown>): void {
 	const copy = (keys: string[]) => {
 		for (const k of keys) if (k in d && d[k] !== undefined) patch[k] = d[k];
 	};
-	copy(["autonomousMode", "approvalMode", "pcControl", "vision", "sttEngine", "sttModel", "ttsEngine", "ttsModel", "ttsVoice"]);
+	copy(["autonomousMode", "approvalMode", "pcControl", "vision", "sttEngine", "sttModel", "ttsEngine", "ttsModel", "ttsVoice", "ttsLocalVoice"]);
 	for (const k of ["sttBaseUrl", "ttsBaseUrl"]) {
 		if (typeof d[k] === "string") patch[k] = (d[k] as string).trim() || undefined;
 	}

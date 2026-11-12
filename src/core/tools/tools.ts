@@ -30,6 +30,8 @@ import { executeProject } from "./modules/project.js";
 import { executeClaudeCode } from "./modules/claudeCode.js";
 import { executeDelegate } from "./modules/delegate.js";
 import { executeTodo } from "./modules/todo.js";
+import { executePentest } from "./modules/pentest.js";
+import { executeCalendar, executeEmail } from "./modules/google.js";
 import { isWithinRoot } from "./paths.js";
 import { gitWorkDir } from "./gitDir.js";
 import { currentProject } from "../projects/projects.js";
@@ -62,6 +64,9 @@ registerToolExecutor("project", executeProject);
 registerToolExecutor("claude_code", executeClaudeCode);
 registerToolExecutor("delegate", executeDelegate);
 registerToolExecutor("todo", executeTodo);
+registerToolExecutor("pentest", executePentest);
+registerToolExecutor("email", executeEmail);
+registerToolExecutor("calendar", executeCalendar);
 
 /** Raíz de read_file/write_file/list_dir: data/workspace, o la carpeta "Shiro" de la bóveda con Obsidian. */
 export function getWorkspaceDir(): string {
@@ -501,47 +506,48 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 				return { ok: true, content: output };
 			}
 			case "cron_create": {
-				const { createCronTask } = await import("../scheduler/CronService.js");
-				const name = String(args_.name ?? "").trim();
-				const expression = String(args_.expression ?? "").trim();
-				const action = String(args_.action ?? "notify") as "notify" | "exec" | "reminder";
-				const message = args_.message ? String(args_.message) : undefined;
-				const command = args_.command ? String(args_.command) : undefined;
-				
-				if (!name) return { ok: false, error: "El nombre es requerido" };
-				if (!expression) return { ok: false, error: "La expresión es requerida" };
-				
+				const { createCronTask, describeTaskSchedule } = await import("../scheduler/CronService.js");
+				const { currentProject } = await import("../projects/projects.js");
+				const action = String(args_.action ?? "notify") as "agent" | "notify" | "reminder" | "exec";
+				const deliver = args_.deliver ? (String(args_.deliver) as "both" | "web" | "telegram") : undefined;
 				const payload: Record<string, unknown> = {};
-				if (message) payload.message = message;
-				if (command) payload.command = command;
-				
+				if (args_.prompt) payload.prompt = String(args_.prompt).trim();
+				if (args_.message) payload.message = String(args_.message).trim();
+				if (args_.command) payload.command = String(args_.command).trim();
+				// Una tarea de Aku creada en el chat de un proyecto trabaja en ese proyecto.
+				const projectId = action === "agent" ? currentProject()?.id : undefined;
 				try {
-					const task = createCronTask(name, expression, action, payload);
-					return { ok: true, content: `✅ Tarea programada creada: "${task.name}" (ID: ${task.id})\n   Frecuencia: ${task.expression}\n   Acción: ${task.action}` };
+					const task = createCronTask({
+						name: String(args_.name ?? ""),
+						expression: String(args_.expression ?? ""),
+						action,
+						payload,
+						deliver,
+						projectId,
+					});
+					const where = { both: "la web y Telegram", web: "la web", telegram: "Telegram" }[task.deliver ?? "both"];
+					const next = task.nextRun ? new Date(task.nextRun).toLocaleString("es") : "?";
+					return {
+						ok: true,
+						content: `Tarea programada creada: «${task.name}» (ID: ${task.id}), ${describeTaskSchedule(task)}. La próxima vez: ${next}. El resultado llega por ${where}.`,
+					};
 				} catch (err) {
-					return { ok: false, error: "Error al crear tarea: " + (err instanceof Error ? err.message : String(err)) };
+					return { ok: false, error: "No pude crear la tarea: " + (err instanceof Error ? err.message : String(err)) };
 				}
 			}
 			case "cron_list": {
-				const { listCronTasks } = await import("../scheduler/CronService.js");
+				const { listCronTasks, describeTaskSchedule } = await import("../scheduler/CronService.js");
 				const tasks = listCronTasks();
-				
-				if (tasks.length === 0) {
-					return { ok: true, content: "No hay tareas programadas." };
-				}
-				
-				let output = "📅 Tareas Programadas:\n\n";
+				if (tasks.length === 0) return { ok: true, content: "No hay tareas programadas." };
+				const when = (iso?: string) => (iso ? new Date(iso).toLocaleString("es") : "nunca");
+				let output = "Tareas programadas:\n\n";
 				for (const t of tasks) {
-					const status = t.enabled ? "✅" : "⏸️";
-					const lastRun = t.lastRun ? new Date(t.lastRun).toLocaleString() : "nunca";
-					output += `${status} ${t.name}\n`;
-					output += `   📋 ID: ${t.id}\n`;
-					output += `   ⏰ Frecuencia: ${t.expression}\n`;
-					output += `   🔧 Acción: ${t.action}\n`;
-					output += `   🕐 Último: ${lastRun}\n\n`;
+					output += `${t.enabled ? "✅" : "⏸️"} ${t.name} (ID: ${t.id})\n`;
+					output += `   Horario: ${describeTaskSchedule(t)} · Acción: ${t.action} · Llega por: ${t.deliver ?? "both"}\n`;
+					if (t.action === "agent") output += `   Qué hace: ${String(t.payload.prompt ?? "").slice(0, 200)}\n`;
+					output += `   Próxima: ${t.enabled ? when(t.nextRun) : "en pausa"} · Última: ${when(t.lastRun)}${t.lastError ? ` (error: ${t.lastError})` : ""}\n\n`;
 				}
-				
-				return { ok: true, content: output };
+				return { ok: true, content: output.trimEnd() };
 			}
 			case "cron_delete": {
 				const { deleteCronTask } = await import("../scheduler/CronService.js");

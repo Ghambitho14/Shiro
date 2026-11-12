@@ -121,6 +121,28 @@ async function send(token: string, chatId: number | string, text: string): Promi
 	}
 }
 
+/**
+ * Manda un aviso (tareas programadas) a todos los chats autorizados. Devuelve a cuántos llegó;
+ * lanza un error en español si Telegram no está conectado o no hay chats autorizados.
+ */
+export async function sendTelegramNotice(text: string): Promise<number> {
+	const c = getConfig();
+	if (!c.telegramEnabled || !c.telegramToken) throw new Error("Telegram no está conectado (Ajustes → Conexiones).");
+	if (!c.telegramChats.length) throw new Error("No hay chats de Telegram autorizados (Ajustes → Conexiones).");
+	let sent = 0;
+	let lastError = "";
+	for (const chat of c.telegramChats) {
+		try {
+			await send(c.telegramToken, chat.id, text);
+			sent++;
+		} catch (err) {
+			lastError = explain(err);
+		}
+	}
+	if (!sent) throw new Error(`No pude mandarlo por Telegram: ${lastError}`);
+	return sent;
+}
+
 /** "Escribiendo…" en Telegram mientras Shiro trabaja (dura ~5 s, así que se repite). */
 function keepTyping(token: string, chatId: number): () => void {
 	const tick = () => void tg(token, "sendChatAction", { chat_id: chatId, action: "typing" }).catch(() => {});

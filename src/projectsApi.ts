@@ -23,7 +23,7 @@ import {
 	type Project,
 } from "./core/projects/projects.js";
 import { canPickFolder, pickFolder } from "./core/pc/pickFolder.js";
-import { undoChange } from "./core/projects/undoStore.js";
+import { describeChanges, undoChange, undoChanges } from "./core/projects/undoStore.js";
 
 type Helpers = {
 	readJson: <T>(req: IncomingMessage) => Promise<T>;
@@ -101,6 +101,18 @@ export async function handleProjectsApi(req: IncomingMessage, res: ServerRespons
 		const d = await body();
 		try {
 			return reply(200, undoChange(typeof d?.id === "string" ? d.id : "", d?.force === true));
+		} catch (err) {
+			return fail(500, err);
+		}
+	}
+
+	// Tarjeta «Cambios» de una respuesta: qué cambió en cada archivo, y deshacerlo todo o por archivo.
+	if ((pathname === "/api/projects/changes" || pathname === "/api/projects/undo-many") && method === "POST") {
+		const d = await body();
+		const ids = Array.isArray(d?.ids) ? d.ids.filter((x: unknown): x is string => typeof x === "string").slice(0, 200) : [];
+		try {
+			if (pathname === "/api/projects/changes") return reply(200, { changes: describeChanges(ids) });
+			return reply(200, undoChanges(ids, d?.force === true));
 		} catch (err) {
 			return fail(500, err);
 		}

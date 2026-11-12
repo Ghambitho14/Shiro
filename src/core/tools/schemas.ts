@@ -61,11 +61,13 @@ export const execSchema = z.object({
 });
 
 export const cronCreateSchema = z.object({
-	name: z.string().min(1, "nombre requerido"),
-	expression: z.string().min(1, "expresión requerida"),
-	action: z.enum(["notify", "exec", "reminder"]),
-	message: z.string().optional(),
-	command: z.string().optional(),
+	name: z.string().min(1, "nombre requerido").max(120, "nombre demasiado largo"),
+	expression: z.string().min(1, "horario requerido").max(100, "horario demasiado largo"),
+	action: z.enum(["agent", "notify", "reminder", "exec"]),
+	prompt: z.string().max(4000, "instrucción demasiado larga").optional(),
+	message: z.string().max(2000, "mensaje demasiado largo").optional(),
+	command: z.string().max(1000, "comando demasiado largo").optional(),
+	deliver: z.enum(["both", "web", "telegram"]).optional(),
 });
 
 export const cronListSchema = z.object({});
@@ -226,7 +228,7 @@ export const delegateSchema = z.object({
 
 export const projectSchema = z
 	.object({
-		action: z.enum(["list", "find", "search", "read", "edit", "write"]).default("list"),
+		action: z.enum(["list", "find", "search", "semantic", "read", "edit", "write"]).default("list"),
 		path: z.string().trim().max(1000).optional(),
 		query: z.string().trim().max(300).optional(),
 		files: z.string().trim().max(200).optional(),
@@ -269,6 +271,61 @@ export const todoSchema = z.preprocess(
 	},
 	z.object({ items: z.array(todoItem).min(1, "indica al menos una tarea en items").max(20, "como mucho 20 tareas") }),
 );
+
+/** Una lista que el modelo a veces manda como texto separado por comas. */
+const stringList = z.preprocess(
+	(v) => (typeof v === "string" ? v.split(/[,;\n]+/).map((x) => x.trim()).filter(Boolean) : v),
+	z.array(z.string().trim().min(1).max(300)).max(50),
+);
+
+export const pentestSchema = z.object({
+	action: z.enum(["scope", "add_finding", "update_finding", "list", "report"]),
+	name: z.string().max(120).optional(),
+	targets: stringList.optional(),
+	out_of_scope: stringList.optional(),
+	limits: z.string().max(1000).optional(),
+	authorized_by: z.string().max(200).optional(),
+	id: z.coerce.number().int().positive().optional(),
+	title: z.string().max(200).optional(),
+	severity: z.preprocess((v) => (typeof v === "string" ? v.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/^critical$/, "critica").replace(/^(high)$/, "alta").replace(/^medium$/, "media").replace(/^low$/, "baja").replace(/^informativ[ao]$/, "info") : v), z.enum(["critica", "alta", "media", "baja", "info"])).optional(),
+	status: z.preprocess((v) => (typeof v === "string" ? v.toLowerCase().replace(/^confirmed$/, "confirmado").replace(/^(likely|probable)$/, "probable").replace(/^(discarded|false.positive)$/, "descartado") : v), z.enum(["confirmado", "probable", "descartado"])).optional(),
+	asset: z.string().max(500).optional(),
+	description: z.string().max(2000).optional(),
+	risk: z.string().max(2000).optional(),
+	evidence: z.string().max(6000).optional(),
+	cve: stringList.optional(),
+	fix: z.string().max(2000).optional(),
+	summary: z.string().max(3000).optional(),
+	checked_ok: z.string().max(3000).optional(),
+	not_checked: z.string().max(3000).optional(),
+});
+
+export const emailSchema = z.object({
+	action: z.enum(["search", "read", "draft", "send"]),
+	query: z.string().max(500).optional(),
+	max: z.coerce.number().int().min(1).max(25).optional(),
+	id: z.string().trim().regex(/^[\w-]{1,100}$/, "id de correo no válido").optional(),
+	offset: z.coerce.number().int().min(0).optional(),
+	to: z.string().max(1000).optional(),
+	cc: z.string().max(1000).optional(),
+	subject: z.string().max(500).optional(),
+	body: z.string().max(50_000).optional(),
+	reply_to_id: z.string().trim().regex(/^[\w-]{1,100}$/, "id de correo no válido").optional(),
+});
+
+export const calendarSchema = z.object({
+	action: z.enum(["list", "create"]),
+	from: z.string().max(40).optional(),
+	to: z.string().max(40).optional(),
+	query: z.string().max(300).optional(),
+	max: z.coerce.number().int().min(1).max(50).optional(),
+	title: z.string().max(300).optional(),
+	start: z.string().max(40).optional(),
+	end: z.string().max(40).optional(),
+	location: z.string().max(500).optional(),
+	description: z.string().max(5000).optional(),
+	attendees: stringList.optional(),
+});
 
 export const useSkillSchema = z.object({
 	name: z.string().trim().max(200).optional(),
@@ -317,4 +374,7 @@ export const toolSchemas: Record<string, z.ZodType<Record<string, unknown>>> = {
 	use_skill: useSkillSchema,
 	project: projectSchema,
 	todo: todoSchema as z.ZodType<Record<string, unknown>>,
+	pentest: pentestSchema as z.ZodType<Record<string, unknown>>,
+	email: emailSchema,
+	calendar: calendarSchema as z.ZodType<Record<string, unknown>>,
 };

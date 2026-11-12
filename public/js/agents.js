@@ -264,7 +264,7 @@ function editAgent(agent = null) {
 	const color = input(agentColor(a), { type: "color" });
 	color.className = "agent-color";
 	const grid3 = el("div", "grid-2");
-	grid3.append(field("Voz del navegador", browserVoice), field("Voz del servidor de voz (opcional)", serverVoice, "Si usas un servidor TTS (Ajustes → Voz)."));
+	grid3.append(field("Voz del navegador", browserVoice), field("Voz del servidor de voz (opcional)", serverVoice, "Si usas un servidor TTS o la voz de Aku sin internet (p. ej. kokoro-dora), en Ajustes → Voz."));
 	const grid4 = el("div", "grid-2");
 	grid4.append(field("Saludo al activarlo", greeting), field("Color", color));
 	form.append(text("h3", "", "Al activarlo se abre en"), mode, grid3, grid4);

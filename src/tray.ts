@@ -1,11 +1,12 @@
 /**
  * Ícono de Aku en la bandeja de Windows (junto al reloj), mientras Aku está encendido.
  * Clic: abre la ventana (o la trae al frente). Clic derecho: un menú oscuro con la cabecera de Aku y su
- * estado, «Abrir Aku», «Hablarle» (la cajita de voz), «Nuevo chat» y «Salir de Aku».
+ * estado, «Abrir Aku», «Hablarle» (la cajita de voz), «Nuevo chat», «Buscar actualizaciones» (o «Actualizar a vX» si
+ * `setTrayUpdate` apuntó una versión nueva: abre Ajustes → General) y «Salir de Aku».
  *
  * Lo dibuja un PowerShell oculto con System.Windows.Forms.NotifyIcon; el estilo del menú es C# (TRAY_CS),
  * que se compila una vez a una DLL en data/cache (como el ayudante nativo). Avisa de cada opción con una
- * línea en su salida (`open`, `talk`, `newchat`, `quit`). Revisa cada 2 s que Aku siga vivo: si se cierra
+ * línea en su salida (`open`, `talk`, `newchat`, `update`, `quit`). Revisa cada 2 s que Aku siga vivo: si se cierra
  * o falla, quita el ícono él solo. Los datos van por variables de entorno (`$env:SHIRO_A_*`), nunca en el script.
  */
 import { spawn } from "node:child_process";
@@ -185,11 +186,17 @@ $header.ImageScaling = [System.Windows.Forms.ToolStripItemImageScaling]::None
 Item ('Abrir ' + $name) 0xE8A7 'open' $text ''
 Item 'Hablarle' 0xE720 'talk' $text ''
 Item 'Nuevo chat' 0xE8F2 'newchat' $text ''
+Item 'Buscar actualizaciones' 0xE895 'update' $text ''
+$updateItem = $menu.Items[$menu.Items.Count - 1]
 [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
 Item ('Salir de ' + $name) 0xE7E8 'quit' ([AkuTray.Colors]::Danger) 'danger'
 
 $menu.add_Opening({
 	try { [AkuTray.Renderer]::Status = ([IO.File]::ReadAllText($env:SHIRO_A_STATUS)).Trim() } catch { [AkuTray.Renderer]::Status = 'Encendido' }
+	# Si hay una versión nueva, la opción lo dice.
+	$newVersion = ''
+	try { $newVersion = ([IO.File]::ReadAllText($env:SHIRO_A_UPDATE)).Trim() } catch { }
+	$updateItem.Text = $(if ($newVersion) { 'Actualizar a ' + $newVersion } else { 'Buscar actualizaciones' })
 	# El menú toma el ancho de la opción más larga: que quepa también la línea del estado de la cabecera.
 	$smallFont = New-Object System.Drawing.Font($menu.Font.FontFamily, ($menu.Font.Size - 1))
 	$need = [System.Windows.Forms.TextRenderer]::MeasureText([AkuTray.Renderer]::Status, $smallFont).Width + [int](64 * $scale)
@@ -221,7 +228,7 @@ function trayEnv(extra: Record<string, string>): NodeJS.ProcessEnv {
 	return env;
 }
 
-export type TrayEvent = "open" | "talk" | "newchat" | "quit";
+export type TrayEvent = "open" | "talk" | "newchat" | "update" | "quit";
 export type TrayHandlers = Record<TrayEvent, () => void>;
 
 /** Archivo con la segunda línea de la cabecera del menú ("Encendido · modelo"). */
@@ -233,6 +240,19 @@ export function setTrayStatus(text: string): void {
 		writeFileSync(statusFile(), text.slice(0, 60), "utf-8");
 	} catch {
 		// sin estado, el menú dice solo "Encendido"
+	}
+}
+
+/** Archivo con la versión nueva que anuncia el menú (vacío = Aku está al día). */
+const updateFile = () => join(DATA_DIR, "cache", "tray-update.txt");
+
+/** Apunta la versión nueva para el menú («Actualizar a vX»); "" la quita. */
+export function setTrayUpdate(version: string): void {
+	try {
+		mkdirSync(join(DATA_DIR, "cache"), { recursive: true });
+		writeFileSync(updateFile(), version.slice(0, 20), "utf-8");
+	} catch {
+		// sin el archivo, el menú dice «Buscar actualizaciones»
 	}
 }
 
@@ -261,7 +281,7 @@ export function startTray(handlers: TrayHandlers, name = "Aku"): void {
 		"powershell.exe",
 		["-NoProfile", "-NonInteractive", "-STA", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-EncodedCommand", Buffer.from(TRAY_PS, "utf16le").toString("base64")],
 		{
-			env: trayEnv({ icon, name, cs, dll, status: statusFile(), parent: String(process.pid) }),
+			env: trayEnv({ icon, name, cs, dll, status: statusFile(), update: updateFile(), parent: String(process.pid) }),
 			stdio: ["ignore", "pipe", "pipe"],
 			windowsHide: true,
 		},

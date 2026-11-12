@@ -147,7 +147,7 @@ export function buildToolGuide(tools: string[], o: ToolGuideOptions): string {
 	const lines: string[] = [];
 	if (has("project")) {
 		const change = o.planning ? "" : ", edit (cambiar un trozo), write (archivo nuevo)";
-		lines.push(`- Proyecto: project → find (archivos por nombre), search (palabras en una misma línea; con | separas alternativas), read (un tramo, con line y lines)${change}. Leer y buscar no pide permiso: úsala antes que la terminal.`);
+		lines.push(`- Proyecto: project → find (archivos por nombre), search (palabras en una misma línea; con | separas alternativas), semantic (por significado, cuando no sabes cómo se llama: «dónde se guarda la sesión»), read (un tramo, con line y lines)${change}. Leer y buscar no pide permiso: úsala antes que la terminal.`);
 	}
 	if (has("terminal") && !o.pcBlock) lines.push("- Comandos, pruebas, instalar: terminal (action=run); el usuario lo ve en vivo.");
 	if (has("git")) lines.push("- Historial y cambios de un repositorio: git (status, log y diff no piden permiso).");

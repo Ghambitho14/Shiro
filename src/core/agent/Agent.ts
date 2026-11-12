@@ -33,6 +33,7 @@ import { describeFolder, formatFolderInfo } from "../projects/folderInfo.js";
 import { createSelfCheck } from "./selfCheck.js";
 import { terminal } from "../terminal/terminal.js";
 import { claudeCodeLauncher } from "../claudeCode/claudeCode.js";
+import { googleConnected } from "../google/googleAuth.js";
 import { loadAgents } from "../agents/registry.js";
 import { runWithAgentContext, type AgentRunContext } from "./runContext.js";
 import type { ThinkingLevel } from "../../config/config.js";
@@ -254,6 +255,14 @@ async function prepareRun(goal: string, opts: AgentOptions, workspaceContext?: s
 	const canUseClaudeCode = Boolean(project?.folders.length) && claudeCodeLauncher() !== null;
 	if (!canUseClaudeCode && (effectiveTools ?? getAllToolNames()).includes("claude_code")) {
 		effectiveTools = (effectiveTools ?? getAllToolNames()).filter((t) => t !== "claude_code");
+	}
+	// Correo y calendario solo con una cuenta de Google conectada (Ajustes → Conexiones).
+	if (!googleConnected() && (effectiveTools ?? getAllToolNames()).some((t) => t === "email" || t === "calendar")) {
+		effectiveTools = (effectiveTools ?? getAllToolNames()).filter((t) => t !== "email" && t !== "calendar");
+	}
+	// El pentest guiado (alcance, hallazgos, informe) es solo del modo Hacking.
+	if (mode !== "hacking" && (effectiveTools ?? getAllToolNames()).includes("pentest")) {
+		effectiveTools = (effectiveTools ?? getAllToolNames()).filter((t) => t !== "pentest");
 	}
 	// Los ayudantes no crean otros ayudantes ni llevan la lista de tareas: eso es del jefe.
 	if (opts.subagent && (effectiveTools ?? getAllToolNames()).some((t) => t === "delegate" || t === "todo")) {

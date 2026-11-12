@@ -277,6 +277,8 @@ export async function runApp(argv: string[] = []): Promise<void> {
 		open: () => void showAppWindow(url),
 		talk: () => void openVoiceBox(url),
 		newchat: () => void newChatWindow(url),
+		// Ajustes → General, donde se busca la versión nueva y se actualiza (siempre en una ventana nueva, para que se vea).
+		update: () => openAppWindow(`${url.replace(/\/+$/, "")}/?actualizar=1`),
 		quit: quitServer,
 	});
 	console.log(
