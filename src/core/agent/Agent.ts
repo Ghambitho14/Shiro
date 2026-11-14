@@ -36,6 +36,7 @@ import { claudeCodeLauncher } from "../claudeCode/claudeCode.js";
 import { googleConnected } from "../google/googleAuth.js";
 import { loadAgents } from "../agents/registry.js";
 import { runWithAgentContext, type AgentRunContext } from "./runContext.js";
+import type { Asker } from "../tools/modules/ask.js";
 import type { ThinkingLevel } from "../../config/config.js";
 import { isPlanToolCall, type ChatMode, type PermissionMode } from "./chatMode.js";
 
@@ -50,7 +51,7 @@ export type UserProfileForAgent = {
 export type ToolEvent =
 	| { phase: "start"; id: string; name: string; label: string }
 	/** `undo`: id para deshacer el cambio de archivo que hizo este paso (botón «Deshacer» de la web). */
-	| { phase: "end"; id: string; name: string; ok: boolean; error?: string; image?: string; undo?: string };
+	| { phase: "end"; id: string; name: string; ok: boolean; error?: string; image?: string; undo?: string; drawing?: string };
 
 export type AgentOptions = {
 	llm: LLMClient;
@@ -83,6 +84,8 @@ export type AgentOptions = {
 	onToolEvent?: (e: ToolEvent) => void;
 	/** La lista de tareas cambió (tool `todo`): la web la pinta en el chat. */
 	onTodo?: (items: TodoItem[]) => void;
+	/** Quién contesta las preguntas de `ask_user` (la web en streaming); sin él, el modelo pregunta en su respuesta. */
+	asker?: Asker;
 	/** Cancela la respuesta (botón "Detener" de la web). */
 	signal?: AbortSignal;
 	/** El usuario habla por voz: respuestas breves y sin formato. */
@@ -264,9 +267,14 @@ async function prepareRun(goal: string, opts: AgentOptions, workspaceContext?: s
 	if (mode !== "hacking" && (effectiveTools ?? getAllToolNames()).includes("pentest")) {
 		effectiveTools = (effectiveTools ?? getAllToolNames()).filter((t) => t !== "pentest");
 	}
-	// Los ayudantes no crean otros ayudantes ni llevan la lista de tareas: eso es del jefe.
-	if (opts.subagent && (effectiveTools ?? getAllToolNames()).some((t) => t === "delegate" || t === "todo")) {
-		effectiveTools = (effectiveTools ?? getAllToolNames()).filter((t) => t !== "delegate" && t !== "todo");
+	// Los ayudantes no crean otros ayudantes, ni llevan la lista de tareas, ni le preguntan al usuario: eso es del jefe.
+	const bossOnly = ["delegate", "todo", "ask_user"];
+	if (opts.subagent && (effectiveTools ?? getAllToolNames()).some((t) => bossOnly.includes(t))) {
+		effectiveTools = (effectiveTools ?? getAllToolNames()).filter((t) => !bossOnly.includes(t));
+	}
+	// Por voz no hay tarjetas que pulsar ni dibujos que mirar.
+	if (opts.voice && (effectiveTools ?? getAllToolNames()).some((t) => t === "ask_user" || t === "draw")) {
+		effectiveTools = (effectiveTools ?? getAllToolNames()).filter((t) => t !== "ask_user" && t !== "draw");
 	}
 	// Modo ahorro: solo en Chat. Code, Hacking y Planear ya tienen listas completas para su tarea;
 	// quitarles herramientas por palabras clave o limitar sus pasos los dejaría cojos a mitad de trabajo.
@@ -325,6 +333,7 @@ async function prepareRun(goal: string, opts: AgentOptions, workspaceContext?: s
 		: undefined;
 	const toolGuide = trusted ? buildToolGuide(toolNames, { mode, planning, pcBlock: hasPcTools, pcControlOff: !getConfig().pcControl }) || undefined : undefined;
 
+	const team = loadAgents().agents.map((a) => ({ name: a.name, description: a.description || undefined }));
 	const { system, messages, sections } = buildContext({
 		goal,
 		agentName,
@@ -344,11 +353,10 @@ async function prepareRun(goal: string, opts: AgentOptions, workspaceContext?: s
 		room: opts.room,
 		chatSummary: opts.chatSummary,
 		subagent: opts.subagent,
-		// El jefe sabe a qué agentes de Ajustes → Agentes puede encargar tareas.
-		helpers:
-			!textOnly && (effectiveTools ?? getAllToolNames()).includes("delegate")
-				? loadAgents().agents.map((a) => ({ name: a.name, description: a.description || undefined }))
-				: undefined,
+		// Aku conoce siempre su equipo (los agentes de la Oficina), salvo donde no hay contexto privado (WhatsApp abierto);
+		// con delegate, además sabe que puede encargarles tareas.
+		team: workspaceContext?.trim() ? team : undefined,
+		helpers: !textOnly && (effectiveTools ?? getAllToolNames()).includes("delegate") ? team : undefined,
 		environment,
 		toolGuide,
 	});
@@ -489,8 +497,11 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 		// Si el paso cambió un archivo del proyecto, va el id de su copia para poder deshacerlo.
 		const undo = runContext.undo;
 		runContext.undo = undefined;
+		// Y si hizo un dibujo, su id para enseñarlo en el chat.
+		const drawing = runContext.drawing;
+		runContext.drawing = undefined;
 		onToolEvent?.(
-			r.ok ? { phase: "end", id, name, ok: true, image: r.image, ...(undo ? { undo } : {}) } : { phase: "end", id, name, ok: false, error: r.error },
+			r.ok ? { phase: "end", id, name, ok: true, image: r.image, ...(undo ? { undo } : {}), ...(drawing ? { drawing } : {}) } : { phase: "end", id, name, ok: false, error: r.error },
 		);
 		if (!r.ok) {
 			logger.warn(`❌ Tool ${name} falló: ${r.error}`);
@@ -552,6 +563,7 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 		launched: 0,
 		resultChars: prep.resultChars,
 		onTodo: opts.onTodo,
+		asker: opts.subagent ? undefined : opts.asker,
 	};
 	let content = "";
 	try {

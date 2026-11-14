@@ -12,6 +12,17 @@ let ui = null;
 let data = { agents: [], tools: [], defaultAgent: null, wakeWord: "Aku" };
 let providers = [];
 const openCards = new Set();
+/** Quien quiere enterarse cuando cambia la lista (la página Oficina). */
+const listeners = new Set();
+
+export function onAgentsChange(fn) {
+	listeners.add(fn);
+}
+
+/** Abre una sala con ese agente. */
+export function openAgentRoom(id) {
+	ui?.openRoom(id);
+}
 
 function el(tag, className = "", html = "") {
 	const e = document.createElement(tag);
@@ -45,7 +56,7 @@ export function agentAvatar(a, className = "agent-dot") {
 	return dot;
 }
 
-function modelLabel(a) {
+export function modelLabel(a) {
 	if (!a.model && !a.provider) return "Modelo de Ajustes";
 	const p = providers.find((x) => x.value === a.provider);
 	return [p?.title, a.model].filter(Boolean).join(" · ");
@@ -160,7 +171,7 @@ function segmented(options, value) {
 }
 
 /** Formulario de crear o editar un agente (en su propia ventana). */
-function editAgent(agent = null) {
+export function editAgent(agent = null) {
 	const a = agent || { name: "", aliases: [], description: "", persona: "", personaMode: "add", tools: "inherit", mcp: true, mode: "text", voice: {}, greeting: "" };
 	const d = el("dialog", "agent-dialog");
 	const form = el("form");
@@ -340,6 +351,7 @@ export async function loadAgents() {
 		return [];
 	}
 	ui?.onChange(data.agents);
+	for (const fn of listeners) fn(data.agents, data.error || "");
 	if (!listBox) return data.agents;
 	listBox.innerHTML = "";
 	if (data.error) listBox.append(text("div", "ext-empty warn", data.error));

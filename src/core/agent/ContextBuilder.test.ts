@@ -46,6 +46,22 @@ test("buildContext: siempre explica los agentes de la app; la Oficina con delega
 	strictEqual(helper.includes("## Agentes de esta app"), false);
 });
 
+test("buildContext: Aku conoce siempre su equipo de la Oficina, también sin herramientas", () => {
+	const team = [{ name: "Viernes", description: "tareas del día" }, { name: "Lunes" }];
+	const withTeam = buildContext({ goal: "¿qué agentes tengo?", agentName: "A", tokenBudget: 4000, textOnly: true, team }).system;
+	strictEqual(withTeam.includes("Tu equipo"), true);
+	strictEqual(withTeam.includes("Viernes (tareas del día); Lunes"), true);
+	strictEqual(withTeam.includes("«Oficina»"), true);
+	const empty = buildContext({ goal: "hola", agentName: "A", tokenBudget: 4000, team: [] }).system;
+	strictEqual(empty.includes("todavía no tiene agentes"), true);
+	// Sin contexto privado (WhatsApp abierto) no se nombra a nadie.
+	const open = buildContext({ goal: "hola", agentName: "A", tokenBudget: 4000 }).system;
+	strictEqual(open.includes("Tu equipo"), false);
+	// Un ayudante no recibe la lista.
+	const helper = buildContext({ goal: "tarea", agentName: "A", tokenBudget: 4000, team, subagent: { boss: "Aku" } }).system;
+	strictEqual(helper.includes("Viernes"), false);
+});
+
 test("el system prompt no repite la conversación (va aparte, como mensajes)", () => {
 	const { system } = buildContext({ goal: "Continue", agentName: "A", tokenBudget: 4000 });
 	strictEqual(/Eventos recientes|Memoria a largo plazo/.test(system), false);

@@ -656,7 +656,7 @@ export const TOOLS: ToolDefinition[] = [
 		label: "Repartir tareas",
 		name: "delegate",
 		description:
-			"Crea ayudantes (subagentes) que hacen tareas a la vez, cada uno con tus mismas herramientas, y te devuelven su resultado; el usuario los ve trabajar en el panel «Oficina». Úsalo para trabajos grandes que se parten en tareas independientes (investigar varias cosas, comparar opciones, revisar varios archivos); lo simple hazlo tú. Cada task tiene que entenderse sola (el ayudante no ve la conversación): qué hacer, con qué datos y qué devolver. agent: nombre de un agente de Ajustes → Agentes; si no, name: nombre corto para un ayudante temporal. Máximo 4 tareas por llamada.",
+			"Crea ayudantes (subagentes) que hacen tareas a la vez, cada uno con tus mismas herramientas, y te devuelven su resultado; el usuario los ve trabajar en la página «Oficina». Úsalo para trabajos grandes que se parten en tareas independientes (investigar varias cosas, comparar opciones, revisar varios archivos); lo simple hazlo tú. Cada task tiene que entenderse sola (el ayudante no ve la conversación): qué hacer, con qué datos y qué devolver. agent: nombre de un agente de Ajustes → Agentes; si no, name: nombre corto para un ayudante temporal. Máximo 4 tareas por llamada.",
 		category: "utilidades",
 		parameters: {
 			type: "object",
@@ -739,6 +739,78 @@ export const TOOLS: ToolDefinition[] = [
 			},
 			required: ["items"],
 		},
+	},
+	{
+		label: "Preguntar al usuario",
+		name: "ask_user",
+		description:
+			"Hazle al usuario 1 a 3 preguntas con opciones para elegir (él también puede escribir otra cosa) y espera sus respuestas. Úsala cuando el pedido es amplio o ambiguo y la respuesta cambia según lo que quiera (para qué es, cuánto detalle, cuál de varias cosas, presupuesto, gustos), DESPUÉS de investigar un poco lo que puedas averiguar tú. Opciones cortas y concretas, la que recomiendas primero. No la uses para preguntas simples, para charlar ni para pedir permiso de una acción.",
+		category: "utilidades",
+		parameters: {
+			type: "object",
+			properties: {
+				questions: {
+					type: "array",
+					description: "De 1 a 3 preguntas",
+					items: {
+						type: "object",
+						properties: {
+							question: { type: "string", description: "La pregunta, clara y corta" },
+							options: { type: "array", items: { type: "string" }, description: "De 2 a 4 opciones cortas; la recomendada primero" },
+							multiple: { type: "boolean", description: "true si puede elegir varias" },
+						},
+						required: ["question", "options"],
+					},
+				},
+			},
+			required: ["questions"],
+		},
+		examples: [
+			'"quiero aprender a programar" → ask_user({questions: [{question: "¿Para qué lo quieres?", options: ["Hacer páginas web", "Apps de móvil", "Automatizar tareas", "Juegos"]}]})',
+		],
+	},
+	{
+		label: "Dibujar",
+		name: "draw",
+		description:
+			"Dibuja un diagrama o infografía (Excalidraw) que el usuario ve en el chat y queda guardado. Úsala cuando algo se entiende mejor visual: pasos de un proceso, cómo se conectan las partes, un plan, una comparación, lo que estás haciendo. Solo das cajas y flechas: las posiciones se calculan solas. Sin flechas sale una infografía de tarjetas. Textos cortos (máx. 2 líneas por caja), como mucho 12 cajas.",
+		category: "utilidades",
+		parameters: {
+			type: "object",
+			properties: {
+				title: { type: "string", description: "Título del dibujo" },
+				nodes: {
+					type: "array",
+					description: "Las cajas",
+					items: {
+						type: "object",
+						properties: {
+							id: { type: "string", description: "Id corto (a, b, paso1…)" },
+							text: { type: "string", description: "Texto de la caja, corto" },
+							color: { type: "string", enum: ["azul", "verde", "amarillo", "rojo", "morado", "naranja", "gris"] },
+							shape: { type: "string", enum: ["caja", "ovalo", "rombo"], description: "ovalo = inicio/fin, rombo = decisión" },
+						},
+						required: ["id", "text"],
+					},
+				},
+				edges: {
+					type: "array",
+					description: "Flechas entre cajas (por id); vacío = infografía",
+					items: {
+						type: "object",
+						properties: {
+							from: { type: "string" },
+							to: { type: "string" },
+							label: { type: "string", description: "Texto corto sobre la flecha (sí, no…)" },
+						},
+						required: ["from", "to"],
+					},
+				},
+				direction: { type: "string", enum: ["derecha", "abajo"], description: "Hacia dónde avanza el diagrama" },
+			},
+			required: ["title", "nodes"],
+		},
+		examples: ['"¿cómo funciona un pedido?" → draw({title: "Un pedido", nodes: [{id: "a", text: "Cliente pide"}, {id: "b", text: "Cocina prepara"}], edges: [{from: "a", to: "b"}]})'],
 	},
 	{
 		label: "Pentest guiado",
@@ -859,6 +931,9 @@ export const LITE_TOOLS = [
 	"claude_code",
 	// Ayudantes de la Oficina: sin ella, en Chat con un modelo local no sabía que podía repartir tareas.
 	"delegate",
+	// Preguntar antes de responder y dibujar diagramas: también con modelos locales.
+	"ask_user",
+	"draw",
 	// Correo y calendario: solo se ofrecen con una cuenta de Google conectada (Agent.ts).
 	"email",
 	"calendar",
@@ -891,6 +966,8 @@ export const PLAN_TOOLS = [
 	"sessions_history",
 	"delegate",
 	"todo",
+	// Preguntar sí; dibujar no (escribe un archivo).
+	"ask_user",
 ];
 
 /**
@@ -922,6 +999,8 @@ export const HACKING_TOOLS = [
 	"use_skill",
 	"delegate",
 	"todo",
+	"ask_user",
+	"draw",
 ];
 
 /**
@@ -997,6 +1076,12 @@ export function describeToolUse(name: string, args: Record<string, unknown> = {}
 		}
 		case "todo":
 			return "Actualizando la lista de tareas";
+		case "ask_user": {
+			const qs = Array.isArray(a.questions) ? (a.questions as { question?: unknown }[]) : [];
+			return qs.length === 1 ? `Preguntándote: ${short(qs[0]?.question, 80)}` : `Haciéndote ${qs.length || "unas"} preguntas`;
+		}
+		case "draw":
+			return `Dibujando: ${short(a.title)}`;
 		case "pc_open":
 			return `Abriendo ${short(a.target)}`;
 		case "pc_screenshot":

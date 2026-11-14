@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="es">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Dibujo · Aku</title>
+	<link rel="icon" href="/icons/icon-64.png">
+	<!-- Editor de los dibujos de la tool draw. Excalidraw se carga de internet (esm.sh) la primera vez;
+	     guarda solo en el servidor de Aku (PUT /api/drawings/<id>): escena + SVG para el chat. -->
+	<link rel="stylesheet" href="https://esm.sh/@excalidraw/excalidraw@0.18.0/dist/prod/index.css">
+	<style>
+		html, body, #app { height: 100%; margin: 0; }
+		body { font-family: system-ui, "Segoe UI", sans-serif; background: #fff; color: #1e1e1e; }
+		#estado {
+			position: fixed; right: 12px; bottom: 12px; z-index: 10;
+			background: rgba(30, 30, 30, .82); color: #fff; padding: 6px 12px; border-radius: 999px; font-size: 13px;
+			pointer-events: none; transition: opacity .3s;
+		}
+		#estado.oculto { opacity: 0; }
+		.aviso { display: grid; place-items: center; height: 100%; padding: 24px; text-align: center; font-size: 15px; line-height: 1.5; }
+	</style>
+</head>
+<body>
+	<div id="app"><div class="aviso">Abriendo el dibujo…</div></div>
+	<div id="estado" class="oculto"></div>
+	<script>
+		window.EXCALIDRAW_ASSET_PATH = "https://esm.sh/@excalidraw/excalidraw@0.18.0/dist/prod/";
+	</script>
+	<script type="module">
+		const app = document.getElementById("app");
+		const estado = document.getElementById("estado");
+		const id = new URLSearchParams(location.search).get("id") || "";
+		const token = (() => {
+			try {
+				return localStorage.getItem("shiroToken") || "";
+			} catch {
+				return "";
+			}
+		})();
+		const headers = (extra = {}) => (token ? { ...extra, Authorization: "Bearer " + token } : extra);
+		let ocultar = 0;
+		const decir = (texto, fijo = false) => {
+			estado.textContent = texto;
+			estado.classList.remove("oculto");
+			clearTimeout(ocultar);
+			if (!fijo) ocultar = setTimeout(() => estado.classList.add("oculto"), 1800);
+		};
+		const aviso = (texto) => {
+			app.innerHTML = "";
+			const d = document.createElement("div");
+			d.className = "aviso";
+			d.textContent = texto;
+			app.append(d);
+		};
+
+		try {
+			if (!/^[a-f0-9]{16}$/.test(id)) throw new Error("Falta el dibujo que hay que abrir.");
+			const r = await fetch(`/api/drawings/${id}`, { headers: headers() });
+			if (!r.ok) throw new Error(r.status === 404 ? "Ese dibujo ya no existe." : r.status === 401 ? "Abre el dibujo desde el chat de Aku (hace falta su contraseña)." : `Error ${r.status}`);
+			const data = await r.json();
+			document.title = `${data.title} · Aku`;
+
+			let React, ReactDOM, Ex;
+			try {
+				[React, ReactDOM, Ex] = await Promise.all([
+					import("https://esm.sh/react@19.0.0"),
+					import("https://esm.sh/react-dom@19.0.0/client"),
+					import("https://esm.sh/@excalidraw/excalidraw@0.18.0?deps=react@19.0.0,react-dom@19.0.0"),
+				]);
+			} catch {
+				throw new Error("No pude cargar Excalidraw: el editor necesita internet la primera vez. El dibujo sigue guardado y se ve en el chat.");
+			}
+
+			// Guarda un momento después del último cambio (y al cerrar la ventana si quedó algo).
+			let pendiente = null;
+			let ultimo = JSON.stringify(data.scene.elements);
+			let espera = 0;
+			const guardar = async () => {
+				if (!pendiente) return;
+				const { elements, appState, files } = pendiente;
+				pendiente = null;
+				const vivos = elements.filter((e) => !e.isDeleted);
+				const firma = JSON.stringify(vivos);
+				if (firma === ultimo) return;
+				decir("Guardando…", true);
+				try {
+					const svgEl = await Ex.exportToSvg({ elements: vivos, appState: { ...appState, exportBackground: true, viewBackgroundColor: appState.viewBackgroundColor || "#ffffff" }, files, exportPadding: 24 });
+					const scene = JSON.parse(Ex.serializeAsJSON(vivos, appState, files, "local"));
+					const resp = await fetch(`/api/drawings/${id}`, {
+						method: "PUT",
+						headers: headers({ "Content-Type": "application/json" }),
+						body: JSON.stringify({ scene, svg: svgEl.outerHTML }),
+					});
+					if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).error || `Error ${resp.status}`);
+					ultimo = firma;
+					decir("Guardado");
+					try {
+						new BroadcastChannel("aku-dibujos").postMessage({ saved: id });
+					} catch {}
+				} catch (err) {
+					decir(`No se guardó: ${err.message}`, true);
+				}
+			};
+			// Al abrir, Excalidraw retoca los elementos (medidas del texto, versiones): eso no es un cambio del usuario.
+			let tocado = false;
+			for (const ev of ["pointerdown", "keydown", "paste", "drop"]) addEventListener(ev, () => (tocado = true), true);
+			addEventListener("beforeunload", (e) => {
+				if (pendiente && JSON.stringify(pendiente.elements.filter((x) => !x.isDeleted)) !== ultimo) {
+					guardar();
+					e.preventDefault();
+				}
+			});
+
+			app.innerHTML = "";
+			ReactDOM.createRoot(app).render(
+				React.createElement(Ex.Excalidraw, {
+					langCode: "es-ES",
+					initialData: { elements: data.scene.elements, appState: { ...data.scene.appState, zenModeEnabled: false }, files: data.scene.files || {}, scrollToContent: true },
+					// Que el dibujo entero quepa en la pantalla al abrirlo.
+					excalidrawAPI: (api) => setTimeout(() => api?.scrollToContent(undefined, { fitToContent: true, animate: false }), 150),
+					onChange: (elements, appState, files) => {
+						if (!tocado) return;
+						pendiente = { elements, appState, files };
+						clearTimeout(espera);
+						espera = setTimeout(guardar, 1200);
+					},
+				}),
+			);
+		} catch (err) {
+			aviso(err.message || String(err));
+		}
+	</script>
+</body>
+</html>

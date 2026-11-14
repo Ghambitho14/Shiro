@@ -162,6 +162,8 @@ export function buildToolGuide(tools: string[], o: ToolGuideOptions): string {
 	if (has("project") && has("read_file")) lines.push("- read_file, write_file y list_dir son solo de tus notas (la carpeta de Aku), no del proyecto.");
 	if (has("memory_search")) lines.push("- Lo ya hablado o guardado: memory_search antes de decir que no lo sabes.");
 	if (has("todo")) lines.push("- Trabajo de 3 pasos o más: lleva la lista con todo (el usuario la ve).");
+	if (has("ask_user")) lines.push("- Te falta saber qué quiere el usuario (tras investigar un poco): ask_user, con opciones para elegir. Espera su respuesta y sigue.");
+	if (has("draw")) lines.push("- Algo que se entiende mejor visual (pasos, cómo se conectan las partes, un plan, una comparación, lo que hiciste): draw, además de explicarlo en corto.");
 
 	const missing: string[] = [];
 	if (o.mode !== "chat" && !has("project")) {

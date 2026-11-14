@@ -1,4 +1,4 @@
-// Paneles a la derecha del chat: el navegador de Shiro (en vivo), la terminal compartida y la oficina (ayudantes).
+// Paneles a la derecha del chat: el navegador de Shiro (en vivo) y la terminal compartida. La Oficina es una página (office.js).
 import { api, streamEvents } from "./api.js";
 import { hydrateIcons } from "./icons.js";
 
@@ -21,7 +21,7 @@ function savePrefs(p) {
 }
 
 /** Flujo en vivo que se reconecta solo mientras el panel está abierto. */
-function liveStream(url, onEvent) {
+export function liveStream(url, onEvent) {
 	let ctrl = null;
 	let running = false;
 	async function loop() {
@@ -493,119 +493,16 @@ function createTerminalPane(toast) {
 	};
 }
 
-// ───────────────────────────── oficina ─────────────────────────────
-
-const STATUS_TEXT = { working: "Trabajando", done: "Terminó", error: "Falló", stopped: "Detenido" };
-
-/** "45 s", "3 min 10 s". */
-function elapsed(ms) {
-	const s = Math.max(0, Math.round(ms / 1000));
-	return s < 60 ? `${s} s` : `${Math.floor(s / 60)} min${s % 60 ? ` ${s % 60} s` : ""}`;
-}
-
-function createOfficePane(toast) {
-	const list = $("#office-desks");
-	const empty = $("#office-empty");
-	const count = $("#office-count");
-	const stopAll = $("#office-stop");
-	const desks = new Map();
-
-	const post = (path, json) => api(path, { method: "POST", json }).catch((err) => toast(err.message, "error", 6000));
-
-	function paintDesk(d) {
-		let card = list.querySelector(`[data-id="${d.id}"]`);
-		if (!card) {
-			card = document.createElement("article");
-			card.className = "desk";
-			card.dataset.id = d.id;
-			card.setAttribute("role", "listitem");
-			card.innerHTML =
-				'<div class="desk-head"><span class="desk-avatar"></span><div class="desk-who"><span class="desk-name"></span><span class="desk-boss"></span></div><span class="desk-status"></span><button class="icon-btn sm desk-stop" title="Detener a este ayudante" data-icon="stop" data-size="sm"></button></div><p class="desk-task"></p><div class="desk-step"><span class="pane-dot"></span><span class="desk-step-text"></span><span class="desk-time"></span></div><details class="desk-result"><summary>Resultado</summary><div class="desk-result-text"></div></details>';
-			hydrateIcons(card);
-			$(".desk-stop", card).onclick = () => post("/api/office/stop", { id: d.id });
-			list.prepend(card);
-		}
-		card.dataset.status = d.status;
-		const avatar = $(".desk-avatar", card);
-		avatar.textContent = (d.name.trim()[0] || "?").toUpperCase();
-		avatar.style.background = d.color || "";
-		$(".desk-name", card).textContent = d.name;
-		$(".desk-boss", card).textContent = `ayudante de ${d.boss}`;
-		$(".desk-status", card).textContent = STATUS_TEXT[d.status] || d.status;
-		$(".desk-stop", card).hidden = d.status !== "working";
-		$(".desk-task", card).textContent = d.task;
-		$(".desk-task", card).title = d.task;
-		$(".desk-step-text", card).textContent = d.status === "working" ? d.step : `${d.step}${d.steps ? ` · ${d.steps} ${d.steps === 1 ? "paso" : "pasos"}` : ""}`;
-		const result = $(".desk-result", card);
-		result.hidden = !d.result;
-		// El texto del modelo se muestra tal cual (sin HTML).
-		$(".desk-result-text", card).textContent = d.result || "";
-		$(".desk-result summary", card).textContent = d.status === "error" ? "Error" : "Resultado";
-	}
-
-	function paintTimes() {
-		const now = Date.now();
-		for (const d of desks.values()) {
-			const t = list.querySelector(`[data-id="${d.id}"] .desk-time`);
-			if (t) t.textContent = elapsed((d.endedAt || now) - d.startedAt);
-		}
-	}
-
-	function paintSummary() {
-		const all = [...desks.values()];
-		const working = all.filter((d) => d.status === "working").length;
-		empty.hidden = all.length > 0;
-		list.hidden = all.length === 0;
-		stopAll.disabled = working === 0;
-		count.textContent = all.length ? (working ? `${working} trabajando` : `${all.length} ${all.length === 1 ? "escritorio" : "escritorios"}`) : "";
-	}
-
-	const stream = liveStream("/api/office/stream", (e) => {
-		if (e.type === "snapshot") {
-			list.textContent = "";
-			desks.clear();
-			for (const d of e.desks) {
-				desks.set(d.id, d);
-				paintDesk(d);
-			}
-		} else if (e.type === "desk") {
-			desks.set(e.desk.id, e.desk);
-			paintDesk(e.desk);
-		} else if (e.type === "remove") {
-			desks.delete(e.id);
-			list.querySelector(`[data-id="${e.id}"]`)?.remove();
-		}
-		paintSummary();
-		paintTimes();
-	});
-
-	// El reloj de cada escritorio avanza mientras el panel está abierto.
-	let clock = 0;
-	stopAll.onclick = () => post("/api/office/stop", {});
-	$("#office-clear").onclick = () => post("/api/office/clear", {});
-	paintSummary();
-
-	return {
-		busy: badge($("#office-badge")),
-		setActive(on) {
-			clearInterval(clock);
-			if (on) {
-				stream.start();
-				clock = setInterval(paintTimes, 1000);
-			} else stream.stop();
-		},
-	};
-}
-
 // ───────────────────────────── contenedor ─────────────────────────────
 
-export function initPanels({ toast }) {
+export function initPanels({ toast, onTool }) {
 	const app = $("#app");
 	const dock = $("#dock");
-	const prefs = { browser: false, terminal: false, office: false, width: 0, ...readPrefs() };
-	const panes = { browser: createBrowserPane(toast), terminal: createTerminalPane(toast), office: createOfficePane(toast) };
-	const els = { browser: $("#browser-pane"), terminal: $("#terminal-pane"), office: $("#office-pane") };
-	const buttons = { browser: $("#browser-btn"), terminal: $("#terminal-btn"), office: $("#office-btn") };
+	const prefs = { browser: false, terminal: false, width: 0, ...readPrefs() };
+	delete prefs.office;
+	const panes = { browser: createBrowserPane(toast), terminal: createTerminalPane(toast) };
+	const els = { browser: $("#browser-pane"), terminal: $("#terminal-pane") };
+	const buttons = { browser: $("#browser-btn"), terminal: $("#terminal-btn") };
 
 	const applyWidth = () => {
 		if (prefs.width) dock.style.width = `${prefs.width}px`;
@@ -681,8 +578,9 @@ export function initPanels({ toast }) {
 		show,
 		/** Eventos de herramientas del chat: abre el panel que Shiro está usando y lo indica. */
 		onTool(evt) {
-			// Claude Code enseña su progreso en el panel Terminal; los ayudantes, en la Oficina.
-			const name = { browser: "browser", terminal: "terminal", claude_code: "terminal", delegate: "office" }[evt.name] ?? null;
+			onTool?.(evt);
+			// Claude Code enseña su progreso en el panel Terminal (los ayudantes van a la página Oficina, sin abrir nada).
+			const name = { browser: "browser", terminal: "terminal", claude_code: "terminal" }[evt.name] ?? null;
 			if (!name) return;
 			if (evt.phase === "start") {
 				show(name, true);

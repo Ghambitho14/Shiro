@@ -272,6 +272,87 @@ export const todoSchema = z.preprocess(
 	z.object({ items: z.array(todoItem).min(1, "indica al menos una tarea en items").max(20, "como mucho 20 tareas") }),
 );
 
+/** Opciones de una pregunta: a veces llegan como texto separado por comas o saltos de línea. */
+const optionList = z.preprocess(
+	(v) => (typeof v === "string" ? v.split(/[,;\n]+/).map((x) => x.trim()).filter(Boolean) : v),
+	z.array(z.string().trim().min(1).max(160)).max(6, "como mucho 6 opciones"),
+);
+
+const askQuestion = z.preprocess(
+	(v) => {
+		if (typeof v === "string") return { question: v, options: [] };
+		if (v && typeof v === "object" && !("question" in v) && "text" in v) return { ...v, question: (v as { text: unknown }).text };
+		return v;
+	},
+	z.object({
+		question: z.string().trim().min(1, "cada pregunta necesita su texto").max(300),
+		options: optionList.default([]),
+		multiple: optionalBool,
+	}),
+);
+
+export const askUserSchema = z.preprocess(
+	(v) => (v && typeof v === "object" && !("questions" in v) && "question" in v ? { questions: [v] } : v),
+	z.object({ questions: z.array(askQuestion).min(1, "indica al menos una pregunta").max(3, "como mucho 3 preguntas a la vez") }),
+);
+
+/** Cajas: se aceptan los nombres que usan los modelos (label, texto, name…) y un texto suelto. */
+const drawNode = z.preprocess(
+	(v) => {
+		if (typeof v === "string") return { id: v, text: v };
+		if (!v || typeof v !== "object") return v;
+		const o = v as Record<string, unknown>;
+		const text = o.text ?? o.label ?? o.texto ?? o.title ?? o.name ?? o.id;
+		return { ...o, id: String(o.id ?? text ?? ""), text: String(text ?? "") };
+	},
+	z.object({
+		id: z.string().trim().min(1, "cada caja necesita id").max(80),
+		text: z.string().trim().min(1, "cada caja necesita texto").max(200),
+		color: z.string().trim().toLowerCase().optional(),
+		shape: z.preprocess((v) => {
+			const s = String(v ?? "").toLowerCase();
+			if (/ovalo|óvalo|ellipse|elipse|circ/.test(s)) return "ovalo";
+			if (/rombo|diamond|decisi/.test(s)) return "rombo";
+			return "caja";
+		}, z.enum(["caja", "ovalo", "rombo"])),
+	}),
+);
+
+const drawEdge = z.preprocess(
+	(v) => {
+		if (!v || typeof v !== "object") return v;
+		const o = v as Record<string, unknown>;
+		const label = o.label ?? o.text ?? o.texto;
+		return { from: String(o.from ?? o.source ?? o.desde ?? ""), to: String(o.to ?? o.target ?? o.hasta ?? ""), ...(label ? { label: String(label) } : {}) };
+	},
+	z.object({ from: z.string().trim().min(1), to: z.string().trim().min(1), label: z.string().trim().max(60).optional() }),
+);
+
+export const drawSchema = z
+	.preprocess(
+		(v) => {
+			if (!v || typeof v !== "object") return v;
+			const o = v as Record<string, unknown>;
+			return { ...o, nodes: o.nodes ?? o.boxes ?? o.cajas, edges: o.edges ?? o.arrows ?? o.flechas ?? [] };
+		},
+		z.object({
+			title: z.string().trim().min(1, "title requerido").max(100),
+			nodes: z.array(drawNode).min(1, "indica al menos una caja en nodes").max(40, "como mucho 40 cajas"),
+			edges: z.array(drawEdge).max(80, "como mucho 80 flechas").default([]),
+			direction: z.preprocess((v) => (/abajo|down|vertical|top/i.test(String(v ?? "")) ? "abajo" : "derecha"), z.enum(["derecha", "abajo"])),
+		}),
+	)
+	.superRefine((d, ctx) => {
+		const ids = new Set<string>();
+		for (const n of d.nodes) {
+			if (ids.has(n.id)) ctx.addIssue({ code: "custom", message: `id repetido en nodes: ${n.id}` });
+			ids.add(n.id);
+		}
+		for (const e of d.edges) {
+			if (!ids.has(e.from) || !ids.has(e.to)) ctx.addIssue({ code: "custom", message: `la flecha ${e.from} → ${e.to} apunta a una caja que no está en nodes (usa sus id)` });
+		}
+	});
+
 /** Una lista que el modelo a veces manda como texto separado por comas. */
 const stringList = z.preprocess(
 	(v) => (typeof v === "string" ? v.split(/[,;\n]+/).map((x) => x.trim()).filter(Boolean) : v),
@@ -374,6 +455,8 @@ export const toolSchemas: Record<string, z.ZodType<Record<string, unknown>>> = {
 	use_skill: useSkillSchema,
 	project: projectSchema,
 	todo: todoSchema as z.ZodType<Record<string, unknown>>,
+	ask_user: askUserSchema as z.ZodType<Record<string, unknown>>,
+	draw: drawSchema as z.ZodType<Record<string, unknown>>,
 	pentest: pentestSchema as z.ZodType<Record<string, unknown>>,
 	email: emailSchema,
 	calendar: calendarSchema as z.ZodType<Record<string, unknown>>,

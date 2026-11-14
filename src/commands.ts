@@ -112,7 +112,7 @@ function mcpText(): string {
 function agentsText(): string {
 	const { agents, error } = loadAgents();
 	if (error) return `⚠️ ${error}`;
-	if (!agents.length) return "Todavía no hay agentes. Créalos en **Ajustes → Agentes**.";
+	if (!agents.length) return "Todavía no hay agentes. Créalos en la **Oficina** (barra lateral) con «Nuevo agente».";
 	const wake = getConfig().wakeWord;
 	const lines = agents.map((a) => {
 		const model = a.model ? `${a.provider ? `${PROVIDER_PRESETS[a.provider].title} · ` : ""}${a.model}` : "el modelo de Ajustes";

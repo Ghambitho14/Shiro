@@ -46,7 +46,7 @@ export function applyRoomIntent(room: RoomState | null, intent: RoomIntent, ctx:
 			const names = ctx.agents.map((a) => a.name);
 			const text = names.length
 				? `¿A quién activo? Agentes: ${listNames(names)}.`
-				: "Todavía no hay agentes. Créalos en Ajustes → Agentes.";
+				: "Todavía no hay agentes. Créalos en la Oficina (barra lateral) con «Nuevo agente».";
 			return { room, changed: false, reply: { agentId: null, text } };
 		}
 

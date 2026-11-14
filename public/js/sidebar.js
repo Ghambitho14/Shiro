@@ -5,6 +5,7 @@ import { api } from "./api.js";
 import { escapeHtml } from "./markdown.js";
 import { promptDialog } from "./extensions.js";
 import { initPanels } from "./panels.js";
+import { initOffice } from "./office.js";
 import { $, $$, closeMenu, confirmDialog, el, isMobile, menuAnchor, norm, openMenu, openMenuEl, prefs, savePrefs, setTheme, showMenu, toast } from "./ui.js";
 import { input, state } from "./state.js";
 import { contentParts, fromServer, inProjectHome, paintCrumb, renderThread, scrollToBottom, updateEmpty } from "./messages.js";
@@ -90,7 +91,7 @@ export function paintSidebar() {
 			last = g;
 		}
 		const title = !s.title || s.title === "Nueva sesión" ? "Nuevo chat" : s.title;
-		html += `<div class="sb-chat${s.id === state.activeId ? " active" : ""}" data-id="${escapeHtml(s.id)}" role="listitem" tabindex="0" title="${escapeHtml(title)}"><span class="title">${escapeHtml(title)}</span><button class="icon-btn" data-menu aria-label="Opciones del chat" title="Opciones">${icon("dots", "sm")}</button></div>`;
+		html += `<div class="sb-chat${s.id === state.activeId && state.view !== "office" ? " active" : ""}" data-id="${escapeHtml(s.id)}" role="listitem" tabindex="0" title="${escapeHtml(title)}"><span class="title">${escapeHtml(title)}</span><button class="icon-btn" data-menu aria-label="Opciones del chat" title="Opciones">${icon("dots", "sm")}</button></div>`;
 	}
 	list.innerHTML = html;
 }
@@ -222,6 +223,7 @@ export function route() {
 	if (m) openChat(decodeURIComponent(m[1]), false);
 	else if (p) openProject(decodeURIComponent(p[1]), false);
 	else if (location.hash === "#/proyectos") openOverview(false);
+	else if (location.hash === "#/oficina") openOffice(false);
 	else newChat(false);
 }
 
@@ -229,11 +231,14 @@ export function pushHash(h) {
 	if (location.hash !== h) history.pushState(null, "", h);
 }
 
-/** Chat (con su cuadro de texto) o la lista de proyectos. */
+/** Chat (con su cuadro de texto), la lista de proyectos o la Oficina. */
 export function showView(view) {
 	state.view = view;
 	$("#chat-area").hidden = view !== "chat";
 	$("#projects-view").hidden = view !== "projects";
+	$("#office-view").hidden = view !== "office";
+	$("#nav-office").classList.toggle("active", view === "office");
+	office.setActive(view === "office");
 }
 
 /** Página de un proyecto: su cabecera, el cuadro para empezar un chat y sus archivos, instrucciones y chats. */
@@ -274,7 +279,27 @@ export function openOverview(push = true) {
 	if (push) pushHash("#/proyectos");
 }
 
+/**
+ * Oficina: los escritorios de los ayudantes de Aku, de todos los chats. No detiene ni cierra el chat abierto
+ * (mirar a los ayudantes mientras trabajan es justo para lo que está): al volver a él sigue igual.
+ */
+export function openOffice(push = true) {
+	closeSidebarMobile();
+	showView("office");
+	paintSidebar();
+	document.title = `${state.name} · Oficina`;
+	if (push) pushHash("#/oficina");
+}
+
 export async function openChat(id, push = true) {
+	// Vuelta desde la Oficina al chat que seguía abierto (quizá respondiendo): solo se muestra otra vez.
+	if (state.view === "office" && id === state.activeId) {
+		showView("chat");
+		setDocTitle(state.sessions.find((x) => x.id === id)?.title || "");
+		paintSidebar();
+		if (push) setRoute(id);
+		return;
+	}
 	if (state.busy) stopGeneration();
 	closeSidebarMobile();
 	if (id === state.activeId && state.messages.length && state.view === "chat") return;
@@ -407,8 +432,9 @@ function paintModeHints() {
 	paintSuggestions();
 }
 
-// Paneles Navegador y Terminal (se abren solos cuando Shiro los usa).
-export const panels = initPanels({ toast });
+// Oficina (página propia) y paneles Navegador y Terminal (se abren solos cuando Shiro los usa).
+export const office = initOffice({ toast });
+export const panels = initPanels({ toast, onTool: office.onTool });
 
 export function providerLabel() {
 	return state.llm?.providers?.find((p) => p.value === state.llm.provider)?.label || state.llm?.provider || "";
@@ -508,6 +534,7 @@ export function initSidebar() {
 	$("#nav-voice").onclick = () => voice.open();
 	$("#nav-reminders").onclick = () => openReminders();
 	$("#nav-projects").onclick = () => openOverview();
+	$("#nav-office").onclick = () => openOffice();
 	$("#open-settings").onclick = () => openSettings();
 	$("#nav-search").onclick = openSearch;
 	$("#search-input").addEventListener("input", (e) => {
@@ -542,7 +569,6 @@ export function initSidebar() {
 			items.push(
 				{ label: "Navegador", icon: "globe", onClick: () => $("#browser-btn").click() },
 				{ label: "Terminal", icon: "terminal", onClick: () => $("#terminal-btn").click() },
-				{ label: "Oficina", icon: "users", onClick: () => $("#office-btn").click() },
 				{ label: dark ? "Tema claro" : "Tema oscuro", icon: dark ? "sun" : "moon", onClick: () => $("#theme-btn").click() },
 				"sep",
 			);

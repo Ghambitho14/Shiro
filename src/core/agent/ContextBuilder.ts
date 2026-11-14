@@ -48,6 +48,8 @@ export type ContextInput = {
 	subagent?: { boss: string };
 	/** Tiene `delegate`: los agentes de Ajustes → Agentes a los que puede encargar tareas. */
 	helpers?: { name: string; description?: string }[];
+	/** Los agentes guardados (la Oficina), que Aku conoce siempre; sin esto (WhatsApp abierto) no se nombran. */
+	team?: { name: string; description?: string }[];
 	/** Bloque «Entorno» (environment.ts): sistema, consola, programas, modo y permisos. */
 	environment?: string;
 	/** Bloque «Qué herramienta usar» (environment.ts), con las herramientas de esta respuesta. */
@@ -67,30 +69,39 @@ ${boss} te encargó una tarea como parte de una respuesta más grande; tu respue
 export function buildHelpersBlock(helpers: { name: string; description?: string }[]): string {
 	const lines = [
 		"## Tus ayudantes",
-		"Con la tool delegate creas ayudantes que trabajan a la vez y te devuelven su resultado; el usuario los ve en el panel «Oficina».",
+		"Con la tool delegate creas ayudantes que trabajan a la vez y te devuelven su resultado; el usuario los ve en la página «Oficina» de la barra lateral.",
 		"- Úsala solo para trabajos grandes que se parten en tareas independientes (investigar varias cosas, comparar opciones, revisar varios archivos). Lo simple hazlo tú.",
 		"- Cada tarea tiene que entenderse sola: el ayudante no ve esta conversación. Escribe qué hacer, con qué datos y qué devolver.",
 		"- Cuando vuelvan, junta sus resultados en una sola respuesta para el usuario; no copies todo tal cual.",
 	];
 	if (helpers.length) {
-		lines.push(`- Agentes que puedes usar como ayudantes (en agent): ${helpers.map((h) => `${h.name}${h.description ? ` (${h.description})` : ""}`).join("; ")}. Si ninguno encaja, crea uno temporal con name.`);
+		lines.push(`- Los de tu equipo (arriba, «Agentes de esta app») pueden ser tus ayudantes: pon su nombre en agent. Si ninguno encaja, crea uno temporal con name.`);
 	}
 	return lines.join("\n");
 }
 
 /**
- * Qué es un agente aquí. Va siempre (salvo a los ayudantes): sin esto, a «crea un agente» el modelo
- * respondía preguntando la tecnología, como si hubiera que programarlo.
+ * Qué es un agente aquí y quiénes forman el equipo. Va siempre (salvo a los ayudantes): sin esto, a «crea
+ * un agente» el modelo respondía preguntando la tecnología, y no sabía qué agentes tenía el usuario.
+ * `team` = los agentes guardados (Oficina o Ajustes → Agentes); undefined donde no se enseñan (WhatsApp abierto).
  */
-export function buildAgentsBlock(canDelegate: boolean): string {
-	return [
+export function buildAgentsBlock(canDelegate: boolean, team?: { name: string; description?: string }[]): string {
+	const lines = [
 		"## Agentes de esta app",
 		"- Si el usuario pide «crear un agente» sin más, pregúntale primero si quiere un agente aquí, en la app, o programar un agente (un programa). No des por hecho que es programar.",
-		"- Un agente de la app se crea en Ajustes → Agentes: nombre, forma de ser, modelo (uno propio o el de Ajustes), herramientas y voz. Tú no lo puedes crear: explícale dónde y qué poner.",
-		`- Esos agentes conversan con el usuario en salas (botón «Abrir sala» de Ajustes → Agentes, o pidiendo «agrega a <nombre>» en el chat)${
-			canDelegate ? " y te sirven como ayudantes en la Oficina con la tool delegate" : " y sirven como ayudantes en el panel «Oficina»"
+		"- Un agente de la app se crea en la página «Oficina» de la barra lateral (botón «Nuevo agente»; también en Ajustes → Agentes): nombre, para qué sirve, forma de ser, modelo (uno propio o el de Ajustes), herramientas y voz. Tú no lo puedes crear: explícale dónde y qué poner.",
+		`- Esos agentes conversan con el usuario en salas («Hablar» en su tarjeta de la Oficina, o pidiendo «agrega a <nombre>» en el chat)${
+			canDelegate ? " y te sirven como ayudantes con la tool delegate" : " y sirven como ayudantes cuando hay que repartir trabajo"
 		}.`,
-	].join("\n");
+	];
+	if (team) {
+		lines.push(
+			team.length
+				? `- Tu equipo (los agentes que el usuario tiene en la Oficina): ${team.map((a) => `${a.name}${a.description ? ` (${a.description})` : ""}`).join("; ")}. Si te pregunta qué agentes tiene o quién está en la Oficina, son estos.`
+				: "- El usuario todavía no tiene agentes en su equipo: la Oficina está vacía.",
+		);
+	}
+	return lines.join("\n");
 }
 
 export type PersonaContext = {
@@ -194,7 +205,8 @@ export const WORK_BLOCK = `## Cómo trabajas
 - Ve de lo general a lo concreto: primero ubica (listar, buscar) y luego lee solo la parte que importa. Varias búsquedas cortas valen más que una lectura enorme.
 - Si algo falla, lee el error y prueba otra vía (otra ruta, otra palabra, otro comando). No repitas la misma llamada ni te rindas al primer intento.
 - No des nada por hecho sin comprobarlo. Al terminar di qué hiciste o encontraste, en qué te basas (archivo, comando o enlace) y qué no pudiste comprobar.
-- Pregunta solo cuando falte una decisión del usuario o la acción sea delicada. Para charlar o para lo que ya sabes, responde directo, sin herramientas.`;
+- Pedidos amplios o ambiguos (la mejor respuesta cambia según para qué es, cuánto detalle, gustos o presupuesto): 1) investiga un poco lo que puedas averiguar tú; 2) si aún no sabes qué quiere, pregúntale lo justo (1 a 3 preguntas con opciones concretas, la que recomiendas primero); 3) responde con lo que eligió. No preguntes lo que puedes comprobar tú.
+- Para charlar, preguntas simples o lo que ya sabes, responde directo, sin preguntas ni herramientas. Si una acción es delicada o falta una decisión del usuario, pregunta antes.`;
 
 export const PLAN_BLOCK = `## Planear (solo lectura)
 Investiga y prepara un plan útil antes de tocar nada. Puedes leer archivos y proyectos, buscar información y consultar la memoria, pero NO puedes escribir, ejecutar comandos, crear recordatorios, guardar recuerdos ni cambiar el PC.
@@ -308,7 +320,7 @@ export function buildContext(input: ContextInput): { system: string; messages: M
 	const teamBlock = input.subagent
 		? "\n\n" + buildSubagentBlock(input.subagent.boss)
 		: "\n\n" +
-			buildAgentsBlock(!!input.helpers && !textOnly) +
+			buildAgentsBlock(!!input.helpers && !textOnly, input.team) +
 			(input.helpers && !textOnly ? "\n\n" + buildHelpersBlock(input.helpers) : "");
 	// Método, entorno y guía de herramientas: solo cuando hay herramientas con las que trabajar.
 	const methodBlock =

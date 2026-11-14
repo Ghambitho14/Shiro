@@ -42,6 +42,7 @@
 					<button class="sb-item" id="nav-new"><span data-icon="edit"></span>Nuevo chat<kbd>Ctrl+Mayús+O</kbd></button>
 					<button class="sb-item" id="nav-search"><span data-icon="search"></span>Buscar chats<kbd>Ctrl+K</kbd></button>
 					<button class="sb-item" id="nav-projects"><span data-icon="folder"></span>Proyectos</button>
+					<button class="sb-item" id="nav-office"><span data-icon="users"></span>Oficina<span class="sb-count" id="office-nav-count" hidden></span></button>
 					<button class="sb-item" id="nav-voice"><span data-icon="voice"></span>Modo voz</button>
 					<button class="sb-item" id="nav-reminders"><span data-icon="bell"></span>Recordatorios</button>
 				</nav>
@@ -86,7 +87,6 @@
 					<div class="spacer"></div>
 					<button class="icon-btn" id="browser-btn" title="Navegador de Aku" aria-label="Navegador" aria-pressed="false" data-icon="globe"></button>
 					<button class="icon-btn" id="terminal-btn" title="Terminal" aria-label="Terminal" aria-pressed="false" data-icon="terminal"></button>
-					<button class="icon-btn" id="office-btn" title="Oficina: los ayudantes de Aku" aria-label="Oficina" aria-pressed="false" data-icon="users"></button>
 					<button class="icon-btn" id="theme-btn" title="Cambiar tema" aria-label="Cambiar tema" data-icon="moon"></button>
 					<button class="icon-btn" id="chat-menu-btn" title="Opciones del chat" aria-label="Opciones del chat" data-icon="dots"></button>
 				</header>
@@ -170,9 +170,41 @@
 						<div class="pv-grid" id="pv-grid"></div>
 					</div>
 				</section>
+
+				<!-- Oficina: el departamento de los ayudantes de Aku (office.js), para todos los chats. -->
+				<section class="projects-view office-view" id="office-view" hidden aria-label="Oficina">
+					<div class="pv-inner">
+						<div class="pv-head">
+							<h1>Oficina</h1>
+						</div>
+						<p class="set-desc">El departamento de Aku: su equipo de agentes y los escritorios donde trabajan los ayudantes cuando reparte tareas, sea cual sea el chat.</p>
+
+						<div class="office-section">
+							<h2>Equipo</h2>
+							<div class="spacer"></div>
+							<button class="btn primary" id="office-new-agent"><span data-icon="plus" data-size="sm"></span>Nuevo agente</button>
+						</div>
+						<p class="office-hint">Cada agente tiene su nombre, su forma de ser y su modelo. Aku los conoce siempre: conversas con ellos en una sala («Hablar») y le sirven de ayudantes.</p>
+						<div class="office-note" id="office-team-error" hidden></div>
+						<div class="team-grid" id="office-team" role="list" aria-label="Equipo de agentes"></div>
+
+						<div class="office-section">
+							<h2>Escritorios</h2>
+							<span class="office-count" id="office-count"></span>
+							<div class="spacer"></div>
+							<button class="btn" id="office-stop" title="Detener a todos los ayudantes" disabled><span data-icon="stop" data-size="sm"></span>Detener a todos</button>
+							<button class="btn" id="office-clear" title="Quitar los que ya terminaron"><span data-icon="trash" data-size="sm"></span>Limpiar</button>
+						</div>
+						<div class="office-desks" id="office-desks" role="list" aria-label="Escritorios de los ayudantes" hidden></div>
+						<div class="office-empty" id="office-empty">
+							<span data-icon="users" data-size="lg"></span>
+							<p>No hay nadie trabajando. Pídele algo grande, como «investiga estas tres cosas a la vez», y verás a cada ayudante en su escritorio.</p>
+						</div>
+					</div>
+				</section>
 			</main>
 
-			<!-- ============ Paneles: navegador, terminal y oficina ============ -->
+			<!-- ============ Paneles: navegador y terminal ============ -->
 			<aside class="dock" id="dock" hidden aria-label="Paneles">
 				<div class="dock-resizer" id="dock-resizer" role="separator" aria-orientation="vertical" aria-label="Arrastra para cambiar el ancho de los paneles" tabindex="0"></div>
 				<section class="pane browser-pane" id="browser-pane" hidden aria-label="Navegador">
@@ -213,23 +245,6 @@
 					<button type="button" class="term-attention" id="term-attention" hidden><span data-icon="lock" data-size="sm"></span><span id="term-attention-text"></span></button>
 					<div class="term-external" id="term-external" hidden aria-label="Tareas de Claude Code"></div>
 					<div class="term-screen" id="term-screen" aria-label="Terminal"></div>
-				</section>
-				<section class="pane office-pane" id="office-pane" hidden aria-label="Oficina">
-					<div class="pane-head">
-						<span data-icon="users" data-size="sm"></span>
-						<span class="pane-title">Oficina</span>
-						<span class="pane-sub" id="office-count"></span>
-						<span class="pane-badge" id="office-badge" hidden><span class="pane-dot"></span><span class="pane-badge-text"></span></span>
-						<div class="spacer"></div>
-						<button class="icon-btn sm" id="office-stop" title="Detener a todos los ayudantes" aria-label="Detener a todos" data-icon="stop" data-size="sm" disabled></button>
-						<button class="icon-btn sm" id="office-clear" title="Quitar los que ya terminaron" aria-label="Quitar los que terminaron" data-icon="trash" data-size="sm"></button>
-						<button class="icon-btn sm" id="office-hide" title="Ocultar el panel" aria-label="Ocultar el panel de la oficina" data-icon="x" data-size="sm"></button>
-					</div>
-					<div class="office-desks" id="office-desks" role="list" aria-label="Escritorios de los ayudantes"></div>
-					<div class="office-empty" id="office-empty">
-						<span data-icon="users" data-size="lg"></span>
-						<p>Aquí trabajan los ayudantes de Aku. Pídele algo grande, como «investiga estas tres cosas a la vez», y verás a cada uno en su escritorio.</p>
-					</div>
 				</section>
 			</aside>
 		</div>

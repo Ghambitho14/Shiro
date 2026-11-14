@@ -15,7 +15,7 @@ import { getChatMode, modeOfMessages, removeChatMode, setChatMode } from "./chat
 import type { TodoItem } from "../core/agent/previousWork.js";
 
 /** Herramienta usada en una respuesta (se muestra como "pasos" en la web). */
-export type ChatToolUse = { name: string; label: string; ok: boolean; image?: string; /** Id para deshacer el cambio de archivo de este paso. */ undo?: string; /** El usuario ya lo deshizo. */ undone?: boolean };
+export type ChatToolUse = { name: string; label: string; ok: boolean; image?: string; /** Id para deshacer el cambio de archivo de este paso. */ undo?: string; /** Dibujo que hizo este paso (tool draw). */ drawing?: string; /** El usuario ya lo deshizo. */ undone?: boolean };
 
 export type ChatMessage = {
 	role: "user" | "assistant";
@@ -121,7 +121,8 @@ function sanitizeMeta(item: Record<string, unknown>): Pick<ChatMessage, "ts" | "
 				if (!name && !label) return null;
 				const image = typeof r.image === "string" && /^\/api\/screenshots\/[\w.%-]+$/.test(r.image) ? r.image : undefined;
 				const undo = typeof r.undo === "string" && /^[0-9a-f-]{36}$/.test(r.undo) ? r.undo : undefined;
-				return { name, label, ok: r.ok !== false, ...(image ? { image } : {}), ...(undo ? { undo } : {}), ...(r.undone === true ? { undone: true } : {}) };
+				const drawing = typeof r.drawing === "string" && /^[a-f0-9]{16}$/.test(r.drawing) ? r.drawing : undefined;
+				return { name, label, ok: r.ok !== false, ...(image ? { image } : {}), ...(undo ? { undo } : {}), ...(drawing ? { drawing } : {}), ...(r.undone === true ? { undone: true } : {}) };
 			})
 			.filter((t): t is ChatToolUse => t !== null);
 		if (tools.length) out.tools = tools;

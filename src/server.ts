@@ -18,6 +18,7 @@ import { handleSettingsApi } from "./settingsApi.js";
 import { handleVoiceApi } from "./voiceApi.js";
 import { handleConnectionsApi } from "./connectionsApi.js";
 import { handleChatApi } from "./chatApi.js";
+import { handleDrawingsApi } from "./drawingsApi.js";
 import { handleRemindersApi, startReminderNotifications } from "./remindersApi.js";
 import { handlePentestApi } from "./pentestApi.js";
 import { announceUpdate, handleUpdateApi } from "./updateApi.js";
@@ -178,6 +179,8 @@ async function handleRequest(
 	if (await handleConnectionsApi(req, res, method, pathname)) return;
 	// Chats, el chat con el modelo y las aprobaciones.
 	if (await handleChatApi(req, res, method, pathname)) return;
+	// Dibujos de la tool draw (imagen, escena de Excalidraw y guardar desde el editor).
+	if (await handleDrawingsApi(req, res, method, pathname)) return;
 	// Recordatorios y sus avisos.
 	if (await handleRemindersApi(req, res, method, pathname)) return;
 	if (await handlePentestApi(req, res, method, pathname)) return;

@@ -60,7 +60,7 @@ export function fromServer(m) {
 	if (m.context?.used) out.context = m.context;
 	if (m.summary === true) out.summary = true;
 	if (Array.isArray(m.todo) && m.todo.length) out.todo = m.todo;
-	if (Array.isArray(m.tools)) out.tools = m.tools.map((t, i) => ({ id: `h${i}`, name: t.name, label: t.label, status: t.ok === false ? "fail" : "ok", image: t.image, undo: t.undo, undone: t.undone === true }));
+	if (Array.isArray(m.tools)) out.tools = m.tools.map((t, i) => ({ id: `h${i}`, name: t.name, label: t.label, status: t.ok === false ? "fail" : "ok", image: t.image, undo: t.undo, undone: t.undone === true, drawing: t.drawing }));
 	return out;
 }
 
@@ -74,7 +74,7 @@ export function serialize(m) {
 	if (m.summary) o.summary = true;
 	if (m.todo?.length) o.todo = m.todo;
 	if (m.tools?.length) {
-		o.tools = m.tools.map((t) => ({ name: t.name, label: t.label, ok: t.status !== "fail", ...(t.image ? { image: t.image } : {}), ...(t.undo ? { undo: t.undo } : {}), ...(t.undone ? { undone: true } : {}) }));
+		o.tools = m.tools.map((t) => ({ name: t.name, label: t.label, ok: t.status !== "fail", ...(t.image ? { image: t.image } : {}), ...(t.undo ? { undo: t.undo } : {}), ...(t.undone ? { undone: true } : {}), ...(t.drawing ? { drawing: t.drawing } : {}) }));
 	}
 	return o;
 }
@@ -138,6 +138,7 @@ export function buildAssistant(m) {
 			<div class="steps" hidden><button type="button" class="steps-toggle">${icon("chevronDown", "sm")}<span></span></button><div class="steps-list"></div></div>
 			<div class="approvals"></div>
 			<div class="md"></div>
+			<div class="drawings" hidden></div>
 			<div class="changes" hidden></div>
 			<div class="extra"></div>
 			<div class="msg-actions"></div>
@@ -155,6 +156,7 @@ export function buildAssistant(m) {
 		stepsList: $(".steps-list", root),
 		approvals: $(".approvals", root),
 		md: $(".md", root),
+		drawings: $(".drawings", root),
 		changes: $(".changes", root),
 		extra: $(".extra", root),
 		actions: $(".msg-actions", root),
@@ -179,10 +181,11 @@ export function paintSteps(m) {
 	// Las llamadas a la lista de tareas no son pasos: la lista se pinta aparte (paintTodo).
 	const tools = (m.tools || []).filter((t) => t.name !== "todo");
 	// Solo se repinta si cambió algo (evita que las capturas parpadeen mientras llega el texto).
-	const sig = JSON.stringify([!!m.streaming, ...tools.map((t) => [t.id, t.status, t.error, t.image, t.undo, t.undone])]);
+	const sig = JSON.stringify([!!m.streaming, ...tools.map((t) => [t.id, t.status, t.error, t.image, t.undo, t.undone, t.drawing])]);
 	if (r.stepsSig === sig) return;
 	r.stepsSig = sig;
 	paintChanges(m);
+	paintDrawings(m);
 	r.steps.hidden = tools.length === 0;
 	if (!tools.length) return;
 	const running = tools.some((t) => t.status === "running");
@@ -207,6 +210,76 @@ export function paintSteps(m) {
 			.catch(() => img.remove());
 	}
 }
+
+// ───────────────────────── dibujos (tool draw) ─────────────────────────
+
+/** Versión de cada dibujo: sube cuando se guarda en el editor, para no enseñar la imagen vieja. */
+const drawingVersion = new Map();
+
+/** Los dibujos de la respuesta, debajo del texto: la imagen, editarla en Excalidraw y descargarla. */
+function paintDrawings(m) {
+	const r = refs.get(m);
+	if (!r?.drawings) return;
+	const steps = (m.tools || []).filter((t) => t.drawing && t.status !== "fail");
+	r.drawings.hidden = !steps.length;
+	const ids = steps.map((t) => t.drawing);
+	if (r.drawingsSig === ids.join(",")) return;
+	r.drawingsSig = ids.join(",");
+	r.drawings.replaceChildren(...steps.map((t) => drawingCard(t)));
+}
+
+function drawingCard(t) {
+	const title = String(t.label || "").replace(/^Dibujando:\s*/, "") || "Dibujo";
+	const card = el(
+		"figure",
+		"drawing-card",
+		`<button type="button" class="drawing-view" title="Ver en grande"><img alt=""></button><figcaption><span class="drawing-title"></span><button type="button" class="btn sm" data-a="edit">${icon("edit", "sm")}Editar</button><button type="button" class="btn ghost sm" data-a="download">${icon("download", "sm")}Descargar</button></figcaption>`,
+	);
+	card.dataset.drawing = t.drawing;
+	$(".drawing-title", card).textContent = title;
+	$("img", card).alt = title;
+	loadDrawingImage(card);
+	$(".drawing-view", card).onclick = () => {
+		const src = $("img", card).src;
+		if (src) lightbox(src);
+	};
+	$("[data-a=edit]", card).onclick = () => window.open(`/dibujo.html?id=${encodeURIComponent(t.drawing)}`, "_blank");
+	$("[data-a=download]", card).onclick = async () => {
+		try {
+			const d = await api(`/api/drawings/${encodeURIComponent(t.drawing)}`);
+			const blob = new Blob([JSON.stringify(d.scene, null, 2)], { type: "application/json" });
+			const a = el("a");
+			a.href = URL.createObjectURL(blob);
+			a.download = `${d.title || "dibujo"}.excalidraw`;
+			a.click();
+			setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+		} catch (err) {
+			toast(err.message, "error");
+		}
+	};
+	return card;
+}
+
+function loadDrawingImage(card) {
+	const id = card.dataset.drawing;
+	const img = $("img", card);
+	protectedImageUrl(`/api/drawings/${encodeURIComponent(id)}.svg?v=${drawingVersion.get(id) ?? 0}`)
+		.then((u) => (img.src = u))
+		.catch(() => card.classList.add("missing"));
+}
+
+// El editor (dibujo.html) avisa cuando guarda: se recarga la imagen de ese dibujo.
+// Se guarda en una variable: un canal sin referencias lo puede recoger el navegador y dejar de avisar.
+let drawingsChannel = null;
+try {
+	drawingsChannel = new BroadcastChannel("aku-dibujos");
+	drawingsChannel.onmessage = (e) => {
+		const id = e.data?.saved;
+		if (!id) return;
+		drawingVersion.set(id, Date.now());
+		for (const card of $$(".drawing-card")) if (card.dataset.drawing === id) loadDrawingImage(card);
+	};
+} catch {}
 
 // ───────────────────────── tarjeta «Cambios» (archivos que cambió la respuesta) ─────────────────────────
 

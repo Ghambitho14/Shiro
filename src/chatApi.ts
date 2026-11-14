@@ -9,6 +9,7 @@ import { getState } from "./store.js";
 import { getUserProfile } from "./user-profile.js";
 import { getConfig } from "./config/config.js";
 import { canRememberApproval, type Approver } from "./core/tools/approval.js";
+import type { Asker, AskQuestion } from "./core/tools/modules/ask.js";
 import { SCREENSHOT_DIR } from "./core/pc/pc.js";
 import { setHealthActive } from "./core/health/HealthManager.js";
 import { buildWorkspaceContext } from "./workspace.js";
@@ -70,6 +71,31 @@ function createSseApprover(res: ServerResponse, sessionKey: string): Approver {
 		});
 }
 
+/** Preguntas de ask_user esperando respuesta en la web. */
+const pendingQuestions = new Map<string, { finish: (answers: string[] | null) => void; count: number }>();
+const QUESTION_TIMEOUT_MS = 15 * 60 * 1000;
+
+/** Asker para una respuesta en streaming: manda las preguntas al navegador por SSE y espera lo que elija el usuario. */
+function createSseAsker(res: ServerResponse): Asker {
+	return (questions: AskQuestion[]) =>
+		new Promise<string[] | null>((resolve) => {
+			if (res.writableEnded) return resolve(null);
+			const id = randomBytes(8).toString("hex");
+			const finish = (answers: string[] | null) => {
+				clearTimeout(timer);
+				res.off("close", onClose);
+				pendingQuestions.delete(id);
+				if (!res.writableEnded) sendSseData(res, { type: "question_done", id });
+				resolve(answers);
+			};
+			const onClose = () => finish(null);
+			const timer = setTimeout(() => finish(null), QUESTION_TIMEOUT_MS);
+			res.on("close", onClose);
+			pendingQuestions.set(id, { finish, count: questions.length });
+			sendSseData(res, { type: "question", id, questions });
+		});
+}
+
 /** URL pública de una captura de pantalla (solo si está en la carpeta de capturas). */
 function screenshotUrl(path: string | undefined): string | undefined {
 	if (!path) return undefined;
@@ -97,7 +123,8 @@ function sanitizeAllowedTools(input: unknown): string[] | undefined {
  * herramientas. Al planear, la lista de solo lectura manda sobre cualquier ajuste.
  */
 function requestTools(mode: ChatMode, permissions: PermissionMode, allowedTools: string[] | undefined, autonomous: boolean) {
-	const webTools = ["search_web", "fetch_url", "get_weather"];
+	// Preguntar y dibujar no tocan nada del equipo: van también con las herramientas apagadas.
+	const webTools = ["search_web", "fetch_url", "get_weather", "ask_user", "draw"];
 	const planning = permissions === "plan";
 	const modeTools = planning ? planToolsFor(mode) : mode === "code" ? CODE_TOOLS : mode === "hacking" ? HACKING_TOOLS : undefined;
 	const effectiveAllowedTools = modeTools ??
@@ -135,6 +162,27 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 			sessionApprovals.set(pending.sessionKey, set);
 		}
 		pending.finish(approved);
+		sendJson(res, 200, { ok: true });
+		return true;
+	}
+
+	if (method === "POST" && pathname.startsWith("/api/questions/")) {
+		const id = pathname.slice("/api/questions/".length);
+		const pending = pendingQuestions.get(id);
+		if (!pending) {
+			sendJson(res, 404, { error: "Esas preguntas ya no esperan respuesta" });
+			return true;
+		}
+		let answers: string[] | null = null;
+		try {
+			const body = JSON.parse(await readBody(req)) as { answers?: unknown; skip?: unknown };
+			if (body.skip !== true && Array.isArray(body.answers)) {
+				answers = Array.from({ length: pending.count }, (_, i) => String(body.answers instanceof Array ? (body.answers[i] ?? "") : "").slice(0, 1000));
+			}
+		} catch {
+			/* cuerpo inválido = sin respuesta */
+		}
+		pending.finish(answers);
 		sendJson(res, 200, { ok: true });
 		return true;
 	}
@@ -543,6 +591,7 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 							sendSseData(res, e.phase === "end" ? { type: "tool", ...e, image: screenshotUrl(e.image) } : { type: "tool", ...e }),
 						onTodo: (items) => sendSseData(res, { type: "todo", items }),
 						approver: createSseApprover(res, sessionId ?? "web-default"),
+						asker: createSseAsker(res),
 						signal: abort.signal,
 						voice,
 						mcp: mode === "chat" && !planning ? (turn ? turn.mcp : autonomous) : false,

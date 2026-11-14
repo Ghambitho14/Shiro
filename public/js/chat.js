@@ -1,7 +1,7 @@
 // La caja de escribir (adjuntos, arrastrar archivos) y enviar/recibir mensajes con el modelo (SSE, herramientas, aprobaciones).
 import * as projects from "./projects.js";
 import { icon } from "./icons.js";
-import { answerApproval, api, streamChat } from "./api.js";
+import { answerApproval, answerQuestions, api, streamChat } from "./api.js";
 import { CommandPalette } from "./commands.js";
 import { $, $$, el, notifySystem, openMenu, prefs, toast } from "./ui.js";
 import { input, messagesBox, refs, state } from "./state.js";
@@ -238,6 +238,7 @@ export function applyToolEvent(m, evt) {
 	if (evt.error) t.error = friendlyToolError(evt.error);
 	if (evt.image) t.image = evt.image;
 	if (evt.undo) t.undo = evt.undo;
+	if (evt.drawing) t.drawing = evt.drawing;
 }
 
 export function addApprovalCard(m, evt) {
@@ -278,6 +279,99 @@ export function addApprovalCard(m, evt) {
 	r.cards.push(entry);
 	notifySystem(`${who} necesita tu permiso`, evt.summary);
 	return decide;
+}
+
+/**
+ * Tarjeta de ask_user: cada pregunta con sus opciones (una o varias) y «Otra» para escribir.
+ * Al enviar, el paso de la respuesta guarda qué se preguntó y qué se eligió (se ve al recargar el chat).
+ */
+export function addQuestionCard(m, evt) {
+	const r = refs.get(m);
+	const who = m.agentName || state.name;
+	const card = el("div", "question-card");
+	const head = el("div", "question-head", `${icon("help", "sm")}<span></span>`);
+	$("span", head).textContent = `${who} te pregunta`;
+	card.append(head);
+	const picks = evt.questions.map(() => new Set());
+	const others = [];
+	const send = el("button", "btn primary sm", "Enviar");
+	const skip = el("button", "btn ghost sm", "Saltar");
+	const answerOf = (i) => [...picks[i], others[i].value.trim()].filter(Boolean).join(", ");
+	const refresh = () => (send.disabled = evt.questions.some((_, i) => !answerOf(i)));
+	evt.questions.forEach((q, i) => {
+		const box = el("div", "question-item");
+		const text = el("div", "question-text");
+		text.textContent = q.question + (q.multiple ? " (puedes elegir varias)" : "");
+		const opts = el("div", "question-options");
+		for (const o of q.options || []) {
+			const b = el("button", "question-opt");
+			b.type = "button";
+			b.textContent = o;
+			b.onclick = () => {
+				if (picks[i].has(o)) picks[i].delete(o);
+				else {
+					if (!q.multiple) picks[i].clear();
+					picks[i].add(o);
+				}
+				for (const x of opts.children) x.classList.toggle("on", picks[i].has(x.textContent));
+				refresh();
+			};
+			opts.append(b);
+		}
+		const other = el("input", "question-other");
+		other.placeholder = q.options?.length ? "Otra (escríbela)" : "Tu respuesta";
+		other.maxLength = 500;
+		other.oninput = refresh;
+		other.onkeydown = (e) => {
+			if (e.key === "Enter" && !send.disabled) send.click();
+		};
+		others.push(other);
+		box.append(text, opts, other);
+		card.append(box);
+	});
+	const actions = el("div", "question-actions");
+	actions.append(send, skip);
+	card.append(actions);
+	refresh();
+
+	const entry = { done: false };
+	const close = (text) => {
+		entry.done = true;
+		card.className = "question-card done";
+		card.textContent = text;
+		paintAssistant(m);
+	};
+	/** El paso de ask_user guarda las respuestas en su texto. */
+	const noteInStep = (answers) => {
+		const step = [...(m.tools || [])].reverse().find((t) => t.name === "ask_user");
+		if (!step) return;
+		step.label = answers
+			? "Te preguntó: " + evt.questions.map((q, i) => `${q.question} → ${answers[i]}`).join(" · ")
+			: "Te preguntó (sin respuesta): " + evt.questions.map((q) => q.question).join(" · ");
+	};
+	const answer = async (answers) => {
+		if (entry.done) return;
+		noteInStep(answers);
+		close(answers ? evt.questions.map((q, i) => `✓ ${q.question} → ${answers[i]}`).join("\n") : "Preguntas saltadas.");
+		try {
+			await answerQuestions(evt.id, answers);
+		} catch (err) {
+			toast(err.message, "error");
+		}
+	};
+	send.onclick = () => answer(evt.questions.map((_, i) => answerOf(i)));
+	skip.onclick = () => answer(null);
+	entry.id = evt.id;
+	entry.expire = () => {
+		if (entry.done) return;
+		noteInStep(null);
+		close("Las preguntas ya no esperan respuesta.");
+	};
+	entry.cancel = entry.expire;
+	r.approvals.append(card);
+	r.cards.push(entry);
+	setTimeout(() => (others[0] && !evt.questions[0].options?.length ? others[0].focus() : null), 0);
+	notifySystem(`${who} te pregunta`, evt.questions[0]?.question || "");
 }
 
 export async function runAssistant({ voice = false, hooks = {} } = {}) {
@@ -350,6 +444,14 @@ export async function runAssistant({ voice = false, hooks = {} } = {}) {
 					repaint();
 					scrollToBottom();
 					hooks.onApproval?.(evt, decide);
+				},
+				onQuestion: (evt) => {
+					addQuestionCard(m, evt);
+					repaint();
+					scrollToBottom();
+				},
+				onQuestionDone: (id) => {
+					refs.get(m)?.cards.find((c) => c.id === id)?.expire?.();
 				},
 				onAgent: (agent) => {
 					setMessageAgent(m, agent);

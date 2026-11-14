@@ -117,6 +117,10 @@ export async function streamChat(body, handlers, signal) {
 					handlers.onTodo?.(evt.items);
 				} else if (evt.type === "approval") {
 					handlers.onApproval?.(evt);
+				} else if (evt.type === "question") {
+					handlers.onQuestion?.(evt);
+				} else if (evt.type === "question_done") {
+					handlers.onQuestionDone?.(evt.id);
 				} else if (evt.type === "agent") {
 					handlers.onAgent?.(evt.agent);
 				} else if (evt.type === "room") {
@@ -168,6 +172,11 @@ export async function streamEvents(url, onEvent, signal) {
 /** Responde a una petición de permiso. */
 export function answerApproval(id, approved, remember = false) {
 	return api("/api/approvals/" + encodeURIComponent(id), { method: "POST", json: { approved, remember } });
+}
+
+/** Responde a las preguntas de ask_user (answers: una por pregunta; null = saltarlas). */
+export function answerQuestions(id, answers) {
+	return api("/api/questions/" + encodeURIComponent(id), { method: "POST", json: answers ? { answers } : { skip: true } });
 }
 
 /** Carga una imagen protegida (capturas) como URL local. */

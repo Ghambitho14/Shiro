@@ -10,6 +10,7 @@ import type { UserProfileForAgent } from "./Agent.js";
 import type { ThinkingLevel } from "../../config/config.js";
 import type { ChatMode, PermissionMode } from "./chatMode.js";
 import type { TodoItem } from "./previousWork.js";
+import type { Asker } from "../tools/modules/ask.js";
 
 export type AgentRunContext = {
 	llm: LLMClient;
@@ -37,6 +38,10 @@ export type AgentRunContext = {
 	onTodo?: (items: TodoItem[]) => void;
 	/** Id de la copia para deshacer el último cambio de archivo (project edit o write); runAgent lo manda con el paso. */
 	undo?: string;
+	/** Quién contesta las preguntas de `ask_user` (solo la web en streaming). */
+	asker?: Asker;
+	/** Id del dibujo que acaba de hacer `draw`; runAgent lo manda con el paso. */
+	drawing?: string;
 };
 
 /** Lo que cabe en un resultado si no se sabe (fuera de una respuesta, o en las pruebas). */
