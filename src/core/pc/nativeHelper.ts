@@ -1,7 +1,8 @@
 /**
  * Código C# que PowerShell compila una sola vez (ver ensureNativeHelper).
  * Da acceso a funciones de Windows que no tienen comando directo:
- * teclado y ratón (SendInput), ventanas (EnumWindows/ShowWindow) y volumen (Core Audio).
+ * teclado y ratón (SendInput), ventanas (EnumWindows/ShowWindow), volumen (Core Audio)
+ * y el selector de carpetas moderno (IFileOpenDialog).
  */
 export const NATIVE_HELPER_SOURCE = String.raw`
 using System;
@@ -182,6 +183,84 @@ namespace ShiroPc {
 				string result = "{\"sw\":" + b.Width + ",\"sh\":" + b.Height + ",\"w\":" + img.Width + ",\"h\":" + img.Height + "}";
 				if (scaled) img.Dispose();
 				return result;
+			}
+		}
+	}
+
+	[ComImport, Guid("43826D1E-E718-42EE-BC55-A1E261C37BFE"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+	interface IShellItem {
+		void BindToHandler(IntPtr pbc, ref Guid bhid, ref Guid riid, out IntPtr ppv);
+		void GetParent(out IShellItem ppsi);
+		void GetDisplayName(uint sigdnName, [MarshalAs(UnmanagedType.LPWStr)] out string ppszName);
+	}
+
+	[ComImport, Guid("42F85136-DB7E-439C-85F1-E4075D135FC8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+	interface IFileOpenDialog {
+		[PreserveSig] int Show(IntPtr parent);
+		void SetFileTypes(uint cFileTypes, IntPtr rgFilterSpec);
+		void SetFileTypeIndex(uint iFileType);
+		void GetFileTypeIndex(out uint piFileType);
+		void Advise(IntPtr pfde, out uint pdwCookie);
+		void Unadvise(uint dwCookie);
+		void SetOptions(uint fos);
+		void GetOptions(out uint pfos);
+		void SetDefaultFolder(IShellItem psi);
+		void SetFolder(IShellItem psi);
+		void GetFolder(out IShellItem ppsi);
+		void GetCurrentSelection(out IShellItem ppsi);
+		void SetFileName([MarshalAs(UnmanagedType.LPWStr)] string pszName);
+		void GetFileName([MarshalAs(UnmanagedType.LPWStr)] out string pszName);
+		void SetTitle([MarshalAs(UnmanagedType.LPWStr)] string pszTitle);
+		void SetOkButtonLabel([MarshalAs(UnmanagedType.LPWStr)] string pszText);
+		void SetFileNameLabel([MarshalAs(UnmanagedType.LPWStr)] string pszLabel);
+		void GetResult(out IShellItem ppsi);
+	}
+
+	[ComImport, Guid("DC1C5A9C-E88A-4DDE-A5A1-60F82A20AEF7")]
+	class FileOpenDialogComObject { }
+
+	/** Selector de carpetas moderno de Windows (el del Explorador, como el de GitHub Desktop). */
+	public static class Folders {
+		const uint FOS_PICKFOLDERS = 0x20, FOS_FORCEFILESYSTEM = 0x40, FOS_PATHMUSTEXIST = 0x800;
+		const uint SIGDN_FILESYSPATH = 0x80058000;
+		const int ERROR_CANCELLED = unchecked((int)0x800704C7);
+
+		/** Devuelve la carpeta elegida o "" si se canceló. */
+		public static string Pick(string title) {
+			// Ventana invisible y siempre encima como dueña: así el selector sale delante de Aku.
+			var owner = new global::System.Windows.Forms.Form();
+			owner.TopMost = true;
+			owner.ShowInTaskbar = false;
+			owner.FormBorderStyle = global::System.Windows.Forms.FormBorderStyle.None;
+			// Windows pone el selector con su esquina en la de la dueña: se corre esta medio selector
+			// (≈ 960 × 560 px lógicos) arriba y a la izquierda del centro para que quede centrado.
+			var area = global::System.Windows.Forms.Screen.PrimaryScreen.WorkingArea;
+			double scale = 1;
+			using (var g = global::System.Drawing.Graphics.FromHwnd(IntPtr.Zero)) scale = g.DpiX / 96.0;
+			owner.StartPosition = global::System.Windows.Forms.FormStartPosition.Manual;
+			owner.Location = new global::System.Drawing.Point(
+				Math.Max(area.Left, area.Left + area.Width / 2 - (int)(480 * scale)),
+				Math.Max(area.Top, area.Top + area.Height / 2 - (int)(280 * scale)));
+			owner.Size = new global::System.Drawing.Size(1, 1);
+			owner.Opacity = 0;
+			owner.Show();
+			owner.Activate();
+			try {
+				var dialog = (IFileOpenDialog)new FileOpenDialogComObject();
+				uint options;
+				dialog.GetOptions(out options);
+				dialog.SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
+				if (!string.IsNullOrEmpty(title)) dialog.SetTitle(title);
+				int hr = dialog.Show(owner.Handle);
+				if (hr == ERROR_CANCELLED) return "";
+				Marshal.ThrowExceptionForHR(hr);
+				IShellItem item;
+				dialog.GetResult(out item);
+				string path;
+				item.GetDisplayName(SIGDN_FILESYSPATH, out path);
+				return path ?? "";
+			} finally {
+				owner.Close();
 			}
 		}
 	}

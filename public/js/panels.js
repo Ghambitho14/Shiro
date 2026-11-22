@@ -576,14 +576,27 @@ export function initPanels({ toast, onTool }) {
 
 	return {
 		show,
-		/** Eventos de herramientas del chat: abre el panel que Shiro está usando y lo indica. */
+		/** La respuesta terminó (o se detuvo sin el «fin» de la herramienta): ningún panel queda «en uso». */
+		idle() {
+			for (const name of Object.keys(panes)) {
+				buttons[name].classList.remove("working");
+				panes[name].busy("");
+			}
+		},
+		/**
+		 * Eventos de herramientas del chat: abre el panel que Shiro está usando y lo indica.
+		 * En el teléfono no se abre solo (taparía el chat entero): el botón queda marcado («working»)
+		 * y el menú ⋯ lo dice, por si se quiere mirar.
+		 */
 		onTool(evt) {
 			onTool?.(evt);
 			// Claude Code enseña su progreso en el panel Terminal (los ayudantes van a la página Oficina, sin abrir nada).
 			const name = { browser: "browser", terminal: "terminal", claude_code: "terminal" }[evt.name] ?? null;
 			if (!name) return;
-			if (evt.phase === "start") {
-				show(name, true);
+			const working = evt.phase === "start";
+			buttons[name].classList.toggle("working", working);
+			if (working) {
+				if (!window.matchMedia("(max-width: 860px)").matches) show(name, true);
 				panes[name].busy(evt.label);
 			} else {
 				panes[name].busy("");

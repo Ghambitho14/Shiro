@@ -36,6 +36,7 @@ import {
 	type ChatMessage,
 } from "./chat/ChatStore.js";
 import { closeChatSession, CloseChatError } from "./chat/closeChat.js";
+import { appendDetachedReply, createReplyRecorder, finishRun, listRuns, startRun, stopRun } from "./chat/backgroundRuns.js";
 import { getMessagePreview } from "./core/agent/contentUtils.js";
 import { isBodyTooLargeError, readBody, safeDecode, sendJson, sendSseData } from "./http.js";
 
@@ -184,6 +185,25 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 		}
 		pending.finish(answers);
 		sendJson(res, 200, { ok: true });
+		return true;
+	}
+
+	// Respuestas en marcha: la web espera a las que siguen sin ella (salió del chat o se cortó la conexión).
+	if (method === "GET" && pathname === "/api/chat/runs") {
+		sendJson(res, 200, { runs: listRuns() });
+		return true;
+	}
+
+	// «Detener»: lo único que cancela una respuesta (cortar la conexión ya no la cancela).
+	if (method === "POST" && pathname === "/api/chat/stop") {
+		let runId = "";
+		try {
+			const body = JSON.parse(await readBody(req)) as { runId?: unknown };
+			runId = typeof body.runId === "string" ? body.runId : "";
+		} catch {
+			/* cuerpo inválido */
+		}
+		sendJson(res, 200, { stopped: runId ? stopRun(runId) : false });
 		return true;
 	}
 
@@ -556,16 +576,34 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 					"Cache-Control": "no-cache, no-transform",
 					Connection: "keep-alive",
 				});
-				sendSseData(res, { type: "start" });
+				// Si se corta la conexión (salió de la página, cambió de app o de chat), la respuesta sigue;
+				// solo «Detener» (POST /api/chat/stop con este runId) la cancela. Al terminar, el servidor la
+				// guarda siempre él mismo en el chat (`saveReply`, antes de `done`): en el teléfono la conexión
+				// puede morir sin aviso cuando el servidor ya terminó, y la web nunca recibiría `done`. Si la
+				// web sigue conectada, su guardado (PUT del chat entero) reemplaza la lista: no se duplica.
+				// Los permisos y preguntas pendientes cuentan como sin respuesta al cortarse (createSse*).
+				const chatId = sessionId && isValidSessionId(sessionId) ? sessionId : undefined;
+				const run = startRun(chatId);
+				const abort = run.abort;
+				const recorder = createReplyRecorder();
+				sendSseData(res, { type: "start", runId: run.id });
 				if (roomPayload?.room && roomPlan?.changed) sendSseData(res, { type: "room", ...roomPayload });
 				if (speaker) sendSseData(res, { type: "agent", agent: publicAgent(speaker) });
-				// Si el navegador corta la conexión (botón "Detener"), se cancela el modelo y las tools pendientes.
-				const abort = new AbortController();
-				res.on("close", () => {
-					if (!res.writableEnded) abort.abort();
-				});
 				const usage = newUsage();
 				let context: ContextReport | undefined;
+				const saveReply = async (content: string) => {
+					if (abort.signal.aborted || !chatId || !content.trim()) return;
+					const reply: ChatMessage = {
+						role: "assistant",
+						content,
+						ts: Date.now(),
+						...recorder.parts(),
+						...(speaker ? { agent: speaker.id, agentName: speaker.name } : {}),
+						...(usage.turns ? { usage } : {}),
+						...(context ? { context } : {}),
+					};
+					await appendDetachedReply(chatId, reply).catch((err) => console.error("No se pudo guardar la respuesta en el chat:", err));
+				};
 				try {
 					const content = await runAgent(goal, {
 						llm: turn?.llm ?? getLLM(),
@@ -587,9 +625,15 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 						onContext: (r) => {
 							context = r;
 						},
-						onToolEvent: (e) =>
-							sendSseData(res, e.phase === "end" ? { type: "tool", ...e, image: screenshotUrl(e.image) } : { type: "tool", ...e }),
-						onTodo: (items) => sendSseData(res, { type: "todo", items }),
+						onToolEvent: (e) => {
+							const image = e.phase === "end" ? screenshotUrl(e.image) : undefined;
+							recorder.tool(e, image);
+							sendSseData(res, e.phase === "end" ? { type: "tool", ...e, image } : { type: "tool", ...e });
+						},
+						onTodo: (items) => {
+							recorder.todo(items);
+							sendSseData(res, { type: "todo", items });
+						},
 						approver: createSseApprover(res, sessionId ?? "web-default"),
 						asker: createSseAsker(res),
 						signal: abort.signal,
@@ -599,13 +643,20 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 						sessionId,
 						projectId: project?.id,
 					}, workspaceContext ?? undefined);
-					if (abort.signal.aborted) return true;
+					if (abort.signal.aborted) {
+						res.end();
+						return true;
+					}
+					await saveReply(content);
 					sendSseData(res, { type: "done", content, ...speakerInfo, ...(usage.turns ? { usage } : {}), ...(context ? { context } : {}) });
 					res.end();
 				} catch (errIn) {
 					const msgIn = errIn instanceof Error ? errIn.message : String(errIn);
+					await saveReply(`⚠️ ${msgIn}`);
 					sendSseData(res, { type: "error", message: msgIn });
 					res.end();
+				} finally {
+					finishRun(run.id);
 				}
 				return true;
 			}

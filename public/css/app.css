@@ -232,6 +232,24 @@ a {
 	flex-shrink: 0;
 }
 
+/* Panel que Aku está usando sin abrirlo (en el teléfono no se abre solo): un puntito. */
+#browser-btn.working,
+#terminal-btn.working {
+	position: relative;
+}
+
+#browser-btn.working::after,
+#terminal-btn.working::after {
+	content: "";
+	position: absolute;
+	top: 6px;
+	right: 6px;
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: var(--accent);
+}
+
 .icon-btn:hover:not(:disabled) {
 	background: var(--bg-hover);
 	color: var(--text);

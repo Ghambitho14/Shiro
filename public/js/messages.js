@@ -136,8 +136,8 @@ export function buildAssistant(m) {
 			<div class="msg-author" hidden></div>
 			<div class="todo" hidden><div class="todo-head"></div><div class="todo-list"></div></div>
 			<div class="steps" hidden><button type="button" class="steps-toggle">${icon("chevronDown", "sm")}<span></span></button><div class="steps-list"></div></div>
-			<div class="approvals"></div>
 			<div class="md"></div>
+			<div class="approvals"></div>
 			<div class="drawings" hidden></div>
 			<div class="changes" hidden></div>
 			<div class="extra"></div>
@@ -603,13 +603,44 @@ export function nearBottom() {
 	return thread.scrollHeight - thread.scrollTop - thread.clientHeight < 140;
 }
 
+/**
+ * Seguir el final mientras Aku escribe. Se apaga en cuanto la persona sube (aunque sea un poco: en el
+ * teléfono un deslizamiento corto no llegaba a los 140 px de `nearBottom` y el siguiente trozo la
+ * devolvía abajo) y se enciende al volver justo al final (4 px: el anclaje del scroll mueve unos px solo) o con `scrollToBottom`.
+ */
+let follow = true;
+let lastTop = 0;
+
+export function followingBottom() {
+	return follow;
+}
+
 export function scrollToBottom(smooth = false) {
+	follow = true;
 	thread.scrollTo({ top: thread.scrollHeight, behavior: smooth ? "smooth" : "auto" });
 }
 
 /** Lo que antes se hacía al cargar la página (botones, eventos); app.js lo llama en orden. */
 export function initMessages() {
-	thread.addEventListener("scroll", () => $("#scroll-bottom").classList.toggle("show", !nearBottom()));
+	const atEnd = () => thread.scrollHeight - thread.scrollTop - thread.clientHeight < 4;
+	thread.addEventListener("wheel", (e) => {
+		if (e.deltaY < 0) follow = false;
+	}, { passive: true });
+	let touchY = 0;
+	thread.addEventListener("touchstart", (e) => (touchY = e.touches[0]?.clientY ?? 0), { passive: true });
+	thread.addEventListener("touchmove", (e) => {
+		// El dedo baja = el contenido sube = la persona quiere ver lo de arriba.
+		if ((e.touches[0]?.clientY ?? 0) > touchY + 4) follow = false;
+	}, { passive: true });
+	thread.addEventListener("scroll", () => {
+		// Subir (el contenido nuevo nunca baja scrollTop) apaga; llegar al final bajando enciende.
+		// Cerca del final, lo de subir lo deciden wheel/touchmove (si el contenido encoge, scrollTop baja solo).
+		const end = atEnd();
+		if (thread.scrollTop < lastTop - 2 && !end) follow = false;
+		else if (end && thread.scrollTop >= lastTop) follow = true;
+		lastTop = thread.scrollTop;
+		$("#scroll-bottom").classList.toggle("show", !nearBottom());
+	});
 	$("#scroll-bottom").onclick = () => scrollToBottom(true);
 	messagesBox.addEventListener("click", (e) => {
 		const btn = e.target.closest(".copy-code");

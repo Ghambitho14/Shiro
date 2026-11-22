@@ -9,7 +9,7 @@ import { initOffice } from "./office.js";
 import { $, $$, closeMenu, confirmDialog, el, isMobile, menuAnchor, norm, openMenu, openMenuEl, prefs, savePrefs, setTheme, showMenu, toast } from "./ui.js";
 import { input, state } from "./state.js";
 import { contentParts, fromServer, inProjectHome, paintCrumb, renderThread, scrollToBottom, updateEmpty } from "./messages.js";
-import { paintAttachments, setStatus, stopGeneration } from "./chat.js";
+import { detachGeneration, paintAttachments, setStatus, watchBackgroundRun } from "./chat.js";
 import { initPermissions, paintPermissions, permissionNote } from "./permissions.js";
 import { refreshContextMeter } from "./contextMeter.js";
 import { loadRoom, paintRoomBar, setRoom } from "./rooms.js";
@@ -243,7 +243,7 @@ export function showView(view) {
 
 /** Página de un proyecto: su cabecera, el cuadro para empezar un chat y sus archivos, instrucciones y chats. */
 export async function openProject(id, push = true) {
-	if (state.busy) stopGeneration();
+	detachGeneration();
 	stopReading();
 	closeSidebarMobile();
 	try {
@@ -267,7 +267,7 @@ export async function openProject(id, push = true) {
 }
 
 export function openOverview(push = true) {
-	if (state.busy) stopGeneration();
+	detachGeneration();
 	closeSidebarMobile();
 	state.projectHome = null;
 	state.activeId = null;
@@ -300,9 +300,10 @@ export async function openChat(id, push = true) {
 		if (push) setRoute(id);
 		return;
 	}
-	if (state.busy) stopGeneration();
 	closeSidebarMobile();
 	if (id === state.activeId && state.messages.length && state.view === "chat") return;
+	// La respuesta en curso no se corta: sigue en el servidor y se guarda sola en su chat.
+	detachGeneration();
 	try {
 		const d = await api(`/api/chat-sessions/${encodeURIComponent(id)}`);
 		state.projectHome = null;
@@ -326,6 +327,8 @@ export async function openChat(id, push = true) {
 		state.room = null;
 		paintRoomBar();
 		loadRoom(id);
+		// Si este chat sigue respondiendo sin la web (saliste a mitad), se espera y se recarga.
+		watchBackgroundRun(id);
 	} catch {
 		toast("No encontré ese chat.", "error");
 		newChat();
@@ -333,7 +336,7 @@ export async function openChat(id, push = true) {
 }
 
 export function newChat(push = true) {
-	if (state.busy) stopGeneration();
+	detachGeneration();
 	stopReading();
 	state.activeId = null;
 	state.projectHome = null;
@@ -567,8 +570,8 @@ export function initSidebar() {
 		if ($(".topbar").clientWidth <= 480) {
 			const dark = document.documentElement.dataset.theme === "dark";
 			items.push(
-				{ label: "Navegador", icon: "globe", onClick: () => $("#browser-btn").click() },
-				{ label: "Terminal", icon: "terminal", onClick: () => $("#terminal-btn").click() },
+				{ label: $("#browser-btn").classList.contains("working") ? "Navegador (en uso)" : "Navegador", icon: "globe", onClick: () => $("#browser-btn").click() },
+				{ label: $("#terminal-btn").classList.contains("working") ? "Terminal (en uso)" : "Terminal", icon: "terminal", onClick: () => $("#terminal-btn").click() },
 				{ label: dark ? "Tema claro" : "Tema oscuro", icon: dark ? "sun" : "moon", onClick: () => $("#theme-btn").click() },
 				"sep",
 			);

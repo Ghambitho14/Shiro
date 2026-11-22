@@ -5,7 +5,7 @@ import { answerApproval, answerQuestions, api, streamChat } from "./api.js";
 import { CommandPalette } from "./commands.js";
 import { $, $$, el, notifySystem, openMenu, prefs, toast } from "./ui.js";
 import { input, messagesBox, refs, state } from "./state.js";
-import { buildAssistant, buildContent, buildUser, inProjectHome, markLast, nearBottom, paintAssistant, scrollToBottom, updateEmpty } from "./messages.js";
+import { buildAssistant, buildContent, buildUser, followingBottom, fromServer, inProjectHome, markLast, paintAssistant, renderThread, scrollToBottom, updateEmpty } from "./messages.js";
 import { persist, setRoom } from "./rooms.js";
 import { newChat, paintSidebar, panels, rememberChat, setRoute } from "./sidebar.js";
 import { readAloud, stopReading, voice as voiceMode } from "./voiceMode.js";
@@ -385,23 +385,28 @@ export async function runAssistant({ voice = false, hooks = {} } = {}) {
 	// se sigue guardando en el suyo.
 	const sessionId = state.activeId;
 	const list = state.messages;
-	const m = { role: "assistant", content: "", tools: [], ts: Date.now(), streaming: true };
-	list.push(m);
-	messagesBox.append(buildAssistant(m));
-	markLast();
-	scrollToBottom();
-	setBusy(true);
-
 	const controller = new AbortController();
 	state.controller = controller;
+	setBusy(true);
+	// Tu mensaje se guarda antes de pedir la respuesta: si se corta la conexión (saliste de la app o de
+	// este chat), el servidor termina la respuesta y la añade él mismo a este chat.
+	await persist(sessionId, list);
+	const m = { role: "assistant", content: "", tools: [], ts: Date.now(), streaming: true };
+	list.push(m);
+	if (list === state.messages) {
+		messagesBox.append(buildAssistant(m));
+		markLast();
+		scrollToBottom();
+	}
 	let raf = 0;
 	const repaint = () => {
 		if (raf) return;
 		raf = requestAnimationFrame(() => {
 			raf = 0;
-			const stick = nearBottom();
+			const stick = followingBottom();
 			paintAssistant(m);
 			if (stick) scrollToBottom();
+			else $("#scroll-bottom").classList.toggle("show", true);
 		});
 	};
 	// También al regenerar: el último mensaje guarda el modo con el que se respondió.
@@ -424,6 +429,9 @@ export async function runAssistant({ voice = false, hooks = {} } = {}) {
 		await streamChat(
 			{ messages: payload, sessionId, voice, mode: state.mode, permissions: state.permissions, reasoning: state.moreReasoning ? "more" : undefined },
 			{
+				onStart: (runId) => {
+					controller.runId = runId;
+				},
 				onDelta: (full) => {
 					m.content = full;
 					repaint();
@@ -477,6 +485,23 @@ export async function runAssistant({ voice = false, hooks = {} } = {}) {
 		);
 		setStatus(true);
 	} catch (err) {
+		// Saliste del chat (detachGeneration) o se cortó la conexión (cambiaste de app en el teléfono):
+		// la respuesta sigue en el servidor, que la guarda entera en el chat. Aquí no se guarda el trozo.
+		if ((controller.detached || err.connectionLost) && controller.runId) {
+			cancelAnimationFrame(raf);
+			refs.get(m)?.cards.forEach((c) => c.cancel?.());
+			refs.get(m)?.root.remove();
+			list.splice(list.indexOf(m), 1);
+			if (state.controller === controller) {
+				state.controller = null;
+				setBusy(false);
+			}
+			panels.idle();
+			markLast();
+			hooks.onDone?.(m);
+			if (sessionId === state.activeId && list === state.messages) watchBackgroundRun(sessionId);
+			return;
+		}
 		if (controller.signal.aborted) m.stopped = true;
 		else {
 			m.error = err.message || String(err);
@@ -503,12 +528,15 @@ export async function runAssistant({ voice = false, hooks = {} } = {}) {
 	} else {
 		if (m.tools.length > 3) refs.get(m)?.steps.classList.add("collapsed");
 		// El pintado final colorea el código y puede crecer: se mantiene pegado al final.
-		const stick = nearBottom();
+		const stick = followingBottom();
 		paintAssistant(m);
 		if (stick && list === state.messages) scrollToBottom();
 	}
-	state.controller = null;
-	setBusy(false);
+	if (state.controller === controller) {
+		state.controller = null;
+		setBusy(false);
+	}
+	panels.idle();
 	markLast();
 	hooks.onDone?.(m);
 	if (list === state.messages) refreshContextMeter();
@@ -516,8 +544,88 @@ export async function runAssistant({ voice = false, hooks = {} } = {}) {
 	if (!voice && prefs.autoRead && m.content && !m.error) readAloud(m);
 }
 
+/** «Detener» (botón, Escape, interrumpir la voz): cancela de verdad la respuesta en el servidor. */
 export function stopGeneration() {
+	const runId = state.controller?.runId || waiting?.runId;
+	if (runId) api("/api/chat/stop", { method: "POST", json: { runId } }).catch(() => {});
 	state.controller?.abort();
+}
+
+/** Salir del chat a mitad de respuesta (abrir otro, un proyecto, uno nuevo): la respuesta sigue sola. */
+export function detachGeneration() {
+	if (waiting) {
+		waiting.cancelled = true;
+		waiting = null;
+		if (!state.controller) setBusy(false);
+	}
+	if (!state.controller) return;
+	state.controller.detached = true;
+	state.controller.abort();
+}
+
+/** Respuesta que sigue en el servidor sin la web y que se está esperando ({ sessionId, runId }). */
+let waiting = null;
+
+/**
+ * Espera a que termine una respuesta que sigue en el servidor sin esta web (saliste de la app o del chat)
+ * y luego recarga el chat, donde el servidor ya la guardó. Mientras, el chat queda ocupado con un aviso
+ * y «Detener» la cancela. Si abres otro chat, deja de esperar (al volver se mira otra vez).
+ */
+export async function watchBackgroundRun(sessionId) {
+	if (!sessionId || waiting?.sessionId === sessionId || state.controller) return;
+	const me = { sessionId, runId: "", cancelled: false };
+	let placeholder = null;
+	let failures = 0;
+	try {
+		while (!me.cancelled && state.activeId === sessionId && (!waiting || waiting === me)) {
+			let run;
+			try {
+				run = (await api("/api/chat/runs")).runs?.find((r) => r.sessionId === sessionId);
+				failures = 0;
+			} catch {
+				// Sin conexión (el teléfono acaba de volver): se reintenta un rato antes de rendirse.
+				if (++failures > 30) break;
+				await new Promise((r) => setTimeout(r, 2000));
+				continue;
+			}
+			if (me.cancelled || state.activeId !== sessionId || (waiting && waiting !== me)) break;
+			if (!run) {
+				if (placeholder) await reloadChat(sessionId);
+				break;
+			}
+			me.runId = run.runId;
+			if (!placeholder) {
+				waiting = me;
+				const pm = { role: "assistant", content: `_${state.name || "Aku"} sigue respondiendo…_`, tools: [], streaming: true };
+				placeholder = buildAssistant(pm);
+				paintAssistant(pm);
+				messagesBox.append(placeholder);
+				scrollToBottom();
+				setBusy(true);
+			}
+			await new Promise((r) => setTimeout(r, 2000));
+		}
+	} finally {
+		placeholder?.remove();
+		if (waiting === me) {
+			waiting = null;
+			if (!state.controller) setBusy(false);
+		}
+	}
+}
+
+/** Vuelve a leer el chat del servidor (con la respuesta que guardó él) si sigue a la vista. */
+async function reloadChat(sessionId) {
+	try {
+		const d = await api(`/api/chat-sessions/${encodeURIComponent(sessionId)}`);
+		if (state.activeId !== sessionId) return;
+		state.messages = (d.session.messages || []).map(fromServer);
+		renderThread();
+		requestAnimationFrame(() => scrollToBottom());
+		refreshContextMeter();
+	} catch (err) {
+		toast(`No pude recargar el chat: ${err.message}`, "error");
+	}
 }
 
 export function setMessageAgent(m, agent) {
@@ -552,6 +660,10 @@ export function initComposer() {
 	// Menú de comandos al escribir "/" (public/js/commands.js).
 	new CommandPalette(input, $("#composer"), { onSubmit: () => $("#composer").requestSubmit() });
 	$("#stop-btn").onclick = () => stopGeneration();
+	// Vuelves a la app (teléfono): si el chat abierto siguió respondiendo sin la web, se espera y se recarga.
+	document.addEventListener("visibilitychange", () => {
+		if (document.visibilityState === "visible" && state.activeId && !state.controller) watchBackgroundRun(state.activeId);
+	});
 	$("#attach-btn").onclick = (e) =>
 		openMenu(e.currentTarget, [
 			{ label: "Añadir archivos", icon: "file", onClick: () => $("#file-input").click() },

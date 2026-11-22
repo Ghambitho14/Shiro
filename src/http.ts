@@ -72,6 +72,6 @@ export function sendJson(res: ServerResponse, status: number, data: object): voi
 }
 
 export function sendSseData(res: ServerResponse, payload: Record<string, unknown>): void {
-	if (res.writableEnded) return;
+	if (res.writableEnded || res.destroyed) return;
 	res.write(`data: ${JSON.stringify(payload)}\n\n`);
 }

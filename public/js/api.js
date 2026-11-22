@@ -93,7 +93,14 @@ export async function streamChat(body, handlers, signal) {
 	let full = "";
 	let finished = false;
 	while (true) {
-		const { done, value } = await reader.read();
+		let chunk;
+		try {
+			chunk = await reader.read();
+		} catch (err) {
+			if (signal?.aborted) throw err;
+			throw connectionLost(full);
+		}
+		const { done, value } = chunk;
 		if (done) break;
 		buf += dec.decode(value, { stream: true });
 		let sep;
@@ -108,7 +115,9 @@ export async function streamChat(body, handlers, signal) {
 				} catch {
 					continue;
 				}
-				if (evt.type === "delta" && evt.text) {
+				if (evt.type === "start") {
+					handlers.onStart?.(evt.runId);
+				} else if (evt.type === "delta" && evt.text) {
 					full += evt.text;
 					handlers.onDelta?.(full, evt.text);
 				} else if (evt.type === "tool") {
@@ -135,9 +144,14 @@ export async function streamChat(body, handlers, signal) {
 		}
 	}
 	if (!finished && !signal?.aborted) {
-		// El servidor cortó sin terminar: se conserva lo recibido.
-		handlers.onDone?.({ content: full, incomplete: true });
+		// Se cortó sin terminar: la respuesta puede seguir en el servidor, que la guarda sola en el chat.
+		throw connectionLost(full);
 	}
+}
+
+/** Conexión cortada a mitad de respuesta (`connectionLost`), con lo que alcanzó a llegar (`partial`). */
+function connectionLost(partial = "") {
+	return Object.assign(new Error("Se cortó la conexión con Aku."), { connectionLost: true, partial });
 }
 
 /** Escucha un flujo de eventos del servidor (SSE) hasta que se corte o se cancele. */
