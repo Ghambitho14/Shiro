@@ -54,6 +54,38 @@ function fromJson(text: string): ParsedToolCall | null {
 	}
 }
 
+/** Valor de un <parameter>: números, true/false, listas y objetos se leen como JSON; lo demás queda como texto. */
+function xmlValue(raw: string): unknown {
+	const value = raw.replace(/^\r?\n/, "").replace(/\r?\n$/, "");
+	const t = value.trim();
+	if (/^(-?\d+(\.\d+)?|true|false|null)$/.test(t) || /^[[{]/.test(t)) {
+		try {
+			return JSON.parse(t);
+		} catch {
+			/* no era JSON: va como texto */
+		}
+	}
+	return value;
+}
+
+/**
+ * Formato XML de LFM3 y Qwen3-Coder:
+ * <function=nombre><parameter=clave>valor</parameter></function>
+ */
+function fromXml(text: string): ParsedToolCall[] {
+	const calls: ParsedToolCall[] = [];
+	const fn = /<function=([^>\s]+)\s*>([\s\S]*?)(?:<\/function>|$)/g;
+	let m: RegExpExecArray | null;
+	while ((m = fn.exec(text)) !== null) {
+		const args: Record<string, unknown> = {};
+		const param = /<parameter=([^>\s]+)\s*>([\s\S]*?)(?:<\/parameter>|(?=<parameter=)|$)/g;
+		let p: RegExpExecArray | null;
+		while ((p = param.exec(m[2])) !== null) args[p[1]] = xmlValue(p[2]);
+		calls.push({ name: m[1], args });
+	}
+	return calls;
+}
+
 /** Extrae las llamadas a herramientas del texto del modelo. */
 export function parseTextToolCalls(text: string, knownTools: Set<string>): ParsedToolCall[] {
 	const calls: ParsedToolCall[] = [];
@@ -63,8 +95,13 @@ export function parseTextToolCalls(text: string, knownTools: Set<string>): Parse
 		const body = m[1].replace(/^```(?:json)?\s*|\s*```$/g, "");
 		const call = fromJson(body);
 		if (call) calls.push(call);
+		else calls.push(...fromXml(body));
 	}
 	if (calls.length) return calls;
+
+	// <function=…> sin la etiqueta <tool_call> alrededor: solo si es una herramienta que existe.
+	const bare = fromXml(text).filter((c) => knownTools.has(c.name));
+	if (bare.length) return bare;
 
 	// Algunos modelos olvidan las etiquetas y responden solo el JSON (a veces en ```json).
 	const trimmed = text.trim().replace(/^```(?:json)?\s*|\s*```$/g, "");
@@ -81,5 +118,8 @@ export function formatTextToolResult(name: string, content: string): string {
 
 /** Texto visible para el usuario: sin bloques <tool_call>. */
 export function stripToolCalls(text: string): string {
-	return text.replace(/<tool_call>[\s\S]*?(<\/tool_call>|$)/g, "").trim();
+	return text
+		.replace(/<tool_call>[\s\S]*?(<\/tool_call>|$)/g, "")
+		.replace(/<function=[^>\s]+\s*>[\s\S]*?(<\/function>|$)/g, "")
+		.trim();
 }

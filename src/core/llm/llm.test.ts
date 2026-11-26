@@ -34,6 +34,31 @@ test("parseTextToolCalls lee el formato <tool_call>", () => {
 	deepStrictEqual(calls, [{ name: "get_time", args: { timezone: "UTC" } }]);
 });
 
+test("parseTextToolCalls lee el formato XML de LFM3 / Qwen3-Coder", () => {
+	const text = [
+		"Voy a mirar.",
+		"<tool_call>",
+		"<function=read_file>",
+		"<parameter=path>",
+		"C:\\notas\\a b.md",
+		"</parameter>",
+		"<parameter=limit>40</parameter>",
+		"<parameter=flags>[\"x\", 1]</parameter>",
+		"</function>",
+		"</tool_call>",
+		"<tool_call><function=get_time></function></tool_call>",
+	].join("\n");
+	deepStrictEqual(parseTextToolCalls(text, new Set(["read_file", "get_time"])), [
+		{ name: "read_file", args: { path: "C:\\notas\\a b.md", limit: 40, flags: ["x", 1] } },
+		{ name: "get_time", args: {} },
+	]);
+});
+
+test("parseTextToolCalls acepta <function=…> sin <tool_call> solo si la tool existe", () => {
+	strictEqual(parseTextToolCalls("<function=get_time><parameter=tz>UTC</parameter></function>", new Set(["get_time"])).length, 1);
+	strictEqual(parseTextToolCalls("<function=otra></function>", new Set(["get_time"])).length, 0);
+});
+
 test("parseTextToolCalls acepta JSON suelto solo si la tool existe", () => {
 	strictEqual(parseTextToolCalls('{"name": "get_time", "arguments": {}}', new Set(["get_time"])).length, 1);
 	strictEqual(parseTextToolCalls('{"name": "otra", "arguments": {}}', new Set(["get_time"])).length, 0);

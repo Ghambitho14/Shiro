@@ -286,6 +286,7 @@
 					<button data-tab="profile"><span data-icon="user" data-size="sm"></span>Personalización</button>
 					<button data-tab="storage"><span data-icon="folder" data-size="sm"></span>Datos</button>
 					<button data-tab="connections"><span data-icon="phone" data-size="sm"></span>Conexiones</button>
+					<button data-tab="runs"><span data-icon="cpu" data-size="sm"></span>Registro</button>
 				</nav>
 				<div class="settings-panel" id="settings-panel">
 					<!-- General -->
@@ -429,6 +430,22 @@
 							<div class="set-row">
 								<div class="label"><strong>Leer las respuestas en voz alta</strong><span>También en el chat escrito, no solo en modo voz.</span></div>
 								<label class="switch"><input type="checkbox" id="set-autoread" /><span class="track"></span></label>
+							</div>
+						</div>
+						<div class="set-group">
+							<h3>Modo asistente</h3>
+							<p class="set-desc">Como Alexa: Aku se queda en segundo plano (su ícono junto al reloj) y, cuando dices «<b class="wake-word">Aku</b>», abre una ventanita de voz y te dice «Dígame». Si no le hablas, se cierra sola. También arranca con Windows, sin abrir ventana.</p>
+							<div class="set-row">
+								<div class="label"><strong>Escuchar «<b class="wake-word">Aku</b>»</strong><span id="wake-status"></span></div>
+								<label class="switch"><input type="checkbox" id="set-wake" /><span class="track"></span></label>
+							</div>
+							<div class="set-row">
+								<div class="label"><strong>Sensibilidad</strong><span>Si no te responde, súbela; si se activa solo, bájala.</span></div>
+								<select class="select" id="set-wake-sensitivity" style="max-width: 220px">
+									<option value="low">Baja</option>
+									<option value="medium">Media</option>
+									<option value="high">Alta</option>
+								</select>
 							</div>
 						</div>
 					</section>
@@ -597,6 +614,29 @@
 							<h3>¿Dónde guardo tus cosas?</h3>
 							<p class="set-desc">Tus chats, lo que recuerdo de ti y tus recordatorios. Los ajustes, las claves y las sesiones de WhatsApp siempre se quedan en este equipo.</p>
 							<div id="storage-form"></div>
+						</div>
+					</section>
+
+					<!-- Registro -->
+					<section data-panel="runs">
+						<div class="set-group">
+							<h3>Examen del agente</h3>
+							<p class="set-desc">Le da a Aku tareas fijas (usar la memoria, buscar y editar en un proyecto, no inventar, no obedecer órdenes escondidas, no atacar sin alcance…) y dice cuántas hizo bien. Sirve para comparar modelos y para ver si un cambio lo empeoró.</p>
+							<div id="exam-status" class="notice">Consultando…</div>
+							<div class="exam-list" id="exam-results"></div>
+							<div class="actions-row">
+								<button class="btn primary" id="exam-start">Hacer el examen</button>
+							</div>
+						</div>
+						<div class="set-group">
+							<h3>Últimas respuestas</h3>
+							<p class="set-desc">Qué hizo Aku en cada respuesta: modelo, tiempo, herramientas (y cuáles fallaron), tokens y cómo terminó. Se guarda solo en este equipo; del mensaje solo queda el comienzo.</p>
+							<div id="runs-summary" class="notice">Consultando…</div>
+							<div class="ext-list" id="runs-list" style="margin-top: 12px"></div>
+							<div class="actions-row">
+								<button class="btn" id="runs-refresh">Actualizar</button>
+								<button class="btn danger" id="runs-clear">Borrar registro</button>
+							</div>
 						</div>
 					</section>
 

@@ -2501,6 +2501,14 @@ dialog[open] {
 	line-height: 1.45;
 }
 
+.set-row .label span.error {
+	color: var(--danger);
+}
+
+.wake-word {
+	font-weight: inherit;
+}
+
 .field {
 	display: flex;
 	flex-direction: column;
@@ -5747,4 +5755,84 @@ body.mini-voz .toast {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+
+/* Ajustes → Registro: respuestas y examen del agente (runLog.js) */
+.run-outcome.ok {
+	color: var(--success);
+	border-color: currentColor;
+}
+.run-outcome.bad {
+	color: var(--danger);
+	border-color: currentColor;
+}
+.run-detail {
+	padding: 0 14px 12px 14px;
+	font-size: 13px;
+	line-height: 1.6;
+	color: var(--text-2);
+	overflow-wrap: anywhere;
+}
+.run-tools {
+	margin: 6px 0 0;
+	padding-left: 20px;
+	font-family: var(--mono);
+	font-size: 12px;
+}
+.run-tools li.bad {
+	color: var(--danger);
+}
+.exam-list {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin-top: 12px;
+}
+.exam-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 8px 12px;
+	border-radius: var(--radius-sm);
+	background: var(--bg-soft);
+}
+.exam-mark {
+	width: 20px;
+	text-align: center;
+	font-weight: 700;
+	color: var(--text-3);
+	flex-shrink: 0;
+}
+.exam-mark.ok {
+	color: var(--success);
+}
+.exam-mark.bad {
+	color: var(--danger);
+}
+.exam-text {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-width: 0;
+	font-size: 13px;
+}
+.exam-text span {
+	color: var(--text-3);
+	overflow-wrap: anywhere;
+}
+@media (max-width: 600px) {
+	.run-card .ext-row {
+		flex-wrap: wrap;
+	}
+	.run-card .ext-row .ext-name {
+		flex-basis: 100%;
+	}
+}
+
+/* «Continuar» en una respuesta que quedó a medias (messages.js) */
+.msg .extra .resume-btn {
+	margin-top: 8px;
+}
+.msg:not(.last) .extra .resume-btn {
+	display: none;
 }

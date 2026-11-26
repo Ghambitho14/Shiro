@@ -133,7 +133,9 @@ export async function initMiniVoice() {
 
 	await loadSettings().catch(() => {});
 	document.title = `${state.name} (voz)`;
-	voice.open();
+	// La abrió la palabra «Aku» (modo asistente, wakeListener.ts): contesta «Dígame» y se cierra sola si no le hablas.
+	const woke = new URLSearchParams(location.search).get("saludo") === "1";
+	voice.open(woke ? { greet: "Dígame", closeWhenIdle: true } : {});
 }
 
 function drawWave(ctx, canvas, levels, phase) {

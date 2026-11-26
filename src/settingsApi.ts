@@ -11,6 +11,8 @@ import { listProviderModels } from "./core/llm/modelList.js";
 import { getLLM } from "./core/llm/getLLM.js";
 import { getWhatsAppBridgeStatus } from "./whatsapp.js";
 import { isBodyTooLargeError, readBody, readJson, sendJson } from "./http.js";
+import { syncWakeListener, wakeStatus } from "./core/wake/wakeListener.js";
+import { setAutostart } from "./core/wake/autostart.js";
 
 /** Ajustes que ve la web. Nunca incluye API keys: solo si hay una guardada. */
 function buildSettings() {
@@ -40,6 +42,8 @@ function buildSettings() {
 			ttsLocalVoice: c.ttsLocalVoice,
 			hasTtsApiKey: Boolean(c.ttsApiKey),
 		},
+		/** Modo asistente: escuchar «Aku» desde la bandeja (wakeListener.ts) y arrancar con Windows. */
+		wake: { enabled: c.wakeWordEnabled, word: c.wakeWord, sensitivity: c.wakeSensitivity, ...wakeStatus() },
 	};
 }
 
@@ -52,7 +56,7 @@ function applySettings(d: Record<string, unknown>): void {
 	const copy = (keys: string[]) => {
 		for (const k of keys) if (k in d && d[k] !== undefined) patch[k] = d[k];
 	};
-	copy(["autonomousMode", "approvalMode", "pcControl", "vision", "sttEngine", "sttModel", "ttsEngine", "ttsModel", "ttsVoice", "ttsLocalVoice"]);
+	copy(["autonomousMode", "approvalMode", "pcControl", "vision", "sttEngine", "sttModel", "ttsEngine", "ttsModel", "ttsVoice", "ttsLocalVoice", "wakeWordEnabled", "wakeSensitivity"]);
 	for (const k of ["sttBaseUrl", "ttsBaseUrl"]) {
 		if (typeof d[k] === "string") patch[k] = (d[k] as string).trim() || undefined;
 	}
@@ -170,6 +174,14 @@ export async function handleSettingsApi(req: IncomingMessage, res: ServerRespons
 		}
 		try {
 			applySettings(data);
+			if ("wakeWordEnabled" in data || "wakeSensitivity" in data) {
+				syncWakeListener();
+				// El modo asistente arranca Aku con Windows, sin ventana; al apagarlo se quita del inicio.
+				if (typeof data.wakeWordEnabled === "boolean" && process.platform === "win32" && !(await setAutostart(data.wakeWordEnabled))) {
+					sendJson(res, 200, { ...buildSettings(), warning: "No pude cambiar el inicio de Windows: Aku no arrancará solo al encender el PC." });
+					return true;
+				}
+			}
 			sendJson(res, 200, buildSettings());
 		} catch (err) {
 			sendJson(res, 400, { error: err instanceof Error ? err.message : String(err) });

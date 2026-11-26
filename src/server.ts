@@ -21,11 +21,14 @@ import { handleChatApi } from "./chatApi.js";
 import { handleDrawingsApi } from "./drawingsApi.js";
 import { handleRemindersApi, startReminderNotifications } from "./remindersApi.js";
 import { handlePentestApi } from "./pentestApi.js";
+import { handleRunsApi } from "./runsApi.js";
 import { announceUpdate, handleUpdateApi } from "./updateApi.js";
 import { GOOGLE_CALLBACK_PATH, handleGoogleApi } from "./googleApi.js";
 import { startUpdateChecks } from "./core/update/updater.js";
 import { releaseLlamaServer } from "./core/llamacpp/engine.js";
 import { shiroBrowser } from "./core/browser/browser.js";
+import { terminal } from "./core/terminal/terminal.js";
+import { setWakeHandler } from "./core/wake/wakeListener.js";
 import { mcpManager } from "./core/mcp/McpManager.js";
 import { stopWhatsAppBridge } from "./whatsapp.js";
 import { autoStartTelegram } from "./telegram.js";
@@ -184,6 +187,8 @@ async function handleRequest(
 	// Recordatorios y sus avisos.
 	if (await handleRemindersApi(req, res, method, pathname)) return;
 	if (await handlePentestApi(req, res, method, pathname)) return;
+	// Ajustes → Registro: lo que hizo cada respuesta y el examen del agente.
+	if (await handleRunsApi(req, res, method, pathname, parsedUrl)) return;
 	if (await handleUpdateApi(req, res, method, pathname, quitServer)) return;
 
 	if (method === "GET" && pathname === "/api/health") {
@@ -289,6 +294,16 @@ server.on("error", (err: NodeJS.ErrnoException) => {
 	process.exitCode = 1;
 });
 
+/**
+ * Termina el proceso. En Windows, si se usó la terminal compartida (ConPTY), `process.exit` se queda colgado
+ * esperando un hilo de la librería y Aku seguía vivo por detrás tras «Salir de Aku». `process.kill` del propio
+ * proceso es TerminateProcess: no espera a nadie. Por eso `shutdown` cierra antes todo lo que haga falta.
+ */
+function exitNow(code: number): void {
+	if (process.platform === "win32") process.kill(process.pid, "SIGKILL");
+	process.exit(code);
+}
+
 function shutdown(signal: NodeJS.Signals | "update" | "quit"): void {
 	if (shuttingDown) return;
 	shuttingDown = true;
@@ -303,19 +318,23 @@ function shutdown(signal: NodeJS.Signals | "update" | "quit"): void {
 	void mcpManager.closeAll();
 	void shiroBrowser.close();
 	releaseLlamaServer();
+	// La terminal compartida y el oído de «Aku» se cierran aquí: lo que hay en `process.on("exit")` no corre con
+	// `exitNow` en Windows.
+	terminal.dispose();
+	setWakeHandler(null);
 	server.close((err) => {
 		if (err) {
 			console.error("  Error al cerrar el servidor:", err);
-			process.exit(1);
+			exitNow(1);
 			return;
 		}
 		void stopWhatsAppBridge().catch(() => {});
 		console.log("  Servidor cerrado. Hasta luego.\n");
-		process.exit(0);
+		exitNow(0);
 	});
 	setTimeout(() => {
 		console.error("  Cierre forzado por timeout.");
-		process.exit(1);
+		exitNow(1);
 	}, 5000).unref();
 }
 
@@ -328,6 +347,13 @@ import { initCronScheduler, stopCronScheduler } from "./core/scheduler/CronServi
 import { runScheduledTask } from "./core/scheduler/runTask.js";
 import { startNotesSync } from "./storage/notesSync.js";
 initCronScheduler(runScheduledTask);
+// Respuestas que quedaron a medias porque Aku se cerró: se dejan en su chat con «Continuar».
+import { recoverInterruptedRuns } from "./chat/backgroundRuns.js";
+void recoverInterruptedRuns()
+	.then((n) => {
+		if (n) console.log(`↩️  ${n} respuesta(s) interrumpida(s) quedaron en su chat para continuar`);
+	})
+	.catch((err) => console.error("No se pudieron recuperar las respuestas interrumpidas:", err));
 // Con Aku.exe: ¿hay una versión nueva? (como mucho una vez al día).
 startUpdateChecks(announceUpdate);
 

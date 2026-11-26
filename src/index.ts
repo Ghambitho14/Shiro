@@ -50,8 +50,8 @@ La configuración está en la ventana de ${name}: Ajustes, abajo a la izquierda.
 async function main(): Promise<void> {
 	let argv = process.argv.slice(2);
 	if (argv[0] === "--") argv = argv.slice(1);
-	// Shiro.exe con doble clic (o solo con opciones como --acceso-directo): abre la ventana.
-	if (IS_EXE && (!argv[0] || argv[0].startsWith("--acceso") || argv[0] === "--shortcut")) argv = ["app", ...argv];
+	// Shiro.exe con doble clic (o solo con opciones como --acceso-directo o --bandeja, al iniciar Windows): abre la ventana.
+	if (IS_EXE && (!argv[0] || argv[0].startsWith("--acceso") || argv[0] === "--shortcut" || argv[0] === "--bandeja")) argv = ["app", ...argv];
 	if (IS_EXE) process.title = "Aku";
 	const arg = argv[0];
 

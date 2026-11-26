@@ -184,10 +184,10 @@ export async function listMemories(s = currentStorage()): Promise<Memory[]> {
 }
 
 /** Busca en los recuerdos (y, con Obsidian, en todas las notas de la carpeta Shiro). */
-export async function searchMemories(query: string, limit = 5, s = currentStorage()): Promise<MemoryHit[]> {
+export async function searchMemories(query: string, limit = 5, s = currentStorage(), embedTimeoutMs = 8000): Promise<MemoryHit[]> {
 	const words = keywords(query);
 	const memories = await memoryBackendFor(s).all();
-	const queryEmbedding = memories.some((m) => m.embedding?.length) ? await tryEmbed(query) : null;
+	const queryEmbedding = memories.some((m) => m.embedding?.length) ? await tryEmbed(query, embedTimeoutMs) : null;
 	const hits: MemoryHit[] = [];
 	for (const m of memories) {
 		const byWords = keywordScore(words, `${m.content} ${(m.tags ?? []).join(" ")}`);
@@ -210,4 +210,37 @@ export async function searchMemories(query: string, limit = 5, s = currentStorag
 		}
 	}
 	return hits.sort((a, b) => b.score - a.score).slice(0, Math.max(1, limit));
+}
+
+// ───────────────────────────── recuerdo automático ─────────────────────────────
+
+/** Notas que ya van enteras en las instrucciones: traerlas otra vez como recuerdo sería repetir. */
+const IN_PROMPT_NOTES = new Set(["memory.md", "soul.md", "tools.md", "instrucciones.md", "sobre mí.md", "sobre mi.md"]);
+/** Puntaje mínimo para traer un recuerdo sin que el modelo lo pida (la mitad de las palabras, o parecido de verdad). */
+const RECALL_MIN_SCORE = 0.5;
+const RECALL_LIMIT = 3;
+const RECALL_ITEM_CHARS = 300;
+
+/**
+ * Los recuerdos que más se parecen al mensaje, para ponerlos en las instrucciones antes de responder.
+ * Los modelos chicos casi nunca llaman a memory_search por su cuenta: así lo guardado llega igual.
+ * Mensajes cortos («hola», «gracias») no buscan nada; los embeddings esperan poco (2 s) para no frenar la respuesta.
+ * Nunca lanza: sin memoria o con un error, devuelve [].
+ */
+export async function recallMemories(message: string, s = currentStorage()): Promise<MemoryHit[]> {
+	if (keywords(message).length < 2) return [];
+	try {
+		const hits = await searchMemories(message, RECALL_LIMIT + 3, s, 2000);
+		return hits
+			.filter((h) => h.score >= RECALL_MIN_SCORE)
+			// Chats/ tiene la copia del chat de ahora (con el mismo mensaje): saldría siempre primero. memory_search sí la mira.
+			.filter((h) => {
+				const src = h.source?.replace(/\\/g, "/").toLowerCase();
+				return !src || (!IN_PROMPT_NOTES.has(src) && !src.startsWith("chats/"));
+			})
+			.slice(0, RECALL_LIMIT)
+			.map((h) => ({ ...h, content: h.content.length > RECALL_ITEM_CHARS ? h.content.slice(0, RECALL_ITEM_CHARS) + "…" : h.content }));
+	} catch {
+		return [];
+	}
 }

@@ -1,5 +1,5 @@
 /**
- * Carga sherpa-onnx (la voz de Aku sin internet). Como la consola de la terminal (`ptyLoader.ts`),
+ * Carga sherpa-onnx (la voz de Aku sin internet y el oído del modo asistente). Como la consola de la terminal (`ptyLoader.ts`),
  * trae binarios nativos que no se pueden abrir desde dentro de Aku.exe: ahí se copian la primera vez
  * a `data/cache/sherpa-onnx-<versión>/node_modules/` y se cargan de esa carpeta.
  * `npm run exe` los mete como assets (`sherpaPackageDirs()` en `collectAssets()` de buildExe.ts).
@@ -20,8 +20,23 @@ export type OfflineTtsInstance = {
 	numSpeakers: number;
 	generateAsync(req: { text: string; sid: number; speed: number }): Promise<GeneratedAudio>;
 };
+/** Reconocedor de frases (Moonshine en el modo asistente, wakeListener.ts). */
+export type OfflineRecognizerInstance = {
+	createStream(): { acceptWaveform(w: { samples: Float32Array; sampleRate: number }): void };
+	decodeAsync(stream: unknown): Promise<{ text: string }>;
+};
+/** Detector de voz Silero: corta el sonido en frases. */
+export type VadInstance = {
+	acceptWaveform(samples: Float32Array): void;
+	isEmpty(): boolean;
+	front(): { samples: Float32Array; start: number };
+	pop(): void;
+	reset(): void;
+};
 export type SherpaModule = {
 	OfflineTts: { createAsync(config: unknown): Promise<OfflineTtsInstance> };
+	OfflineRecognizer: { createAsync(config: unknown): Promise<OfflineRecognizerInstance> };
+	Vad: new (config: unknown, bufferSizeInSeconds: number) => VadInstance;
 };
 
 /** La parte con los binarios de este sistema (`win` y no `win32` en el nombre). */

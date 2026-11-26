@@ -96,6 +96,12 @@ test("recuerdos en este equipo: se guardan de verdad y se encuentran por palabra
 	assert.equal(hits[0]?.content, "Ghambitho es cocinero y le gusta el pabellón criollo");
 	assert.equal((await memories.listMemories()).length, 2);
 	assert.deepEqual(await memories.searchMemories("astronomía", 5), []);
+
+	// Recuerdo automático: lo que viene al caso llega solo; los mensajes cortos no buscan.
+	const recalled = await memories.recallMemories("¿te acuerdas qué comida criolla me gusta?");
+	assert.equal(recalled[0]?.content, "Ghambitho es cocinero y le gusta el pabellón criollo");
+	assert.deepEqual(await memories.recallMemories("hola"), []);
+	assert.deepEqual(await memories.recallMemories("ayúdame con astronomía y planetas lejanos"), []);
 });
 
 test("recordatorios: crear, completar (con repetición) y borrar", async () => {

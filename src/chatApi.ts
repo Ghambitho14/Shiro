@@ -583,9 +583,10 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 				// web sigue conectada, su guardado (PUT del chat entero) reemplaza la lista: no se duplica.
 				// Los permisos y preguntas pendientes cuentan como sin respuesta al cortarse (createSse*).
 				const chatId = sessionId && isValidSessionId(sessionId) ? sessionId : undefined;
-				const run = startRun(chatId);
+				const run = startRun(chatId, speaker ? { agent: speaker.id, agentName: speaker.name } : undefined);
 				const abort = run.abort;
-				const recorder = createReplyRecorder();
+				// Con el id de la respuesta, lo que va haciendo se apunta en disco para retomarla si Aku se cierra.
+				const recorder = createReplyRecorder(run.id);
 				sendSseData(res, { type: "start", runId: run.id });
 				if (roomPayload?.room && roomPlan?.changed) sendSseData(res, { type: "room", ...roomPayload });
 				if (speaker) sendSseData(res, { type: "agent", agent: publicAgent(speaker) });
@@ -620,7 +621,10 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 						persona: turn?.persona,
 						room: turn?.room,
 						userProfile: getUserProfile(),
-						onStreamDelta: (chunk) => sendSseData(res, { type: "delta", text: chunk }),
+						onStreamDelta: (chunk) => {
+							recorder.text(chunk);
+							sendSseData(res, { type: "delta", text: chunk });
+						},
 						onUsage: (u) => addUsage(usage, u),
 						onContext: (r) => {
 							context = r;

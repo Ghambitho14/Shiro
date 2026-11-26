@@ -10,6 +10,7 @@ import { initSetup, mountStorageForm, openSetup } from "./setup.js";
 import { mountModelForm } from "./modelForm.js";
 import { mountModelSettings } from "./modelSettings.js";
 import { initAgents, loadAgents } from "./agents.js";
+import { initRunLog, loadRunLog } from "./runLog.js";
 import { $, $$, applyTheme, closeMenu, confirmDialog, copyText, el, openMenu, prefs, savePrefs, setTheme, toast } from "./ui.js";
 import { state } from "./state.js";
 import { renderThread, updateEmpty } from "./messages.js";
@@ -118,6 +119,7 @@ export function selectTab(tab) {
 	if (tab === "voice") paintVoices();
 	if (tab === "profile") loadPrompts();
 	if (tab === "agents") loadAgents();
+	if (tab === "runs") loadRunLog();
 	if (tab === "storage") mountStorageForm($("#storage-form"), { settings: true, onSaved: () => loadSessions() });
 	onSettingsTab(tab);
 }
@@ -170,6 +172,7 @@ export function fillSettings() {
 		: "Tu navegador no reconoce voz: usa Edge o Chrome, o un servidor Whisper.";
 	paintVoiceFields();
 	paintVoices();
+	paintWake();
 
 	$("#set-pc").checked = s.pcControl;
 	const radio = $(`#approval-choices input[value="${s.approvalMode}"]`);
@@ -324,6 +327,56 @@ export function paintVoices() {
 		`<option value="">Automática (la mejor para ${escapeHtml(prefs.lang)})</option>` +
 		sorted.map((v) => `<option value="${escapeHtml(v.voiceURI)}">${escapeHtml(v.name)} — ${escapeHtml(v.lang)}</option>`).join("");
 	sel.value = voices.some((v) => v.voiceURI === prefs.ttsVoice) ? prefs.ttsVoice : "";
+}
+
+/** Modo asistente (escuchar «Aku» desde la bandeja): interruptor, sensibilidad y cómo va la escucha. */
+function paintWake() {
+	const w = state.settings?.wake;
+	if (!w) return;
+	$("#set-wake").checked = w.enabled;
+	$("#set-wake-sensitivity").value = w.sensitivity;
+	for (const n of document.querySelectorAll(".wake-word")) n.textContent = w.word;
+	const status = $("#wake-status");
+	status.classList.toggle("error", w.enabled && w.state === "error");
+	if (!w.enabled) status.textContent = "Apagado.";
+	else if (!w.available) {
+		status.textContent =
+			state.settings.platform === "win32"
+				? "Se activará cuando abras Aku con Aku.exe o npm run app (con su ícono junto al reloj)."
+				: "Solo funciona en Windows.";
+	} else if (w.state === "listening") status.textContent = "Escuchando, sin internet. Lo que oye no se guarda ni sale del equipo.";
+	else if (w.state === "error") status.textContent = w.message || "La escucha falló.";
+	else if (w.state === "downloading") {
+		const pct = typeof w.progress === "number" ? ` ${Math.round(w.progress * 100)} %` : "";
+		status.textContent = `${w.message || "Bajando el oído de Aku…"}${pct}`;
+	} else status.textContent = "Preparando la escucha…";
+}
+
+let wakeTimer = 0;
+
+async function saveWake(patch) {
+	try {
+		state.settings = await api("/api/settings", { method: "PUT", json: patch });
+		if (state.settings.warning) toast(state.settings.warning, "error", 7000);
+		else if ("wakeWordEnabled" in patch) toast(patch.wakeWordEnabled ? `Listo: di «${state.settings.wake.word}» y te respondo.` : "Modo asistente apagado.");
+	} catch (err) {
+		toast(err.message, "error");
+	}
+	paintWake();
+	watchWake();
+}
+
+/** La escucha tarda en arrancar (la primera vez baja los modelos): se mira cómo va hasta que escucha o falla. */
+function watchWake(tries = 0) {
+	clearTimeout(wakeTimer);
+	const w = state.settings?.wake;
+	if (!w?.enabled || !w.available || w.state === "listening" || w.state === "error" || tries > 150) return;
+	wakeTimer = setTimeout(async () => {
+		const s = await api("/api/settings").catch(() => null);
+		if (s) state.settings = s;
+		paintWake();
+		watchWake(tries + 1);
+	}, 2000);
 }
 
 export function voicePatch() {
@@ -546,6 +599,7 @@ export function initSettings() {
 	// Pestañas Habilidades y Conectores MCP (public/js/extensions.js).
 	initExtensions({ toast, confirmDialog, openMenu, copyText });
 	initPrompts({ toast, confirmDialog, name: () => state.name });
+	initRunLog();
 	initAgents({
 		toast,
 		confirmDialog,
@@ -634,6 +688,8 @@ export function initSettings() {
 		prefs.autoRead = e.target.checked;
 		savePrefs();
 	};
+	$("#set-wake").onchange = (e) => saveWake({ wakeWordEnabled: e.target.checked });
+	$("#set-wake-sensitivity").onchange = (e) => saveWake({ wakeSensitivity: e.target.value });
 	$("#voice-save").onclick = async () => {
 		const patch = voicePatch();
 		if (patch.sttEngine === "server" && !patch.sttBaseUrl) return toast("Escribe la dirección del servidor Whisper.", "error");

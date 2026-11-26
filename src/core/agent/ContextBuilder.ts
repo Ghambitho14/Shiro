@@ -44,6 +44,8 @@ export type ContextInput = {
 	room?: RoomContext;
 	/** Resumen de «Cerrar conversación»: lo anterior de este chat ya no se manda entero. */
 	chatSummary?: string;
+	/** Recuerdos que se parecen al mensaje (`recallMemories`): van sin que el modelo los pida. */
+	recalled?: { content: string; createdAt?: string; source?: string }[];
 	/** Es un ayudante creado con `delegate` por `boss`. */
 	subagent?: { boss: string };
 	/** Tiene `delegate`: los agentes de Ajustes → Agentes a los que puede encargar tareas. */
@@ -289,6 +291,35 @@ export const SAFETY_BLOCK = `## Seguridad
 export const WORKSPACE_MAX_CHARS = 8000;
 /** Tope del resumen de «Cerrar conversación» en el system prompt. */
 export const CHAT_SUMMARY_MAX_CHARS = 6000;
+/** Tope de los recuerdos que se traen solos. */
+const RECALLED_MAX_CHARS = 1500;
+
+/** «Recuerdos que pueden servir»: lo que se encontró en la memoria por el mensaje, sin que el modelo lo buscara. */
+export function buildRecalledBlock(recalled: ContextInput["recalled"]): string {
+	const items = (recalled ?? []).filter((r) => r.content.trim());
+	if (!items.length) return "";
+	const lines: string[] = [];
+	let size = 0;
+	for (const r of items) {
+		const date = r.createdAt?.slice(0, 10);
+		const line = `- ${r.content.replace(/\s+/g, " ").trim()}${date ? ` _(${date})_` : ""}${r.source ? ` [${r.source.replace(/\\/g, "/")}]` : ""}`;
+		if (size + line.length > RECALLED_MAX_CHARS) break;
+		lines.push(line);
+		size += line.length;
+	}
+	if (!lines.length) return "";
+	return `\n\n## Recuerdos que pueden servir\nLos encontré en tu memoria buscando por el mensaje del usuario. Úsalos solo si vienen al caso y no digas que los buscaste; si necesitas más, usa memory_search.\n${lines.join("\n")}`;
+}
+
+/**
+ * Corta el contexto del workspace (SOUL, MEMORY, TOOLS) al espacio que queda. Si se corta, lo dice al final:
+ * sin esa nota el modelo creería que MEMORY.md termina ahí y que lo de más abajo no lo sabe.
+ */
+export function clipWorkspace(text: string, max: number): string {
+	if (text.length <= max) return text;
+	const note = "\n…(recortado por espacio: lo que falta de MEMORY.md o TOOLS.md lo lees con read_file o memory_search)";
+	return text.slice(0, Math.max(0, max - note.length)) + note;
+}
 
 /**
  * Prioridad: SOUL > perfil > proyecto > workspace (con la memoria) > skills. La conversación va aparte, como mensajes.
@@ -362,9 +393,9 @@ export function buildContext(input: ContextInput): { system: string; messages: M
 		? `\n\n## Lo que ya se habló en este chat\nEl usuario cerró antes esta conversación y quedó resumida así (los mensajes de antes ya no los ves enteros). Úsalo para seguir donde quedó:\n${summaryText}`
 		: "";
 	remaining -= summaryBlock.length;
-	const workspaceBlock = input.workspaceContext
-		? `## Contexto workspace\n${input.workspaceContext.slice(0, Math.min(remaining, WORKSPACE_MAX_CHARS))}`
-		: "";
+	const recalledBlock = buildRecalledBlock(input.recalled);
+	remaining -= recalledBlock.length;
+	const workspaceBlock = input.workspaceContext ? `## Contexto workspace\n${clipWorkspace(input.workspaceContext, Math.min(remaining, WORKSPACE_MAX_CHARS))}` : "";
 	if (workspaceBlock) remaining -= workspaceBlock.length;
 
 	let forcedBlock = "";
@@ -391,6 +422,7 @@ export function buildContext(input: ContextInput): { system: string; messages: M
 		voiceBlock +
 		userBlock +
 		summaryBlock +
+		recalledBlock +
 		(projectBlock ? "\n\n" + projectBlock : "") +
 		(workspaceBlock ? "\n\n" + workspaceBlock : "") +
 		(skillsBlock ? "\n\n" + skillsBlock : "") +
@@ -400,7 +432,7 @@ export function buildContext(input: ContextInput): { system: string; messages: M
 	const userContent = input.goal;
 	const messages: Message[] = [{ role: "user", content: userContent }];
 	// Para el medidor de contexto: cuánto ocupa cada parte (las instrucciones son el resto, así suman justo).
-	const memory = userBlock.length + summaryBlock.length + (workspaceBlock ? workspaceBlock.length + 2 : 0);
+	const memory = userBlock.length + summaryBlock.length + recalledBlock.length + (workspaceBlock ? workspaceBlock.length + 2 : 0);
 	const project = projectBlock ? projectBlock.length + 2 : 0;
 	const skills = (skillsBlock ? skillsBlock.length + 2 : 0) + (forcedBlock ? forcedBlock.length + 2 : 0);
 	const sections: PromptSections = { instructions: system.length - memory - project - skills, memory, project, skills };

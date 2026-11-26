@@ -2,7 +2,7 @@
  * Código C# que PowerShell compila una sola vez (ver ensureNativeHelper).
  * Da acceso a funciones de Windows que no tienen comando directo:
  * teclado y ratón (SendInput), ventanas (EnumWindows/ShowWindow), volumen (Core Audio)
- * y el selector de carpetas moderno (IFileOpenDialog).
+ * el selector de carpetas moderno (IFileOpenDialog) y el micrófono del modo asistente (waveIn).
  */
 export const NATIVE_HELPER_SOURCE = String.raw`
 using System;
@@ -332,6 +332,81 @@ namespace ShiroPc {
 		public static void Show(long hwnd, int cmd) { ShowWindow(new IntPtr(hwnd), cmd); }
 
 		public static void Close(long hwnd) { PostMessage(new IntPtr(hwnd), 0x0010, IntPtr.Zero, IntPtr.Zero); }
+	}
+
+	// El micrófono para el modo asistente (wakeListener.ts): sonido crudo, 16 kHz, mono, 16 bits, por la
+	// salida estándar en trozos de 100 ms. Termina si Aku se cierra o si nadie lee la salida.
+	public static class Mic {
+		[StructLayout(LayoutKind.Sequential)]
+		struct WaveFormat { public ushort tag, channels; public uint rate, bytesPerSec; public ushort blockAlign, bits, cbSize; }
+		[StructLayout(LayoutKind.Sequential)]
+		struct WaveHdr { public IntPtr data; public uint length, recorded; public IntPtr user; public uint flags, loops; public IntPtr next, reserved; }
+		[DllImport("winmm.dll")] static extern int waveInOpen(out IntPtr h, uint device, ref WaveFormat f, IntPtr cb, IntPtr inst, uint flags);
+		[DllImport("winmm.dll")] static extern int waveInPrepareHeader(IntPtr h, IntPtr hdr, int size);
+		[DllImport("winmm.dll")] static extern int waveInUnprepareHeader(IntPtr h, IntPtr hdr, int size);
+		[DllImport("winmm.dll")] static extern int waveInAddBuffer(IntPtr h, IntPtr hdr, int size);
+		[DllImport("winmm.dll")] static extern int waveInStart(IntPtr h);
+		[DllImport("winmm.dll")] static extern int waveInReset(IntPtr h);
+		[DllImport("winmm.dll")] static extern int waveInClose(IntPtr h);
+
+		static bool Alive(int pid) {
+			try { return !System.Diagnostics.Process.GetProcessById(pid).HasExited; } catch { return false; }
+		}
+
+		public static int Stream(int parentPid) {
+			var fmt = new WaveFormat { tag = 1, channels = 1, rate = 16000, bytesPerSec = 32000, blockAlign = 2, bits = 16, cbSize = 0 };
+			IntPtr h;
+			// 0xFFFFFFFF = el micrófono elegido en Windows.
+			int err = waveInOpen(out h, 0xFFFFFFFF, ref fmt, IntPtr.Zero, IntPtr.Zero, 0);
+			if (err != 0) { Console.Error.WriteLine("mic " + err); return 2; }
+			const int N = 8, BYTES = 3200;
+			int hs = Marshal.SizeOf(typeof(WaveHdr));
+			int flagsAt = (int)Marshal.OffsetOf(typeof(WaveHdr), "flags");
+			int recordedAt = (int)Marshal.OffsetOf(typeof(WaveHdr), "recorded");
+			var hdrs = new IntPtr[N];
+			var bufs = new IntPtr[N];
+			for (int i = 0; i < N; i++) {
+				bufs[i] = Marshal.AllocHGlobal(BYTES);
+				hdrs[i] = Marshal.AllocHGlobal(hs);
+				Marshal.StructureToPtr(new WaveHdr { data = bufs[i], length = BYTES }, hdrs[i], false);
+				waveInPrepareHeader(h, hdrs[i], hs);
+				waveInAddBuffer(h, hdrs[i], hs);
+			}
+			var output = Console.OpenStandardOutput();
+			var chunk = new byte[BYTES];
+			var lastCheck = DateTime.UtcNow;
+			int next = 0;
+			waveInStart(h);
+			try {
+				while (true) {
+					if ((Marshal.ReadInt32(hdrs[next], flagsAt) & 1) != 0) {
+						int n = Marshal.ReadInt32(hdrs[next], recordedAt);
+						if (n > 0) {
+							Marshal.Copy(bufs[next], chunk, 0, n);
+							output.Write(chunk, 0, n);
+							output.Flush();
+						}
+						Marshal.WriteInt32(hdrs[next], flagsAt, 2);
+						waveInAddBuffer(h, hdrs[next], hs);
+						next = (next + 1) % N;
+						continue;
+					}
+					if ((DateTime.UtcNow - lastCheck).TotalSeconds > 2) {
+						if (!Alive(parentPid)) break;
+						lastCheck = DateTime.UtcNow;
+					}
+					Thread.Sleep(10);
+				}
+			} catch (System.IO.IOException) {
+				// Aku dejó de leer: se termina.
+			} finally {
+				waveInReset(h);
+				for (int i = 0; i < N; i++) waveInUnprepareHeader(h, hdrs[i], hs);
+				waveInClose(h);
+				for (int i = 0; i < N; i++) { Marshal.FreeHGlobal(hdrs[i]); Marshal.FreeHGlobal(bufs[i]); }
+			}
+			return 0;
+		}
 	}
 }
 `;

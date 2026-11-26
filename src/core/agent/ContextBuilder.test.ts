@@ -246,3 +246,22 @@ test("carpetas del proyecto: lo que se sabe de cada una y si la terminal ya est�
 	// Sin terminal no se sabe dónde está: el aviso de siempre.
 	strictEqual(buildProjectBlock(project, 4000).includes("no empieza en estas carpetas"), true);
 });
+
+test("buildContext: los recuerdos traídos solos van en su bloque y cuentan como memoria", async () => {
+	const { buildContext } = await import("./ContextBuilder.js");
+	const recalled = [{ content: "Tiene un perro que se llama Toby", createdAt: "2026-11-01T10:00:00.000Z", source: "Recuerdos/toby.md" }];
+	const { system, sections } = buildContext({ goal: "como se llama mi perro", agentName: "Aku", tokenBudget: 8000, recalled });
+	strictEqual(system.includes("## Recuerdos que pueden servir"), true);
+	strictEqual(system.includes("- Tiene un perro que se llama Toby _(2026-11-01)_ [Recuerdos/toby.md]"), true);
+	const without = buildContext({ goal: "como se llama mi perro", agentName: "Aku", tokenBudget: 8000 });
+	strictEqual(without.system.includes("Recuerdos que pueden servir"), false);
+	strictEqual(sections.memory > without.sections.memory, true);
+});
+
+test("clipWorkspace: si MEMORY.md no cabe, el modelo sabe que se cortó", async () => {
+	const { clipWorkspace } = await import("./ContextBuilder.js");
+	strictEqual(clipWorkspace("corto", 100), "corto");
+	const cut = clipWorkspace("x".repeat(500), 200);
+	strictEqual(cut.length <= 200, true);
+	strictEqual(cut.includes("recortado por espacio"), true);
+});

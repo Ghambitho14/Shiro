@@ -13,6 +13,7 @@ import { findInstalledBrowser } from "./core/browser/findBrowser.js";
 import { resolveLLMSettings } from "./core/llm/providers.js";
 import { APP_DIR, IS_EXE, readAppFile } from "./runtime.js";
 import { setTrayStatus, startTray } from "./tray.js";
+import { setWakeHandler } from "./core/wake/wakeListener.js";
 import { getState } from "./store.js";
 
 /** Tamaño de la cajita de voz de la bandeja (píxeles lógicos, con la barra de título de Edge). */
@@ -134,13 +135,14 @@ async function newChatWindow(url: string): Promise<void> {
 
 /**
  * «Hablarle» del menú: la cajita de voz (`/?mini=voz`, miniVoice.js) abajo a la derecha y siempre encima.
- * Si ya está abierta, solo la trae al frente.
+ * Si ya está abierta, solo la trae al frente. `woke`: la abrió la palabra «Aku» (modo asistente): dice
+ * «Dígame» y se cierra sola si no le hablas.
  */
-async function openVoiceBox(url: string): Promise<void> {
+async function openVoiceBox(url: string, woke = false): Promise<void> {
 	const title = `${getState().name || "Aku"} (voz)`;
 	if (await pinWindowToCorner(title, VOICE_BOX.width, VOICE_BOX.height).catch(() => false)) return;
 	// Con Chrome si está: su dictado funciona donde el de Edge da error "network".
-	openAppWindow(`${url}/?mini=voz`, VOICE_BOX, "chrome");
+	openAppWindow(`${url}/?mini=voz${woke ? "&saludo=1" : ""}`, VOICE_BOX, "chrome");
 	await pinWindowToCorner(title, VOICE_BOX.width, VOICE_BOX.height, 10_000).catch(() => false);
 }
 
@@ -252,6 +254,7 @@ export async function runApp(argv: string[] = []): Promise<void> {
 	if (running) {
 		const outdated = !running.startedAt || newestCodeChange() > running.startedAt;
 		if (!outdated) {
+			if (argv.includes("--bandeja")) return console.log("  Aku ya estaba en marcha.");
 			console.log("  Aku ya estaba en marcha: abro su ventana.");
 			await showAppWindow(localUrl);
 			return;
@@ -270,7 +273,8 @@ export async function runApp(argv: string[] = []): Promise<void> {
 	}
 	const { serverReady, quitServer } = await import("./server.js");
 	const url = await serverReady;
-	openAppWindow(url);
+	// --bandeja: arrancó con Windows (modo asistente): sin ventana, solo el ícono y la escucha de «Aku».
+	if (!argv.includes("--bandeja")) openAppWindow(url);
 	paintTrayStatus();
 	setInterval(paintTrayStatus, 15_000).unref();
 	startTray({
@@ -281,6 +285,8 @@ export async function runApp(argv: string[] = []): Promise<void> {
 		update: () => openAppWindow(`${url.replace(/\/+$/, "")}/?actualizar=1`),
 		quit: quitServer,
 	});
+	// Modo asistente: al oír «Aku», la cajita de voz dice «Dígame» (solo si está encendido en Ajustes → Voz).
+	setWakeHandler(() => void openVoiceBox(url, true));
 	console.log(
 		"\n  Aku está abierto en su ventana y en la bandeja, junto al reloj. Si cierras la ventana sigue funcionando:" +
 			`\n  haz clic en su ícono para volver. Para apagarlo: clic derecho en el ícono → Salir de Aku${process.env.SHIRO_BACKGROUND ? "" : " (o cierra esta consola)"}.\n`,

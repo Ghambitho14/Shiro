@@ -59,6 +59,7 @@ export function fromServer(m) {
 	if (m.usage?.turns) out.usage = m.usage;
 	if (m.context?.used) out.context = m.context;
 	if (m.summary === true) out.summary = true;
+	if (m.interrupted === true) out.interrupted = true;
 	if (Array.isArray(m.todo) && m.todo.length) out.todo = m.todo;
 	if (Array.isArray(m.tools)) out.tools = m.tools.map((t, i) => ({ id: `h${i}`, name: t.name, label: t.label, status: t.ok === false ? "fail" : "ok", image: t.image, undo: t.undo, undone: t.undone === true, drawing: t.drawing }));
 	return out;
@@ -72,6 +73,7 @@ export function serialize(m) {
 	if (m.usage) o.usage = m.usage;
 	if (m.context) o.context = m.context;
 	if (m.summary) o.summary = true;
+	if (m.interrupted) o.interrupted = true;
 	if (m.todo?.length) o.todo = m.todo;
 	if (m.tools?.length) {
 		o.tools = m.tools.map((t) => ({ name: t.name, label: t.label, ok: t.status !== "fail", ...(t.image ? { image: t.image } : {}), ...(t.undo ? { undo: t.undo } : {}), ...(t.undone ? { undone: true } : {}), ...(t.drawing ? { drawing: t.drawing } : {}) }));
@@ -514,6 +516,13 @@ export function paintAssistant(m) {
 		$("button", r.extra).onclick = () => regenerate(m);
 	} else if (m.stopped) {
 		r.extra.innerHTML = '<div class="msg-note">Respuesta detenida.</div>';
+	} else if (m.interrupted) {
+		// Aku se cerró a mitad de esta respuesta: «Continuar» le pide que siga donde quedó (chat.js escucha el evento).
+		const resume = el("button", "btn primary resume-btn");
+		resume.type = "button";
+		resume.textContent = "Continuar";
+		resume.onclick = () => window.dispatchEvent(new CustomEvent("aku:continue"));
+		r.extra.append(resume);
 	}
 	r.actions.hidden = Boolean(m.error) && !m.content;
 	paintUsage(m, r);

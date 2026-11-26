@@ -155,8 +155,13 @@ export const voice = {
 	/** Agente que está hablando (en una sala): su voz y su nombre en el título. */
 	agent: null,
 
-	/** greet: texto que se dice al abrir (el saludo de un agente recién activado). */
-	async open({ greet = "", agent = null } = {}) {
+	/** Lo abrió la palabra «Aku» (modo asistente): se cierra solo si no le hablas. */
+	closeWhenIdle: false,
+	/** Escuchas seguidas sin oír nada (con closeWhenIdle, a las 2 se cierra). */
+	idle: 0,
+
+	/** greet: texto que se dice al abrir (el saludo de un agente recién activado, o «Dígame»). */
+	async open({ greet = "", agent = null, closeWhenIdle = false } = {}) {
 		if (this.active) return;
 		if (!state.settings) await loadSettings().catch(() => {});
 		if (!canListen()) return toast(NO_STT, "error", 7000);
@@ -165,6 +170,8 @@ export const voice = {
 		if (dictation) dictation.cancel();
 		this.active = true;
 		this.muted = false;
+		this.closeWhenIdle = closeWhenIdle;
+		this.idle = 0;
 		const lastAgent = [...state.messages].reverse().find((x) => x.role === "assistant");
 		this.agent = agent || (state.room ? agentOf(lastAgent) || state.room.participants.find((p) => p.principal) || null : null);
 		this.speaker = new Speaker(() => ttsSettings(this.agent));
@@ -269,7 +276,15 @@ export const voice = {
 				continue;
 			}
 			if (!this.active) break;
-			if (!text || this.muted) continue;
+			if (!text || this.muted) {
+				// Modo asistente: si no le hablas en un rato, se cierra y Aku vuelve a esperar su nombre.
+				if (!text && !this.muted && this.closeWhenIdle && ++this.idle >= 2) {
+					this.close();
+					break;
+				}
+				continue;
+			}
+			this.idle = 0;
 			view.transcript(text, "user");
 			await this.respond(text);
 		}

@@ -11,6 +11,7 @@ import { resolveLLMSettings } from "../llm/providers.js";
 import { buildRoomHistory, type ConversationMessage, type RoomMessage } from "./roomHistory.js";
 import { detectRoomIntent } from "./roomIntent.js";
 import { applyRoomIntent } from "./roomLogic.js";
+import { wakeVariants } from "../wake/wakeWord.js";
 import type { RoomState } from "./roomStore.js";
 
 /** Lo que la interfaz necesita de un agente (nunca claves ni instrucciones). */
@@ -43,9 +44,12 @@ export type RoomPlan = {
 	openVoice?: boolean;
 };
 
-/** Palabras que se quitan del principio de una orden: la de activación y el nombre del asistente. */
+/**
+ * Palabras que se quitan del principio de una orden: la de activación, lo que suena parecido (el dictado
+ * escribe «Haiku» por «Aku», `wakeVariants`) y el nombre del asistente.
+ */
 export function wakeWords(assistantName: string): string[] {
-	return [getConfig().wakeWord, assistantName];
+	return [...wakeVariants(getConfig().wakeWord), assistantName];
 }
 
 /**

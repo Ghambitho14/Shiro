@@ -35,6 +35,8 @@ import { terminal } from "../terminal/terminal.js";
 import { claudeCodeLauncher } from "../claudeCode/claudeCode.js";
 import { googleConnected } from "../google/googleAuth.js";
 import { loadAgents } from "../agents/registry.js";
+import { recallMemories } from "../memory/memories.js";
+import { appendRunLog, type RunOutcome, type RunToolEntry } from "./runLog.js";
 import { runWithAgentContext, type AgentRunContext } from "./runContext.js";
 import type { Asker } from "../tools/modules/ask.js";
 import type { ThinkingLevel } from "../../config/config.js";
@@ -220,6 +222,8 @@ type PreparedRun = {
 	/** Tamaño del contexto del modelo en tokens, si se sabe, y lo que cabe en cada resultado de herramienta. */
 	contextTokens: number | undefined;
 	resultChars: number;
+	/** Cuántos recuerdos se trajeron solos (para el registro). */
+	recalled: number;
 };
 
 async function prepareRun(goal: string, opts: AgentOptions, workspaceContext?: string): Promise<PreparedRun> {
@@ -334,7 +338,12 @@ async function prepareRun(goal: string, opts: AgentOptions, workspaceContext?: s
 	const toolGuide = trusted ? buildToolGuide(toolNames, { mode, planning, pcBlock: hasPcTools, pcControlOff: !getConfig().pcControl }) || undefined : undefined;
 
 	const team = loadAgents().agents.map((a) => ({ name: a.name, description: a.description || undefined }));
+	// Los recuerdos que vienen al caso van solos (los modelos chicos no buscan). Solo con contexto privado
+	// (WhatsApp abierto no tiene memoria) y no a los ayudantes, que reciben la tarea ya explicada.
+	const recalled = workspaceContext?.trim() && !opts.subagent ? await recallMemories(goal) : [];
+	if (recalled.length) logger.info(`🧠 ${recalled.length} recuerdo(s) traídos para esta respuesta`);
 	const { system, messages, sections } = buildContext({
+		recalled,
 		goal,
 		agentName,
 		tokenBudget,
@@ -401,6 +410,7 @@ async function prepareRun(goal: string, opts: AgentOptions, workspaceContext?: s
 		totalMessages: history.length || sentMessages.length,
 		contextTokens,
 		resultChars,
+		recalled: recalled.length,
 	};
 }
 
@@ -428,14 +438,40 @@ export async function estimateContext(goal: string, opts: AgentOptions, workspac
 
 export async function runAgent(goal: string, opts: AgentOptions, workspaceContext?: string): Promise<string> {
 	const { llm, agentName, onStreamDelta, onUsage, approver, onToolEvent, signal, userProfile, sessionId } = opts;
+	const startedAt = Date.now();
 	const prep = await prepareRun(goal, opts, workspaceContext);
 	const { mode, permissions, planning, ref, effectiveTools, textOnly, saverLimits, vision, project, effectiveExplainMode, toolsDef, fullMessages } = prep;
+
+	// Registro de la respuesta (data/logs/runs.jsonl): herramientas con su tiempo, tokens y cómo terminó.
+	const logTools: RunToolEntry[] = [];
+	const logUsage = { input: 0, output: 0, turns: 0 };
+	const writeLog = (outcome: RunOutcome, error?: string) =>
+		appendRunLog({
+			at: new Date(startedAt).toISOString(),
+			durationMs: Date.now() - startedAt,
+			sessionId,
+			agent: agentName,
+			subagent: opts.subagent ? true : undefined,
+			mode,
+			permissions,
+			provider: ref?.provider ?? llm.getConfig().provider,
+			model: ref?.model ?? llm.getConfig().model,
+			goal,
+			recalled: prep.recalled,
+			tools: logTools,
+			usage: logUsage,
+			outcome,
+			error,
+		});
 
 	// Medidor de contexto: lo que leyó el modelo en la última vuelta y lo que trajeron las herramientas.
 	let lastInput: number | undefined;
 	let toolResultChars = 0;
 	const trackUsage = (u: TokenUsage) => {
 		if (u.input > 0) lastInput = u.input;
+		logUsage.input += u.input;
+		logUsage.output += u.output;
+		logUsage.turns++;
 		onUsage?.(u);
 	};
 	const reportContext = async () => {
@@ -485,6 +521,7 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 		}
 
 		const id = `t${++toolSeq}`;
+		const toolStart = Date.now();
 		onToolEvent?.({ phase: "start", id, name, label: describeToolUse(name, args) });
 		// Planear es solo lectura de verdad: project agrupa leer y escribir bajo un mismo nombre,
 		// así que la acción se vuelve a comprobar aquí, también para los ayudantes de delegate.
@@ -493,6 +530,7 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 				? { ok: false as const, error: "Estás planeando: es solo lectura. Para modificar archivos o ejecutar acciones, el usuario tiene que cambiar el botón de permisos del chat a Preguntar o Automático." }
 				: await executeToolSafeScoped(name, args, effectiveTools);
 		usedTools.push({ name, ok: r.ok, argsKeys });
+		logTools.push({ name, ms: Date.now() - toolStart, ok: r.ok, error: r.ok ? undefined : r.error });
 		selfCheck?.note(name, args, r.ok);
 		// Si el paso cambió un archivo del proyecto, va el id de su copia para poder deshacerlo.
 		const undo = runContext.undo;
@@ -604,8 +642,12 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 		}
 	} catch (err) {
 		// Detenido por el usuario: lo que se alcanzó a mostrar ya lo tiene la interfaz.
-		if (signal?.aborted) return "";
+		if (signal?.aborted) {
+			writeLog("cancelled");
+			return "";
+		}
 		const message = err instanceof Error ? err.message : String(err);
+		writeLog("error", message);
 		logger.error("Fallo del modelo", { error: message.slice(0, 300) });
 		// Si no cupo, el medidor lo muestra lleno (con lo estimado: el modelo no dijo cuánto leyó).
 		await reportContext();
@@ -613,7 +655,9 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 	}
 
 	await reportContext();
-	const finalText = isMeaningfulResponse(content) ? content : FALLBACK_EMPTY_RESPONSE;
+	const meaningful = isMeaningfulResponse(content);
+	writeLog(signal?.aborted ? "cancelled" : meaningful ? "ok" : "empty");
+	const finalText = meaningful ? content : FALLBACK_EMPTY_RESPONSE;
 	return finalText + buildToolExplanation(usedTools, effectiveExplainMode);
 }
 

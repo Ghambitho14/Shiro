@@ -425,9 +425,12 @@ export async function runAssistant({ voice = false, hooks = {} } = {}) {
 			...(x.todo?.length ? { todo: x.todo } : {}),
 		}));
 
+	// La cajita de voz (miniVoice.js) no pregunta: lo que dices en voz alta ya es la orden. Enviar correos y
+	// crear eventos siguen preguntando (`alwaysAsksUser`) y «bloquear» de Ajustes sigue mandando.
+	const permissions = state.mini ? "bypass" : state.permissions;
 	try {
 		await streamChat(
-			{ messages: payload, sessionId, voice, mode: state.mode, permissions: state.permissions, reasoning: state.moreReasoning ? "more" : undefined },
+			{ messages: payload, sessionId, voice, mode: state.mode, permissions, reasoning: state.moreReasoning ? "more" : undefined },
 			{
 				onStart: (runId) => {
 					controller.runId = runId;
@@ -640,7 +643,11 @@ export function setMessageAgent(m, agent) {
 }
 
 /** Lo que antes se hacía al cargar la página (botones, eventos); app.js lo llama en orden. */
+/** Lo que se le manda al pulsar «Continuar» en una respuesta que quedó a medias. */
+const CONTINUE_TEXT = "Te cerraste antes de terminar tu respuesta anterior. Sigue donde quedaste: revisa lo que ya hiciste (los pasos y la lista de tareas) y termina lo que falta, sin repetir lo que ya está hecho.";
+
 export function initComposer() {
+	window.addEventListener("aku:continue", () => sendMessage(CONTINUE_TEXT));
 	input.addEventListener("input", () => {
 		autosize();
 		paintComposer();

@@ -41,6 +41,8 @@ export type ChatMessage = {
 	 * modelo solo le llegan este resumen y lo que viene después (`compactConversation`).
 	 */
 	summary?: true;
+	/** Respuesta que quedó a medias porque Aku se cerró (backgroundRuns.ts): la web ofrece «Continuar». */
+	interrupted?: true;
 };
 
 export type ChatSessionMeta = {
@@ -88,9 +90,10 @@ function isContentPartArray(raw: unknown): raw is ContentPart[] {
 }
 
 /** Datos extra de cada mensaje que guarda la web: hora, herramientas usadas y, en salas, qué agente habló. */
-function sanitizeMeta(item: Record<string, unknown>): Pick<ChatMessage, "ts" | "tools" | "todo" | "agent" | "agentName" | "usage" | "context" | "mode" | "summary"> {
-	const out: Pick<ChatMessage, "ts" | "tools" | "todo" | "agent" | "agentName" | "usage" | "context" | "mode" | "summary"> = {};
+function sanitizeMeta(item: Record<string, unknown>): Pick<ChatMessage, "ts" | "tools" | "todo" | "agent" | "agentName" | "usage" | "context" | "mode" | "summary" | "interrupted"> {
+	const out: Pick<ChatMessage, "ts" | "tools" | "todo" | "agent" | "agentName" | "usage" | "context" | "mode" | "summary" | "interrupted"> = {};
 	if (item.role === "assistant" && item.summary === true) out.summary = true;
+	if (item.role === "assistant" && item.interrupted === true) out.interrupted = true;
 	if (item.role === "user" && typeof item.mode === "string") {
 		if ((CHAT_MODES as readonly string[]).includes(item.mode)) out.mode = item.mode as ChatMode;
 	}
