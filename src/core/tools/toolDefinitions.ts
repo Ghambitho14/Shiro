@@ -84,7 +84,7 @@ export const TOOLS: ToolDefinition[] = [
 		parameters: {
 			type: "object",
 			properties: {
-				path: { type: "string", description: "Ruta relativa al workspace" },
+				path: { type: "string", description: "Ruta relativa al workspace (ej. Proyectos/notas.md). Nunca una ruta completa como /home/... o C:/...: para eso, write_file_system" },
 				content: { type: "string", description: "Contenido a escribir" },
 			},
 			required: ["path", "content"],

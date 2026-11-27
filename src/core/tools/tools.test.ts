@@ -1,6 +1,6 @@
 import { after, test } from "node:test";
 import { strictEqual } from "node:assert";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -29,6 +29,25 @@ test("executeTool write_file rechaza path fuera del workspace", async () => {
 	const r = await executeTool("write_file", { path: "..", content: "x" });
 	strictEqual(r.ok, false);
 	strictEqual((r as { error: string }).error, "Path fuera del workspace.");
+});
+
+test("write_file con ruta completa de fuera no escribe dentro del workspace: avisa que use write_file_system", async () => {
+	const outside = join(TMP, "fuera", "app.ts");
+	for (const path of [outside, outside.replace(/\\/g, "/"), "/home/node/nexus-server/app.ts", "~/x.md"]) {
+		const r = await executeTool("write_file", { path, content: "x" });
+		strictEqual(r.ok, false, path);
+		strictEqual((r as { error: string }).error.includes("write_file_system"), true, path);
+	}
+	strictEqual(existsSync(join(getWorkspaceDir(), "home")), false);
+	const r = await executeTool("read_file", { path: "/home/node/x.md" });
+	strictEqual((r as { error: string }).error.includes("read_file_system"), true);
+});
+
+test("write_file acepta una ruta completa que está dentro del workspace", async () => {
+	const inside = join(getWorkspaceDir(), "Pruebas", "dentro.md");
+	const r = await executeTool("write_file", { path: inside, content: "hola" });
+	strictEqual(r.ok, true);
+	strictEqual(readFileSync(inside, "utf-8"), "hola");
 });
 
 test("executeTool list_dir rechaza path fuera del workspace", async () => {

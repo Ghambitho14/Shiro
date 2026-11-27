@@ -109,6 +109,23 @@ function resolveWorkspacePath(relativePath: string): string | null {
 	return full;
 }
 
+/**
+ * Ruta completa (/home/x, C:/x, ~/x) que no está dentro del workspace. Antes se le quitaba la `/` inicial
+ * y el archivo acababa dentro del workspace sin avisar (Aku creía haber escrito en /home/node/... y la
+ * terminal no lo encontraba). Ahora se rechaza con un error que dice qué herramienta usar.
+ */
+function absoluteOutsideWorkspace(pathArg: string): boolean {
+	const p = pathArg.replace(/\\/g, "/").trim();
+	if (!(p.startsWith("/") || p.startsWith("~") || /^[A-Za-z]:/.test(p))) return false;
+	if (p.startsWith("~")) return true;
+	return !isWithinRoot(resolve(p), resolve(getWorkspaceDir()), false);
+}
+
+function absolutePathError(tool: "read_file" | "write_file" | "list_dir", pathArg: string): string {
+	const other = tool === "write_file" ? "write_file_system" : tool === "read_file" ? "read_file_system" : "list_dir_system";
+	return `"${pathArg}" es una ruta completa fuera de tu carpeta de notas. ${tool} solo trabaja dentro de ella, con rutas como "Proyectos/notas.md" (sin "/" al principio). Para una ruta completa del equipo usa ${other}${currentProject() ? ", o project para los archivos del proyecto" : ""}.`;
+}
+
 function resolveSystemPath(pathArg: string): string | null {
 	const root = getSystemRoot();
 	const normalized = pathArg.replace(/\\/g, "/").trim();
@@ -170,6 +187,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 		switch (name) {
 			case "read_file": {
 				const pathArg = String(args_.path ?? "").trim();
+				if (absoluteOutsideWorkspace(pathArg)) return { ok: false, error: absolutePathError("read_file", pathArg) };
 				const filePath = resolveWorkspacePath(pathArg);
 				if (!filePath) return { ok: false, error: "Path fuera del workspace." };
 				if (!existsSync(filePath)) return { ok: false, error: "Archivo no encontrado." + notesHint() };
@@ -181,6 +199,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 			case "write_file": {
 				const pathArg = String(args_.path ?? "").trim();
 				const content = args_.content !== undefined ? String(args_.content) : "";
+				if (absoluteOutsideWorkspace(pathArg)) return { ok: false, error: absolutePathError("write_file", pathArg) };
 				const filePath = resolveWorkspacePath(pathArg);
 				if (!filePath) return { ok: false, error: "Path fuera del workspace." };
 				mkdirSync(dirname(filePath), { recursive: true });
@@ -190,6 +209,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 			case "list_dir": {
 				const pathArg = String(args_.path ?? "").trim();
 				const workspace = getWorkspaceDir();
+				if (pathArg && absoluteOutsideWorkspace(pathArg)) return { ok: false, error: absolutePathError("list_dir", pathArg) };
 				const dirPath = pathArg ? resolveWorkspacePath(pathArg) : workspace;
 				if (!dirPath || !existsSync(dirPath)) return { ok: false, error: "Directorio no encontrado." + notesHint() };
 				const st = statSync(dirPath);
