@@ -1,15 +1,32 @@
 import { isShiroUrl } from "../../browser/pageModel.js";
-import { currentResultBudget } from "../../agent/runContext.js";
+import { currentAgentRun, currentResultBudget } from "../../agent/runContext.js";
+import { checkUrlAllowed, classifyHost } from "../../net/addressGuard.js";
 import { findInText, sliceText } from "../textSlice.js";
 
 /**
- * Así se presenta fetch_url. El servidor de Shiro rechaza su API con este agente: una página
- * (o alguien por WhatsApp) no puede hacer que el modelo lea tus chats o claves de 127.0.0.1,
- * ni siquiera con una redirección.
+ * fetch_url se presenta como un navegador normal: muchas webs (Cloudflare y similares) rechazan con
+ * 403/429 a los agentes que no parecen un navegador. Compartido con search_web y cve_search.
  */
-export const FETCH_USER_AGENT = "Aku/1.0 (AI agent)";
+export const BROWSER_USER_AGENT =
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
+
+/**
+ * Cabecera marca que solo pone fetch_url. El servidor de Shiro rechaza su propia API cuando la ve:
+ * así una página (o alguien por WhatsApp) no puede hacer que el modelo lea tus chats o claves de
+ * 127.0.0.1, aunque fetch_url ya use un User-Agent de navegador. (isShiroUrl es la primera barrera.)
+ */
+export const FETCH_MARK_HEADER = "x-aku-fetch";
+
+const FETCH_HEADERS: Record<string, string> = {
+	"User-Agent": BROWSER_USER_AGENT,
+	Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.9,*/*;q=0.8",
+	"Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
+	[FETCH_MARK_HEADER]: "1",
+};
 
 const FETCH_TIMEOUT_MS = 15000;
+/** Cuántas redirecciones se siguen (a mano, para revisar cada salto por seguridad). */
+const MAX_REDIRECTS = 5;
 /** Lo que se descarga como mucho; de una página más grande se usa el principio. */
 export const FETCH_MAX_BYTES = 3 * 1024 * 1024;
 
@@ -102,6 +119,66 @@ export function pagePart(text: string, args: { offset?: unknown; find?: unknown 
 	return `[Página${s.range}]\n${s.body}${s.note}`;
 }
 
+/** Un bloqueo por seguridad (SSRF) o una redirección imposible: no tiene sentido reintentarlo. */
+class FetchBlocked extends Error {}
+
+/**
+ * Sigue las redirecciones a mano (máx MAX_REDIRECTS) revisando cada salto: los metadatos de nube se
+ * bloquean siempre y una web pública no puede redirigir a tu red interna. En Hacking no se bloquea nada.
+ */
+async function fetchFollowing(startUrl: string, signal: AbortSignal, hacking: boolean): Promise<Response> {
+	let url = startUrl;
+	let cameFromPublic = false;
+	for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+		const check = await checkUrlAllowed(url, { cameFromPublic, hacking });
+		if (!check.allowed) throw new FetchBlocked(check.reason);
+		const res = await fetch(url, { signal, headers: FETCH_HEADERS, redirect: "manual" });
+		const loc = res.status >= 300 && res.status < 400 ? res.headers.get("location") : null;
+		if (!loc) return res;
+		await res.body?.cancel().catch(() => {});
+		let next: URL;
+		try {
+			next = new URL(loc, url);
+		} catch {
+			throw new FetchBlocked(`La página redirige a una dirección inválida («${loc}»).`);
+		}
+		if (next.protocol !== "http:" && next.protocol !== "https:") throw new FetchBlocked("La página redirige a una dirección que no es web (http/https).");
+		if (isShiroUrl(next.href)) throw new FetchBlocked("La página redirige a la propia web de Aku.");
+		// Una vez que pasamos por un host público, cualquier salto a tu red interna es sospechoso.
+		if (!cameFromPublic && !hacking && (await classifyHost(new URL(url).hostname)) === "public") cameFromPublic = true;
+		url = next.href;
+	}
+	throw new FetchBlocked("La página redirige demasiadas veces.");
+}
+
+/** Un intento completo (con su propio tiempo máximo). Lanza en fallos de red/timeout; devuelve el resto. */
+async function attempt(parsed: URL, args: Record<string, unknown>, hacking: boolean): Promise<{ ok: boolean; content: string }> {
+	const controller = new AbortController();
+	const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+	try {
+		const res = await fetchFollowing(parsed.href, controller.signal, hacking);
+		if (!res.ok) {
+			await res.body?.cancel().catch(() => {});
+			return { ok: false, content: `HTTP ${res.status}: ${res.statusText}` };
+		}
+		const contentType = (res.headers.get("content-type") ?? "").toLowerCase();
+		if (!contentType.includes("text/") && !contentType.includes("application/json") && !contentType.includes("xml")) {
+			await res.body?.cancel().catch(() => {});
+			return { ok: false, content: `La URL no devuelve texto (content-type: ${contentType})` };
+		}
+		const { buf, cut } = await readLimited(res, FETCH_MAX_BYTES);
+		const raw = new TextDecoder("utf-8", { fatal: false }).decode(buf);
+		const isHtml = contentType.includes("html") || /^\s*(<!doctype html|<html)/i.test(raw);
+		const text = (isHtml ? htmlToText(raw) : raw).trim();
+		const note = cut ? `\n\n(página recortada: solo se leyeron los primeros ${FETCH_MAX_BYTES / 1024 / 1024} MB)` : "";
+		const full = (text || "(Contenido vacío)") + note;
+		remember(parsed.href, full);
+		return { ok: true, content: pagePart(full, args) };
+	} finally {
+		clearTimeout(timeoutId);
+	}
+}
+
 export async function executeFetchUrl(args: Record<string, unknown>): Promise<{ ok: boolean; content: string }> {
 	const url = String(args.url ?? "").trim();
 	if (!url) return { ok: false, content: "URL requerida" };
@@ -126,43 +203,16 @@ export async function executeFetchUrl(args: Record<string, unknown>): Promise<{ 
 		}
 	}
 
-	const controller = new AbortController();
-	const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-
-	try {
-		const res = await fetch(url, {
-			signal: controller.signal,
-			headers: { "User-Agent": FETCH_USER_AGENT },
-			redirect: "follow",
-		});
-
-		if (!res.ok) {
-			await res.body?.cancel().catch(() => {});
-			return { ok: false, content: `HTTP ${res.status}: ${res.statusText}` };
+	const hacking = currentAgentRun()?.mode === "hacking";
+	let lastErr = "";
+	// Un reintento ante fallo de red o timeout (un bloqueo de seguridad no se reintenta).
+	for (let n = 0; n < 2; n++) {
+		try {
+			return await attempt(parsed, args, hacking);
+		} catch (e) {
+			if (e instanceof FetchBlocked) return { ok: false, content: e.message };
+			lastErr = e instanceof Error ? (e.name === "AbortError" ? "Timeout al conectar con la URL" : e.message) : String(e);
 		}
-
-		const contentType = (res.headers.get("content-type") ?? "").toLowerCase();
-		if (!contentType.includes("text/") && !contentType.includes("application/json") && !contentType.includes("xml")) {
-			await res.body?.cancel().catch(() => {});
-			return { ok: false, content: `La URL no devuelve texto (content-type: ${contentType})` };
-		}
-
-		const { buf, cut } = await readLimited(res, FETCH_MAX_BYTES);
-		clearTimeout(timeoutId);
-
-		const raw = new TextDecoder("utf-8", { fatal: false }).decode(buf);
-		const isHtml = contentType.includes("html") || /^\s*(<!doctype html|<html)/i.test(raw);
-		const text = (isHtml ? htmlToText(raw) : raw).trim();
-		const note = cut ? `\n\n(página recortada: solo se leyeron los primeros ${FETCH_MAX_BYTES / 1024 / 1024} MB)` : "";
-		const full = (text || "(Contenido vacío)") + note;
-		remember(parsed.href, full);
-		return { ok: true, content: pagePart(full, args) };
-	} catch (e) {
-		clearTimeout(timeoutId);
-		if (e instanceof Error) {
-			if (e.name === "AbortError") return { ok: false, content: "Timeout al conectar con la URL" };
-			return { ok: false, content: e.message };
-		}
-		return { ok: false, content: String(e) };
 	}
+	return { ok: false, content: lastErr || "No se pudo conectar con la URL." };
 }

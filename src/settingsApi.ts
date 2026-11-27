@@ -12,6 +12,7 @@ import { getLLM } from "./core/llm/getLLM.js";
 import { getWhatsAppBridgeStatus } from "./whatsapp.js";
 import { isBodyTooLargeError, readBody, readJson, sendJson } from "./http.js";
 import { syncWakeListener, wakeStatus } from "./core/wake/wakeListener.js";
+import { liquidStatus, warmLiquidVoice } from "./core/voice/liquidVoice.js";
 import { setAutostart } from "./core/wake/autostart.js";
 
 /** Ajustes que ve la web. Nunca incluye API keys: solo si hay una guardada. */
@@ -41,6 +42,9 @@ function buildSettings() {
 			ttsVoice: c.ttsVoice,
 			ttsLocalVoice: c.ttsLocalVoice,
 			hasTtsApiKey: Boolean(c.ttsApiKey),
+			liquidVoice: c.liquidVoice,
+			/** Voz de Liquid (LFM3-Audio): si está el modelo y si ya está cargado. */
+			liquid: liquidStatus(),
 		},
 		/** Modo asistente: escuchar «Aku» desde la bandeja (wakeListener.ts) y arrancar con Windows. */
 		wake: { enabled: c.wakeWordEnabled, word: c.wakeWord, sensitivity: c.wakeSensitivity, ...wakeStatus() },
@@ -56,7 +60,7 @@ function applySettings(d: Record<string, unknown>): void {
 	const copy = (keys: string[]) => {
 		for (const k of keys) if (k in d && d[k] !== undefined) patch[k] = d[k];
 	};
-	copy(["autonomousMode", "approvalMode", "pcControl", "vision", "sttEngine", "sttModel", "ttsEngine", "ttsModel", "ttsVoice", "ttsLocalVoice", "wakeWordEnabled", "wakeSensitivity"]);
+	copy(["autonomousMode", "approvalMode", "pcControl", "vision", "sttEngine", "sttModel", "ttsEngine", "ttsModel", "ttsVoice", "ttsLocalVoice", "liquidVoice", "wakeWordEnabled", "wakeSensitivity"]);
 	for (const k of ["sttBaseUrl", "ttsBaseUrl"]) {
 		if (typeof d[k] === "string") patch[k] = (d[k] as string).trim() || undefined;
 	}
@@ -174,6 +178,8 @@ export async function handleSettingsApi(req: IncomingMessage, res: ServerRespons
 		}
 		try {
 			applySettings(data);
+			// La voz de Liquid se deja cargada en cuanto se elige.
+			if ("sttEngine" in data || "ttsEngine" in data) warmLiquidVoice();
 			if ("wakeWordEnabled" in data || "wakeSensitivity" in data) {
 				syncWakeListener();
 				// El modo asistente arranca Aku con Windows, sin ventana; al apagarlo se quita del inicio.

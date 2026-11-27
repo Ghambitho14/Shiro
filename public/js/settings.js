@@ -160,6 +160,7 @@ export function fillSettings() {
 	$("#set-tts-model").value = v.ttsModel;
 	$("#set-tts-voice").value = v.ttsVoice;
 	localVoice = v.ttsLocalVoice || "piper-claude";
+	$("#set-liquid-voice").value = v.liquidVoice || "female";
 	$("#set-tts-key").value = "";
 	$("#tts-key-hint").textContent = v.hasTtsApiKey ? "Hay una clave guardada (déjalo vacío para mantenerla)." : "";
 	$("#set-lang").value = prefs.lang;
@@ -243,13 +244,29 @@ export async function putSettings(patch, okMessage = "Guardado") {
 // Voz (ajustes)
 export function paintVoiceFields() {
 	$("#stt-server-fields").hidden = $("#set-stt-engine").value !== "server";
+	$("#stt-liquid-fields").hidden = $("#set-stt-engine").value !== "liquid";
 	const engine = $("#set-tts-engine").value;
 	$("#tts-server-fields").hidden = engine !== "server";
 	$("#tts-local-fields").hidden = engine !== "local";
-	// Con la voz de Aku se usa la velocidad, pero no la voz del navegador.
-	$("#tts-browser-fields").hidden = engine === "server";
+	$("#tts-liquid-fields").hidden = engine !== "liquid";
+	paintLiquidStatus();
+	// Con la voz de Aku se usa la velocidad, pero no la voz del navegador (ni con Liquid).
+	$("#tts-browser-fields").hidden = engine === "server" || engine === "liquid";
 	$("#set-tts-voice-browser").closest("label").hidden = engine === "local";
 	if (engine === "local") loadLocalVoices();
+}
+
+/** Si está el modelo de Liquid y si ya está cargado. */
+function paintLiquidStatus() {
+	const l = state.settings?.voice?.liquid;
+	const text = !l
+		? ""
+		: !l.installed
+			? "Falta el modelo: pon LFM3-Audio-2B (el .gguf y su mmproj) en una carpeta de data/models."
+			: l.error
+				? `${l.model}: ${l.error}`
+				: `${l.model} · ${l.running ? "cargado, listo para usar" : "se carga al guardar o al usarlo (unos 5 s)"}. Sin internet, con la tarjeta gráfica.`;
+	document.querySelectorAll(".liquid-status").forEach((n) => (n.textContent = text));
 }
 
 // Voz de Aku sin internet: elegir, descargar y borrar voces.
@@ -389,6 +406,7 @@ export function voicePatch() {
 		ttsModel: $("#set-tts-model").value.trim() || "tts-1",
 		ttsVoice: $("#set-tts-voice").value.trim() || "alloy",
 		ttsLocalVoice: localVoice,
+		liquidVoice: $("#set-liquid-voice").value,
 	};
 	if ($("#set-stt-key").value.trim()) patch.sttApiKey = $("#set-stt-key").value.trim();
 	if ($("#set-tts-key").value.trim()) patch.ttsApiKey = $("#set-tts-key").value.trim();

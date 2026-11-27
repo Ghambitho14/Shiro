@@ -33,7 +33,7 @@ import { mcpManager } from "./core/mcp/McpManager.js";
 import { stopWhatsAppBridge } from "./whatsapp.js";
 import { autoStartTelegram } from "./telegram.js";
 import { readAppFile, VENDOR_FILES } from "./runtime.js";
-import { FETCH_USER_AGENT } from "./core/tools/modules/fetch.js";
+import { FETCH_MARK_HEADER } from "./core/tools/modules/fetch.js";
 import { readJson, safeDecode, send, sendJson } from "./http.js";
 
 const PORT = Number(process.env.PORT) || 1406;
@@ -132,7 +132,7 @@ async function handleRequest(
 		return;
 	}
 	// La herramienta fetch_url del propio modelo no lee esta API (chats, claves de mcp.json…).
-	if (pathname.startsWith("/api/") && req.headers["user-agent"] === FETCH_USER_AGENT) {
+	if (pathname.startsWith("/api/") && req.headers[FETCH_MARK_HEADER]) {
 		sendJson(res, 403, { error: "No permitido" });
 		return;
 	}
@@ -356,6 +356,9 @@ void recoverInterruptedRuns()
 	.catch((err) => console.error("No se pudieron recuperar las respuestas interrumpidas:", err));
 // Con Aku.exe: ¿hay una versión nueva? (como mucho una vez al día).
 startUpdateChecks(announceUpdate);
+// Si Ajustes → Voz usa la voz de Liquid, se deja cargada desde el arranque.
+import { warmLiquidVoice } from "./core/voice/liquidVoice.js";
+warmLiquidVoice();
 
 process.on("SIGINT", () => {
 	stopCronScheduler();

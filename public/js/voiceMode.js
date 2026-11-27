@@ -1,7 +1,7 @@
 // Voz: leer en voz alta, dictado y el modo voz con la esfera.
 import { setIcon } from "./icons.js";
 import { toSpeechText } from "./markdown.js";
-import { parseYesNo, Recognizer, SentenceSplitter, Speaker, voiceSupport } from "./voice.js";
+import { parseYesNo, Recognizer, SentenceSplitter, Speaker, voiceSupport, watchForSpeech } from "./voice.js";
 import { HoloOrb } from "./orb.js";
 import { $, closeMenu, el, prefs, toast, waitFor } from "./ui.js";
 import { input, refs, state } from "./state.js";
@@ -16,8 +16,8 @@ export function ttsSettings(agent = null) {
 	const v = state.settings?.voice;
 	const av = (agent && (state.agents.find((a) => a.id === agent.id) || agent).voice) || {};
 	return {
-		// "local" = la voz de Aku sin internet; para la web es como un servidor (pide el audio a /api/voice/speak).
-		engine: v?.ttsEngine === "local" ? "local" : v?.ttsEngine === "server" && v.ttsBaseUrl ? "server" : "browser",
+		// "local" = la voz de Aku sin internet (o la de Liquid); para la web es como un servidor (pide el audio a /api/voice/speak).
+		engine: v?.ttsEngine === "local" || v?.ttsEngine === "liquid" ? "local" : v?.ttsEngine === "server" && v.ttsBaseUrl ? "server" : "browser",
 		voiceURI: av.browserVoiceURI || prefs.ttsVoice,
 		rate: av.rate || prefs.ttsRate,
 		lang: prefs.lang,
@@ -27,7 +27,8 @@ export function ttsSettings(agent = null) {
 
 export function sttEngine() {
 	const v = state.settings?.voice;
-	return v?.sttEngine === "server" && v.sttBaseUrl ? "server" : "browser";
+	// Liquid escucha como un servidor Whisper: la web graba y manda el audio a /api/voice/transcribe.
+	return v?.sttEngine === "liquid" || (v?.sttEngine === "server" && v.sttBaseUrl) ? "server" : "browser";
 }
 
 export function canListen() {
@@ -159,6 +160,9 @@ export const voice = {
 	closeWhenIdle: false,
 	/** Escuchas seguidas sin oír nada (con closeWhenIdle, a las 2 se cierra). */
 	idle: 0,
+	/** Mientras Aku habla, el micrófono atento por si lo interrumpes (watchForSpeech); esto lo apaga. */
+	stopBargeIn: null,
+	bargeGen: 0,
 
 	/** greet: texto que se dice al abrir (el saludo de un agente recién activado, o «Dígame»). */
 	async open({ greet = "", agent = null, closeWhenIdle = false } = {}) {
@@ -175,10 +179,17 @@ export const voice = {
 		const lastAgent = [...state.messages].reverse().find((x) => x.role === "assistant");
 		this.agent = agent || (state.room ? agentOf(lastAgent) || state.room.participants.find((p) => p.principal) || null : null);
 		this.speaker = new Speaker(() => ttsSettings(this.agent));
-		this.speaker.onStart = () => this.phase !== "approval" && this.set("speaking", "Hablando… toca el círculo para interrumpir");
+		this.speaker.onStart = () => {
+			if (this.phase === "approval") return;
+			this.set("speaking", "Hablando… háblale o toca el círculo para interrumpir");
+			this.armBargeIn();
+		};
 		this.speaker.onError = (err) => toast(`La voz falló: ${err.message}`, "error", 6000);
 		// Si termina de leer una frase y el modelo aún escribe, no dice "Hablando".
-		this.speaker.onIdle = () => this.active && state.busy && this.phase === "speaking" && this.set("thinking", "Pensando…");
+		this.speaker.onIdle = () => {
+			this.disarmBargeIn();
+			if (this.active && state.busy && this.phase === "speaking") this.set("thinking", "Pensando…");
+		};
 		this.paintTitle();
 		view.transcript("", "user");
 		view.approval(null);
@@ -191,7 +202,6 @@ export const voice = {
 		if (greet) {
 			view.transcript(greet, "aku");
 			this.speaker.speak(greet);
-			this.set("speaking", "Hablando… toca el círculo para interrumpir");
 			this.speaker.drain().then(() => this.active && this.loop());
 		} else this.loop();
 	},
@@ -205,9 +215,49 @@ export const voice = {
 		if (this.active) this.paintTitle();
 	},
 
+	/** Escucha mientras Aku habla: si oye tu voz, se calla (y para la respuesta) y vuelve a escucharte. */
+	armBargeIn() {
+		if (this.stopBargeIn || this.muted || !this.active) return;
+		const gen = ++this.bargeGen;
+		// La voz de Windows (navegador) no pasa por la cancelación de eco: hay que hablar más fuerte que ella.
+		const strict = ttsSettings(this.agent).engine === "browser";
+		this.stopBargeIn = () => {}; // se está abriendo el micrófono
+		watchForSpeech(
+			() => {
+				if (gen !== this.bargeGen || !this.active || this.phase !== "speaking") return;
+				this.stopBargeIn = null;
+				this.interrupt();
+			},
+			{ strict },
+		)
+			.then((stop) => {
+				if (gen === this.bargeGen) this.stopBargeIn = stop;
+				else stop();
+			})
+			.catch(() => {
+				// Sin micrófono no se puede interrumpir hablando; tocar el círculo sigue valiendo.
+				if (gen === this.bargeGen) this.stopBargeIn = null;
+			});
+	},
+
+	disarmBargeIn() {
+		this.bargeGen++;
+		const stop = this.stopBargeIn;
+		this.stopBargeIn = null;
+		stop?.();
+	},
+
+	/** Callarse: deja de hablar y para la respuesta; el bucle vuelve a escuchar. */
+	interrupt() {
+		this.disarmBargeIn();
+		this.speaker.stop();
+		if (state.busy) stopGeneration();
+	},
+
 	close() {
 		if (!this.active) return;
 		this.active = false;
+		this.disarmBargeIn();
 		this.rec?.cancel();
 		this.speaker?.stop();
 		if (state.busy) stopGeneration();
@@ -238,7 +288,10 @@ export const voice = {
 
 	toggleMute() {
 		this.muted = !this.muted;
-		if (this.muted) this.rec?.cancel();
+		if (this.muted) {
+			this.rec?.cancel();
+			this.disarmBargeIn();
+		}
 		this.paintMute();
 	},
 
@@ -365,8 +418,7 @@ export const voice = {
 
 	tap() {
 		if (this.phase === "speaking" || this.phase === "thinking") {
-			this.speaker.stop();
-			if (state.busy) stopGeneration();
+			this.interrupt();
 		} else if (this.phase === "listening" || this.phase === "approval") {
 			this.rec?.stop();
 		} else if (this.muted || this.phase === "paused" || this.phase === "idle") {

@@ -81,7 +81,7 @@ export async function initMiniVoice() {
 		level: (l) => (micLevel = l),
 		phase(p, label) {
 			phase = p;
-			statusEl.textContent = label.replace(/ · toca el círculo para hablar|… toca el círculo para interrumpir/, "…");
+			statusEl.textContent = label.replace(/ · toca el círculo para hablar|… (háblale o )?toca el círculo para interrumpir/, "…");
 		},
 		approval(node) {
 			box.classList.toggle("asking", Boolean(node));

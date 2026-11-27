@@ -36,6 +36,8 @@ const MAX_ENTRIES = 20_000;
 const SPLIT = /-(\d{5})-of-(\d{5})\.gguf$/i;
 /** Modelos de embeddings: no sirven para conversar. */
 const EMBEDDING = /embed|bge-|e5-|minilm|rerank/i;
+/** La voz de Liquid (LFM3-Audio): la usa Ajustes → Voz (core/voice/liquidVoice.ts), no el chat. */
+const LIQUID_AUDIO = /^LFM[\d.]*-Audio/i;
 /** Carpetas que nunca tienen modelos y pueden ser enormes. */
 const SKIP_DIRS = new Set(["node_modules", ".git", "$recycle.bin", "system volume information"]);
 
@@ -80,7 +82,7 @@ export function scanGgufFolder(root: string, source: GgufSource): Found[] {
 		const ggufs = entries.filter((e) => e.isFile() && e.name.toLowerCase().endsWith(".gguf")).map((e) => e.name);
 		const mmproj = ggufs.find((n) => /mmproj/i.test(n));
 		for (const name of ggufs) {
-			if (/mmproj/i.test(name) || EMBEDDING.test(name)) continue;
+			if (/mmproj/i.test(name) || EMBEDDING.test(name) || LIQUID_AUDIO.test(name)) continue;
 			const split = SPLIT.exec(name);
 			if (split && Number(split[1]) !== 1) continue;
 			const path = join(dir, name);

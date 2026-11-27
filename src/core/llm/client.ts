@@ -74,6 +74,13 @@ export function createLLMClientFor(ref: ModelRef): LLMClient {
 	return buildClient(() => resolveLLMSettings(ref), { prepare: (signal) => prepareLLM(signal, ref), gate: true }, ref);
 }
 
+/** Los ajustes de una vuelta con lo que pide esta respuesta: cuánto piensa y su tope de largo (el menor de los dos). */
+function forThisReply(settings: LLMSettings, opts: ChatOptions): LLMSettings {
+	const out = opts.thinking ? { ...settings, thinking: opts.thinking } : settings;
+	if (!opts.maxTokens) return out;
+	return { ...out, maxTokens: Math.min(opts.maxTokens, settings.maxTokens ?? opts.maxTokens) };
+}
+
 function buildClient(resolve: () => LLMSettings, real: Real | null, ref?: ModelRef): LLMClient {
 	const prepare = real?.prepare ?? (async () => {});
 	/**
@@ -95,7 +102,7 @@ function buildClient(resolve: () => LLMSettings, real: Real | null, ref?: ModelR
 			const { settings, release } = await begin(opts.signal);
 			try {
 				const filter = opts.onDelta ? new StreamFilter(opts.onDelta) : null;
-				const turn = await sendTurn(opts.thinking ? { ...settings, thinking: opts.thinking } : settings, {
+				const turn = await sendTurn(forThisReply(settings, opts), {
 					messages,
 					onDelta: filter ? (c) => filter.push(c) : undefined,
 					signal: opts.signal,
@@ -182,7 +189,7 @@ function buildClient(resolve: () => LLMSettings, real: Real | null, ref?: ModelR
 				let turn;
 				try {
 					({ settings, release } = await begin(opts.signal));
-					turn = await sendTurn(opts.thinking ? { ...settings, thinking: opts.thinking } : settings, {
+					turn = await sendTurn(forThisReply(settings, opts), {
 						messages: msgs,
 						tools: textMode ? undefined : toolsDef,
 						onDelta: filter ? (c) => filter.push(c) : undefined,

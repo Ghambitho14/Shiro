@@ -306,6 +306,38 @@ async function* readLines(res: Response): AsyncGenerator<string> {
 	if (buf.trim()) yield buf.trim();
 }
 
+/**
+ * Junta las líneas de un stream que no son eventos `data:`. Si el servidor no mandó ningún evento y
+ * esas líneas son un JSON con `error` (LM Studio sin `/v1` responde 200 con `{"error":"Unexpected
+ * endpoint…"}`), es un fallo: sin esto se tomaba por una respuesta vacía.
+ */
+export class StrayLines {
+	private text = "";
+	private sawData = false;
+	add(line: string): boolean {
+		if (line.startsWith("data:")) {
+			this.sawData = true;
+			return true;
+		}
+		if (this.text.length < 8000) this.text += `${line}\n`;
+		return false;
+	}
+	throwIfError(label: string): void {
+		if (this.sawData || !this.text.trim()) return;
+		let data: unknown;
+		try {
+			data = JSON.parse(this.text);
+		} catch {
+			return;
+		}
+		const err = (data as { error?: unknown } | null)?.error;
+		if (!err) return;
+		const message = typeof err === "string" ? err : typeof (err as { message?: unknown }).message === "string" ? (err as { message: string }).message : JSON.stringify(err);
+		const hint = /unexpected endpoint|not found|no such route/i.test(message) ? " Revisa la dirección del servidor: con LM Studio y otros servidores compatibles con OpenAI suele terminar en /v1." : "";
+		throw new LLMError(`${label} respondió con un error: ${message.slice(0, 300)}${hint}`, "bad_request");
+	}
+}
+
 // ---------- OpenAI compatible ----------
 
 function toOpenAIMessage(m: Message): Record<string, unknown> {
@@ -368,8 +400,9 @@ async function openaiTurn(settings: LLMSettings, req: TurnRequest, thinkingParam
 	let reasoning = "";
 	let usage: OpenAIUsage | undefined;
 	const calls = new Map<number, { id: string; name: string; args: string }>();
+	const stray = new StrayLines();
 	for await (const line of readLines(res)) {
-		if (!line.startsWith("data:")) continue;
+		if (!stray.add(line)) continue;
 		const payload = line.slice(5).trim();
 		if (payload === "[DONE]") break;
 		let evt: {
@@ -402,6 +435,7 @@ async function openaiTurn(settings: LLMSettings, req: TurnRequest, thinkingParam
 			calls.set(idx, cur);
 		}
 	}
+	stray.throwIfError("El servidor del modelo");
 	return {
 		content,
 		toolCalls: [...calls.values()]
@@ -602,8 +636,9 @@ async function anthropicTurn(settings: LLMSettings, req: TurnRequest): Promise<T
 		// Cada bloque (texto, razonamiento, uso de herramienta) llega a trozos, identificado por su índice.
 		const partial = new Map<number, AnthropicBlock>();
 		const inputJson = new Map<number, string>();
+		const stray = new StrayLines();
 		for await (const line of readLines(res)) {
-			if (!line.startsWith("data:")) continue;
+			if (!stray.add(line)) continue;
 			let evt: AnthropicEvent;
 			try {
 				evt = JSON.parse(line.slice(5).trim());
@@ -637,6 +672,7 @@ async function anthropicTurn(settings: LLMSettings, req: TurnRequest): Promise<T
 				block.signature = `${typeof block.signature === "string" ? block.signature : ""}${delta.signature ?? ""}`;
 			}
 		}
+		stray.throwIfError("El servidor del modelo");
 		for (const [index, json] of inputJson) {
 			const block = partial.get(index);
 			if (block && json.trim()) block.input = argsToObject(json);
@@ -767,8 +803,9 @@ async function responsesTurn(settings: LLMSettings, req: TurnRequest, thinkingPa
 	let content = "";
 	let usage: TokenUsage | undefined;
 	const toolCalls: ToolCallSpec[] = [];
+	const stray = new StrayLines();
 	for await (const line of readLines(res)) {
-		if (!line.startsWith("data:")) continue;
+		if (!stray.add(line)) continue;
 		const payload = line.slice(5).trim();
 		if (payload === "[DONE]") break;
 		let evt: ResponsesEvent;
@@ -798,5 +835,6 @@ async function responsesTurn(settings: LLMSettings, req: TurnRequest, thinkingPa
 			break;
 		}
 	}
+	stray.throwIfError("El servidor del modelo");
 	return { content, toolCalls, usage };
 }

@@ -1,6 +1,6 @@
 import { after, test } from "node:test";
 import { ok, strictEqual, throws } from "node:assert";
-import { cleanEnv, looksLikePasswordPrompt, parseKeys, stripAnsi, terminal, TerminalSession, wrapCommand, type TermEvent } from "./terminal.js";
+import { cleanEnv, looksLikeInputPrompt, looksLikePasswordPrompt, parseKeys, stripAnsi, terminal, TerminalSession, wrapCommand, type TermEvent } from "./terminal.js";
 import { describeRiskyAction } from "../tools/approval.js";
 
 const WIN = process.platform === "win32";
@@ -46,6 +46,15 @@ test("reconoce cuándo un programa pide contraseña", () => {
 	}
 	for (const line of ["PS C:\\Users> ", "password actualizada correctamente", "¿Continuar? [s/n]", "Compilando…", ""]) {
 		ok(!looksLikePasswordPrompt(line), line);
+	}
+});
+
+test("reconoce cuándo un programa espera una respuesta", () => {
+	for (const line of ["¿Continuar? [s/n]", "Do you want to continue? [Y/n]", "Overwrite? (yes/no)", "Press any key to continue", "--More--", ">>> ", "mysql> ", "Enter your name:", "(gdb) "]) {
+		ok(looksLikeInputPrompt(line), line);
+	}
+	for (const line of ["PS C:\\Users> ", "Compilando el proyecto", "Installing dependencies...", "2 packages added", ""]) {
+		ok(!looksLikeInputPrompt(line), line);
 	}
 });
 
@@ -189,4 +198,14 @@ test("la terminal y el navegador piden permiso solo para acciones con efectos", 
 	strictEqual(describeRiskyAction("browser", { action: "read" }), null);
 	ok(describeRiskyAction("browser", { action: "click", ref: 4 })?.includes("[4]"));
 	ok(describeRiskyAction("browser", { action: "type", ref: 2, text: "hola", enter: true })?.includes("Enter"));
+});
+
+test("reconoce los comandos que dejan abierta una consola en otra máquina", async () => {
+	const { isRemoteShellCommand } = await import("./terminal.js");
+	for (const c of ["ssh mario@172.17.0.4", "ssh -p 2222 -o StrictHostKeyChecking=no u@h", "sshpass -p 'x' ssh u@h", "nc 172.17.0.3 6200", "ftp 10.0.0.1", "sudo ssh root@h"]) {
+		strictEqual(isRemoteShellCommand(c), true, c);
+	}
+	for (const c of ["ssh u@h 'id; sudo -l'", "sshpass -p x ssh -o StrictHostKeyChecking=no u@h id", "nmap -sV 172.17.0.4", "ls", ""]) {
+		strictEqual(isRemoteShellCommand(c), false, c);
+	}
 });

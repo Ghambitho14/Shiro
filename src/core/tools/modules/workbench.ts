@@ -2,7 +2,7 @@
 import type { ToolExecutor } from "../toolExecutors.js";
 import { shiroBrowser } from "../../browser/browser.js";
 import { currentAgentRun } from "../../agent/runContext.js";
-import { terminal, type TermOutcome } from "../../terminal/terminal.js";
+import { isRemoteShellCommand, terminal, type TermOutcome } from "../../terminal/terminal.js";
 
 type Result = Awaited<ReturnType<ToolExecutor>>;
 
@@ -56,9 +56,12 @@ function tail(text: string, max = 6000): string {
 function pendingText(outcome: TermOutcome, seconds: number): string {
 	switch (outcome) {
 		case "input":
-			return "El programa sigue abierto y parece esperar algo. Usa action=write para responderle, action=read para volver a mirar o action=stop para cerrarlo.";
+			if (isRemoteShellCommand(terminal.openCommand())) {
+				return "Estás dentro de otra máquina (o de otro programa con su propio prompt). Para ejecutar comandos ahí usa action=write con text=\"el comando\" (no action=run, que es para la consola local). Para salir, action=write con text=\"exit\" o action=stop.";
+			}
+			return "El programa sigue abierto y espera algo. Si es de pantalla completa (un editor como vim, un paginador como less, un menú), manéjalo con action=write y keys (flechas, enter, esc; q suele salir). Si hace una pregunta, responde con action=write y text=\"…\". action=read para volver a mirar, action=stop para cerrarlo.";
 		case "password":
-			return "El programa pide una contraseña y el usuario no la ha escrito. Pídele que la escriba en el panel Terminal (no en el chat) y mira luego con action=read.";
+			return "El programa pide una contraseña. Si la sabes (la encontraste tú en esta tarea o el usuario te la dio), escríbela con action=write y text=\"la contraseña\": se pide permiso y no se enseña. Si no la sabes, no la inventes: pídele al usuario que la escriba en el panel Terminal (no en el chat) y mira luego con action=read.";
 		case "aborted":
 			return "El usuario detuvo la respuesta; lo que estaba en la terminal sigue abierto.";
 		default:

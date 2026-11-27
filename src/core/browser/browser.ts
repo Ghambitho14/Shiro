@@ -8,6 +8,8 @@ import { join } from "node:path";
 import type { Browser, CDPSession, ElementHandle, KeyInput, Page } from "puppeteer-core";
 import { DATA_DIR } from "../../config/config.js";
 import { SCREENSHOT_DIR } from "../pc/pc.js";
+import { currentAgentRun } from "../agent/runContext.js";
+import { isDangerousHost } from "../net/addressGuard.js";
 import { automationBrowsers } from "./findBrowser.js";
 import {
 	SNAPSHOT_JS,
@@ -26,6 +28,12 @@ const FRAME_MIN_MS = 70;
 /** Sin panel abierto y sin uso durante este tiempo, se cierra para liberar memoria. */
 const IDLE_CLOSE_MS = 30 * 60 * 1000;
 const NAV_TIMEOUT_MS = 30_000;
+
+/** Pequeños ajustes para que la página no detecte tan fácil que es un navegador automatizado. */
+const STEALTH_JS = `
+	try { Object.defineProperty(navigator, 'webdriver', { get: function () { return undefined; } }); } catch (e) {}
+	try { Object.defineProperty(navigator, 'languages', { get: function () { return ['es-ES', 'es', 'en']; } }); } catch (e) {}
+`;
 
 export class BrowserError extends Error {}
 
@@ -147,6 +155,7 @@ class ShiroBrowser {
 						"--no-first-run",
 						"--no-default-browser-check",
 						"--disable-features=Translate,MediaRouter,OptimizationHints",
+						"--disable-blink-features=AutomationControlled",
 						"--disable-session-crashed-bubble",
 						"--lang=es-ES",
 						`--window-size=${this.viewport.width},${this.viewport.height}`,
@@ -272,6 +281,7 @@ class ShiroBrowser {
 		});
 		try {
 			if (this.userAgent) await page.setUserAgent(this.userAgent);
+			await page.evaluateOnNewDocument(STEALTH_JS);
 			await page.setExtraHTTPHeaders({ "Accept-Language": "es-ES,es;q=0.9,en;q=0.8" });
 			await page.setViewport(this.viewport);
 		} catch {
@@ -428,9 +438,10 @@ class ShiroBrowser {
 
 	// ─────────────────────────── acciones del modelo (tool browser) ───────────────────────────
 
-	/** Espera a que la página termine de cargar lo principal (sin quedarse colgado). */
+	/** Espera a que la página termine de cargar lo principal, incluidas las SPA (sin quedarse colgado). */
 	private async settle(page: Page): Promise<void> {
 		await sleep(300);
+		await Promise.race([page.waitForFunction("document.readyState === 'complete'", { timeout: 5000 }).catch(() => {}), sleep(5000)]);
 		await Promise.race([page.waitForNetworkIdle({ idleTime: 500, timeout: 4000 }).catch(() => {}), sleep(4000)]);
 	}
 
@@ -454,6 +465,10 @@ class ShiroBrowser {
 
 	async open(input: string): Promise<string> {
 		const url = normalizeUrl(input);
+		// Los metadatos de nube / enlace local no se abren (fuera de Hacking): objetivo típico de robo de credenciales.
+		if (currentAgentRun()?.mode !== "hacking" && isDangerousHost(hostOf(url))) {
+			throw new BrowserError(`No abro ${hostOf(url)}: es una dirección de metadatos internos (nube / enlace local). Bloqueada por seguridad.`);
+		}
 		const page = await this.ensurePage();
 		this.setLoading(true);
 		let note = "";

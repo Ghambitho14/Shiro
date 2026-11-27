@@ -368,7 +368,11 @@
 								<select class="select" id="set-stt-engine" style="max-width: 220px">
 									<option value="browser">Navegador (sin instalar nada)</option>
 									<option value="server">Servidor Whisper</option>
+									<option value="liquid">Liquid (sin internet)</option>
 								</select>
+							</div>
+							<div id="stt-liquid-fields" hidden>
+								<small class="muted liquid-status"></small>
 							</div>
 							<div id="stt-server-fields" hidden>
 								<label class="field"><span>Dirección del servidor Whisper</span><input class="input mono" id="set-stt-url" placeholder="http://localhost:8000/v1" /><small>Compatible con OpenAI: speaches / faster-whisper-server (local), Groq (https://api.groq.com/openai/v1), OpenAI…</small></label>
@@ -400,8 +404,18 @@
 								<select class="select" id="set-tts-engine" style="max-width: 220px">
 									<option value="browser">Navegador</option>
 									<option value="local">Aku (sin internet)</option>
+									<option value="liquid">Liquid (sin internet)</option>
 									<option value="server">Servidor TTS</option>
 								</select>
+							</div>
+							<div id="tts-liquid-fields" hidden>
+								<div class="set-row">
+									<div class="label"><strong>Voz de Liquid</strong><span class="liquid-status"></span></div>
+									<select class="select" id="set-liquid-voice" style="max-width: 220px">
+										<option value="female">Mujer</option>
+										<option value="male">Hombre</option>
+									</select>
+								</div>
 							</div>
 							<div id="tts-local-fields" hidden>
 								<div class="local-voices" id="local-voices"></div>

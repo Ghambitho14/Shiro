@@ -121,6 +121,8 @@ export const PROJECT_OVERLAP_TOOLS = ["read_file", "write_file", "list_dir", "wr
 
 /** Veces que se permite repetir exactamente la misma llamada (nombre + args) en una respuesta. */
 const MAX_IDENTICAL_TOOL_CALLS = 2;
+/** Tope de tokens por vuelta en modo voz: sobra para pedir una herramienta o decir unas frases. */
+export const VOICE_MAX_TOKENS = 800;
 /** Lo que ocupa una captura en el contexto, en letras (≈800 tokens, como en historyBudget). */
 const IMAGE_CHARS = 2800;
 
@@ -582,6 +584,10 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 				onStreamDelta(chunk);
 			}
 		: undefined;
+	// Por voz se espera la respuesta en silencio: sin pensar (salvo «Más razonamiento») y corta. Pensando, un modelo
+	// local tardaba medio minuto en decir una frase.
+	const replyThinking = opts.thinking ?? (opts.voice ? "off" : undefined);
+	const replyMaxTokens = opts.voice ? VOICE_MAX_TOKENS : undefined;
 	const retryPolicy = createRetryPolicy({ maxRetries: 2, baseDelayMs: 800 });
 	// Para las tools que necesitan saber de esta respuesta (delegate crea ayudantes con lo mismo).
 	const runContext: AgentRunContext = {
@@ -589,7 +595,7 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 		agentName,
 		mode,
 		permissions,
-		thinking: opts.thinking,
+		thinking: replyThinking,
 		tools: effectiveTools,
 		approver,
 		signal,
@@ -613,13 +619,14 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 							approver,
 							() =>
 								textOnly
-									? llm.chat(fullMessages, { onDelta, onUsage: trackUsage, signal, sessionId, thinking: opts.thinking })
+									? llm.chat(fullMessages, { onDelta, onUsage: trackUsage, signal, sessionId, thinking: replyThinking, maxTokens: replyMaxTokens })
 									: llm.chatWithTools(fullMessages, toolsDef, executeTool, {
 										onDelta,
 										onUsage: trackUsage,
 										signal,
 										sessionId,
-										thinking: opts.thinking,
+										thinking: replyThinking,
+										maxTokens: replyMaxTokens,
 										saverLimits,
 										resultChars: prep.resultChars,
 										contextTokens: prep.contextTokens,

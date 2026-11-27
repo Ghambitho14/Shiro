@@ -281,6 +281,18 @@ test("Ajustes del modelo: pensar y largo máximo llegan en el formato de cada se
 	deepStrictEqual(cloud.reasoning, { effort: "none" });
 });
 
+test("Tope de una respuesta (modo voz): vale el menor entre el de la respuesta y el de Ajustes", async () => {
+	requests.length = 0;
+	handler = () => ({ json: { choices: [{ message: { content: "ok" } }] } });
+	await createLLMClient(settings("openai")).chat([{ role: "user", content: "a" }], { maxTokens: 800 });
+	await createLLMClient(settings("openai", { maxTokens: 300 })).chat([{ role: "user", content: "a" }], { maxTokens: 800 });
+	await createLLMClient(settings("openai", { maxTokens: 2000 })).chat([{ role: "user", content: "a" }], { maxTokens: 800 });
+	deepStrictEqual(
+		requests.map((r) => r.body.max_tokens),
+		[800, 300, 800],
+	);
+});
+
 test("Cuánto piensa: si el servidor rechaza la forma de pedirlo, prueba la siguiente y la recuerda", async () => {
 	requests.length = 0;
 	handler = (_path, body) =>
@@ -444,4 +456,21 @@ test("Antes de terminar: la nota de beforeFinish se manda una sola vez y lo ya d
 	const sent = requests[1].body.messages as ChatMsg[];
 	strictEqual(sent[sent.length - 2].content, "Listo, cambiado.");
 	strictEqual(sent[sent.length - 1].content, "Comprueba tu cambio.");
+});
+
+test("un JSON de error en vez del stream es un fallo, no una respuesta vacía", async () => {
+	const { StrayLines } = await import("./transports.js");
+	const s = new StrayLines();
+	for (const line of ["{", '"error": "Unexpected endpoint or method. (POST /chat/completions)"', "}"]) strictEqual(s.add(line), false);
+	let message = "";
+	try {
+		s.throwIfError("El servidor del modelo");
+	} catch (err) {
+		message = (err as Error).message;
+	}
+	ok(message.includes("Unexpected endpoint") && message.includes("/v1"), message);
+	const fine = new StrayLines();
+	fine.add("event: ping");
+	fine.add('data: {"choices":[]}');
+	fine.throwIfError("x");
 });

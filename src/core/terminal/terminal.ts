@@ -85,6 +85,50 @@ export function looksLikePasswordPrompt(line: string): boolean {
 	return PASSWORD_PROMPT.test(line.trimEnd());
 }
 
+/**
+ * ¿La línea del cursor parece que un programa espera que le respondas (una pregunta, una confirmación,
+ * un paginador o un REPL)? Sirve para devolver el control al modelo antes, sin confundir un comando
+ * lento y callado con una pregunta.
+ */
+export function looksLikeInputPrompt(line: string): boolean {
+	const t = line.trimEnd();
+	if (!t) return false;
+	if (/\[(?:y\/n|s\/n|y\/N|s\/N|yes\/no|sí\/no)\]|\((?:y\/n|s\/n|yes\/no)\)/i.test(t)) return true; // confirmaciones
+	if (/press\s+(?:any\s+key|enter|return|space|\[enter\])/i.test(t)) return true; // «pulsa una tecla»
+	if (/--\s*more\s*--|\((?:END|more \d+%)\)/i.test(t)) return true; // paginadores (less / more)
+	if (/^(?:>>>|\.\.\.|\(gdb\)|\(pdb\)|In \[\d+\]:|ftp>|sftp>|mysql>|sqlite>|irb)/i.test(t)) return true; // REPLs
+	if (/[?:]\s*$/.test(t) && t.length <= 100) return true; // una pregunta corta
+	return false;
+}
+
+/**
+ * ¿Este comando abre una consola en otra máquina (ssh, telnet, nc, ftp…) y se queda dentro?
+ * Un ssh con un comando al final (`ssh u@h 'id'`) no cuenta: vuelve solo.
+ */
+export function isRemoteShellCommand(command: string): boolean {
+	const words = command.trim().split(/\s+/);
+	let i = 0;
+	if (words[i] === "sudo") i++;
+	if (words[i] === "sshpass") {
+		i++;
+		while (i < words.length && words[i].startsWith("-")) i += /^-[pfe]$/.test(words[i]) ? 2 : 1;
+	}
+	const prog = (words[i] ?? "").split("/").pop() ?? "";
+	if (["telnet", "nc", "ncat", "netcat", "ftp", "lftp", "mysql", "psql", "smbclient", "evil-winrm", "msfconsole", "socat"].includes(prog)) return true;
+	if (prog !== "ssh") return false;
+	// ssh [opciones] destino [comando]: si hay algo después del destino, ejecuta eso y vuelve.
+	const rest = words.slice(i + 1);
+	const withValue = /^-[bcDEeFIiJLlmOoPpQRSWw]$/;
+	for (let j = 0; j < rest.length; j++) {
+		if (rest[j].startsWith("-")) {
+			if (withValue.test(rest[j])) j++;
+			continue;
+		}
+		return j === rest.length - 1;
+	}
+	return true;
+}
+
 const KEY_CODES: Record<string, string> = {
 	enter: "\r",
 	return: "\r",
@@ -246,6 +290,8 @@ class TerminalSession {
 	/** Cuándo se pulsó Enter por última vez: tras una contraseña, el programa aún no ha contestado. */
 	private answeredAt = 0;
 	private attention: TermAttention | null = null;
+	/** El último comando que lanzó el modelo con runAndWait (para saber qué programa sigue abierto). */
+	private lastCommand = "";
 	/** Bloques de external(): se muestran aparte de la consola. */
 	private blocks: TermBlock[] = [];
 	private seq = 0;
@@ -489,7 +535,15 @@ class TerminalSession {
 					continue;
 				}
 				const b = this.screen.buffer.active;
-				if (quietMs !== undefined ? quiet >= quietMs : quiet >= 2500 && (b.cursorX > 0 || b.type === "alternate")) return "input";
+				if (quietMs !== undefined) {
+					if (quiet >= quietMs) return "input";
+				} else if (quiet >= 1200 && (b.type === "alternate" || looksLikeInputPrompt(this.cursorLine()))) {
+					// Pantalla completa (vim, less, un menú) o un prompt reconocible: devuelve el control antes.
+					return "input";
+				} else if (quiet >= 4000 && b.cursorX > 0) {
+					// Media línea suelta sin prompt claro: espera más, para no confundir un comando lento y callado.
+					return "input";
+				}
 			}
 			if (now >= deadline) return "timeout";
 		}
@@ -502,8 +556,13 @@ class TerminalSession {
 		if (cmd.length > MAX_COMMAND_CHARS) throw new Error("El comando es demasiado largo.");
 		const proc = await this.whenReady();
 		if (this.busy) {
-			throw new Error(`Hay un programa abierto en la terminal: no escribo otro comando encima. Usa action=write para responderle, action=read para mirar o action=stop para cerrarlo.\n\n${this.tail()}`);
+			const remote = isRemoteShellCommand(this.lastCommand);
+			const how = remote
+				? `Estás dentro de otra máquina (${this.lastCommand.slice(0, 80)}): para ejecutar un comando ahí, usa action=write con text="${cmd.slice(0, 60)}${cmd.length > 60 ? "…" : ""}". Para salir, action=write con text="exit" (o action=stop).`
+				: "Usa action=write para responderle, action=read para mirar o action=stop para cerrarlo.";
+			throw new Error(`Hay un programa abierto en la terminal: no escribo otro comando encima. ${how}\n\n${this.tail()}`);
 		}
+		this.lastCommand = cmd;
 		await this.flushScreen();
 		// El marcador sigue a la línea aunque las más viejas se pierdan por arriba.
 		const marker = this.screen.registerMarker(0);
@@ -571,6 +630,11 @@ class TerminalSession {
 
 	isRunning(): boolean {
 		return this.busy;
+	}
+
+	/** El comando del modelo que sigue abierto, o "" si la terminal está libre. */
+	openCommand(): string {
+		return this.busy ? this.lastCommand : "";
 	}
 
 	/**

@@ -186,12 +186,15 @@ const configSchema = z.object({
 	 * "server" usa un servidor compatible con OpenAI: Whisper (/audio/transcriptions)
 	 * y TTS (/audio/speech). Sirven OpenAI, Groq, speaches, Kokoro-FastAPI, LocalAI…
 	 * ttsEngine "local": la voz de Aku sin internet (sherpa-onnx, src/core/voice/), con la voz ttsLocalVoice.
+	 * "liquid" (para oír y para hablar): LFM3-Audio de Liquid AI en el llama.cpp integrado
+	 * (src/core/voice/liquidVoice.ts), sin internet, con la voz liquidVoice.
 	 */
-	sttEngine: z.enum(["browser", "server"]).default("browser").catch("browser"),
+	sttEngine: z.enum(["browser", "server", "liquid"]).default("browser").catch("browser"),
 	sttBaseUrl: urlSchema.optional().catch(undefined),
 	sttModel: z.string().trim().min(1).default("whisper-1").catch("whisper-1"),
 	sttApiKey: optionalString,
-	ttsEngine: z.enum(["browser", "server", "local"]).default("browser").catch("browser"),
+	ttsEngine: z.enum(["browser", "server", "local", "liquid"]).default("browser").catch("browser"),
+	liquidVoice: z.enum(["female", "male"]).default("female").catch("female"),
 	ttsLocalVoice: z.string().trim().min(1).max(60).default("piper-claude").catch("piper-claude"),
 	ttsBaseUrl: urlSchema.optional().catch(undefined),
 	ttsModel: z.string().trim().min(1).default("tts-1").catch("tts-1"),

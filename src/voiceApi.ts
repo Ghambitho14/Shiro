@@ -8,6 +8,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getConfig } from "./config/config.js";
 import { installVoice, listLocalVoices, removeVoice, speakLocal } from "./core/voice/localTts.js";
+import { liquidSpeak, liquidTranscribe } from "./core/voice/liquidVoice.js";
 import { SCREENSHOT_DIR } from "./core/pc/pc.js";
 import { readBodyBuffer, readJson, safeDecode, send, sendJson } from "./http.js";
 
@@ -15,7 +16,7 @@ export async function handleVoiceApi(req: IncomingMessage, res: ServerResponse, 
 	// === VOZ: transcribir (Whisper) y leer en voz alta (TTS) con un servidor compatible con OpenAI ===
 	if (method === "POST" && pathname === "/api/voice/transcribe") {
 		const cfg = getConfig();
-		if (!cfg.sttBaseUrl) {
+		if (cfg.sttEngine !== "liquid" && !cfg.sttBaseUrl) {
 			sendJson(res, 400, { error: "Configura el servidor de reconocimiento de voz en Ajustes → Voz." });
 			return true;
 		}
@@ -31,6 +32,14 @@ export async function handleVoiceApi(req: IncomingMessage, res: ServerResponse, 
 			return true;
 		}
 		const mime = String(req.headers["content-type"] || "audio/webm").split(";")[0];
+		if (cfg.sttEngine === "liquid") {
+			try {
+				sendJson(res, 200, { text: await liquidTranscribe(audio, mime, parsedUrl.searchParams.get("lang") || "es") });
+			} catch (err) {
+				sendJson(res, 502, { error: err instanceof Error ? err.message : String(err) });
+			}
+			return true;
+		}
 		const ext = mime.includes("ogg") ? "ogg" : mime.includes("wav") ? "wav" : mime.includes("mp4") ? "mp4" : mime.includes("mpeg") ? "mp3" : "webm";
 		const form = new FormData();
 		form.append("file", new Blob([new Uint8Array(audio)], { type: mime }), `audio.${ext}`);
@@ -81,7 +90,7 @@ export async function handleVoiceApi(req: IncomingMessage, res: ServerResponse, 
 
 	if (method === "POST" && pathname === "/api/voice/speak") {
 		const cfg = getConfig();
-		if (cfg.ttsEngine !== "local" && !cfg.ttsBaseUrl) {
+		if (cfg.ttsEngine !== "local" && cfg.ttsEngine !== "liquid" && !cfg.ttsBaseUrl) {
 			sendJson(res, 400, { error: "Configura el servidor de voz (TTS) en Ajustes → Voz." });
 			return true;
 		}
@@ -100,6 +109,18 @@ export async function handleVoiceApi(req: IncomingMessage, res: ServerResponse, 
 		}
 		if (!text) {
 			sendJson(res, 400, { error: "Texto vacío" });
+			return true;
+		}
+		if (cfg.ttsEngine === "liquid") {
+			try {
+				// La voz de un agente vale si es "female" o "male"; si no, la de Ajustes → Voz.
+				const voice = voiceName === "female" || voiceName === "male" ? voiceName : cfg.liquidVoice;
+				const wav = await liquidSpeak(text, voice);
+				res.writeHead(200, { "Content-Type": "audio/wav", "Cache-Control": "no-store" });
+				res.end(wav);
+			} catch (err) {
+				sendJson(res, 502, { error: err instanceof Error ? err.message : String(err) });
+			}
 			return true;
 		}
 		if (cfg.ttsEngine === "local") {

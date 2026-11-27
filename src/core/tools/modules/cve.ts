@@ -7,7 +7,7 @@
  * Es de SOLO LECTURA (no tiene efectos), así que no pide permiso; pero trae texto de afuera,
  * así que está en WEB_TOOLS (untrusted.ts) y su salida llega al modelo como CONTENIDO EXTERNO.
  */
-import { FETCH_USER_AGENT } from "./fetch.js";
+import { BROWSER_USER_AGENT } from "./fetch.js";
 
 const CVE_API = (process.env.SHIRO_CVE_API || "https://cve.circl.lu/api").replace(/\/+$/, "");
 const CVE_TIMEOUT_MS = 15000;
@@ -150,7 +150,7 @@ async function fetchJson(url: string): Promise<{ ok: true; data: unknown } | { o
 	try {
 		const res = await fetch(url, {
 			signal: controller.signal,
-			headers: { "User-Agent": FETCH_USER_AGENT, Accept: "application/json" },
+			headers: { "User-Agent": BROWSER_USER_AGENT, Accept: "application/json" },
 			redirect: "follow",
 		});
 		if (!res.ok) {

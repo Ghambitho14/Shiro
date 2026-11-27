@@ -23,6 +23,42 @@ const BROWSER_ERRORS = {
 	"language-not-supported": "El navegador no reconoce ese idioma. Cambia el idioma en Ajustes → Voz.",
 };
 
+/**
+ * Pasa lo grabado (webm/ogg) a WAV mono de 16 kHz: la voz de Liquid (llama.cpp) no entiende webm,
+ * y los servidores Whisper aceptan WAV. Si el navegador no puede decodificarlo, va tal cual.
+ */
+export async function toWav(blob) {
+	try {
+		const RATE = 16000;
+		const ac = new AudioContext();
+		const decoded = await ac.decodeAudioData(await blob.arrayBuffer()).finally(() => ac.close());
+		const offline = new OfflineAudioContext(1, Math.ceil(decoded.duration * RATE), RATE);
+		const src = offline.createBufferSource();
+		src.buffer = decoded;
+		src.connect(offline.destination);
+		src.start();
+		const pcm = (await offline.startRendering()).getChannelData(0);
+		const out = new DataView(new ArrayBuffer(44 + pcm.length * 2));
+		const str = (o, s) => [...s].forEach((c, i) => out.setUint8(o + i, c.charCodeAt(0)));
+		str(0, "RIFF");
+		out.setUint32(4, 36 + pcm.length * 2, true);
+		str(8, "WAVEfmt ");
+		out.setUint32(16, 16, true);
+		out.setUint16(20, 1, true);
+		out.setUint16(22, 1, true);
+		out.setUint32(24, RATE, true);
+		out.setUint32(28, RATE * 2, true);
+		out.setUint16(32, 2, true);
+		out.setUint16(34, 16, true);
+		str(36, "data");
+		out.setUint32(40, pcm.length * 2, true);
+		for (let i = 0; i < pcm.length; i++) out.setInt16(44 + i * 2, Math.max(-1, Math.min(1, pcm[i])) * 0x7fff, true);
+		return new Blob([out], { type: "audio/wav" });
+	} catch {
+		return blob;
+	}
+}
+
 /** Nivel del micrófono (0-1) para animar la interfaz. */
 async function openMeter(onLevel) {
 	const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
@@ -53,6 +89,51 @@ async function openMeter(onLevel) {
 			onLevel?.(0);
 		},
 	};
+}
+
+/**
+ * Avisa (onSpeech, una vez) cuando empiezas a hablar mientras Aku habla, para callarlo y escucharte.
+ * El micrófono va con cancelación de eco: Chrome resta lo que suena en esta página (la voz de Aku sin internet o
+ * la de un servidor), pero no la voz de Windows que usa el navegador. Por eso el umbral se ajusta a lo que llega
+ * mientras Aku habla, y con `strict` (voz del navegador) hay que hablar bastante por encima de él.
+ * Devuelve cómo dejar de escuchar.
+ */
+export async function watchForSpeech(onSpeech, { strict = false } = {}) {
+	const meter = await openMeter(null);
+	const STEP = 50;
+	const floor = strict ? 0.05 : 0.025;
+	const ratio = strict ? 3.5 : 2.5;
+	const needMs = strict ? 400 : 250;
+	let baseline = 0;
+	let warm = 0;
+	let loudMs = 0;
+	let stopped = false;
+	const stop = () => {
+		if (stopped) return;
+		stopped = true;
+		clearInterval(timer);
+		meter.close();
+	};
+	const timer = setInterval(() => {
+		const rms = meter.rms();
+		// Los primeros 400 ms solo miden lo que llega (ruido y eco de Aku).
+		if (warm < 8) {
+			baseline = warm ? baseline * 0.7 + rms * 0.3 : rms;
+			warm++;
+			return;
+		}
+		if (rms > Math.max(floor, baseline * ratio)) {
+			loudMs += STEP;
+			if (loudMs >= needMs) {
+				stop();
+				onSpeech();
+			}
+		} else {
+			loudMs = Math.max(0, loudMs - STEP);
+			baseline = baseline * 0.95 + rms * 0.05;
+		}
+	}, STEP);
+	return stop;
 }
 
 /**
@@ -174,7 +255,7 @@ export class Recognizer {
 				if (!keep || this.cancelled || !heard) return resolve("");
 				this.onInterim?.("Transcribiendo…");
 				try {
-					const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+					const blob = await toWav(new Blob(chunks, { type: recorder.mimeType || "audio/webm" }));
 					const r = await authFetch(`/api/voice/transcribe?lang=${encodeURIComponent(this.lang)}`, {
 						method: "POST",
 						headers: { "Content-Type": blob.type },

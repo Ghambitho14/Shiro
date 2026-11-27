@@ -41,6 +41,8 @@ export type ChatOptions = {
 	sessionId?: string;
 	/** Cuánto piensa en esta respuesta, si no es lo de Ajustes → Modelo («Más razonamiento» del chat). */
 	thinking?: ThinkingLevel;
+	/** Tope de tokens de cada vuelta en esta respuesta (el modo voz contesta corto); si Ajustes pone uno menor, vale ese. */
+	maxTokens?: number;
 	/** false: esta respuesta no aplica los límites del modo ahorro (Code, Hacking y Planear) y tiene más pasos. */
 	saverLimits?: boolean;
 	/** Letras que caben en cada resultado de herramienta (Agent.ts lo calcula con el contexto del modelo). */
