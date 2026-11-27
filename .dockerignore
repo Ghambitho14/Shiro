@@ -10,3 +10,5 @@ data
 .env.*
 CLAUDE.md
 mobile
+# Las habilidades que trae Aku son SKILL.md: sin esto la imagen las pierde por la regla *.md
+!skills/**

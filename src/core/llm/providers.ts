@@ -369,6 +369,19 @@ export function modelSupportsVision(
 	return known ? known.vision : VISION_MODEL.test(model);
 }
 
+/**
+ * Si a un modelo de la nube le falta su API key en este equipo. La de Ajustes → Modelo solo vale para el proveedor
+ * de Ajustes; los demás solo tienen la de su variable de entorno (`apiKeyEnv`). Lo usan «Elegir modelo solo» y el
+ * respaldo para saltarse un modelo que fallaría seguro. `cfg` y `env` son para las pruebas.
+ */
+export function lacksApiKey(ref: ModelRef, cfg = getConfig(), env: NodeJS.ProcessEnv = process.env): boolean {
+	const preset = PROVIDER_PRESETS[ref.provider];
+	if (!preset?.needsApiKey) return false;
+	if (preset.apiKeyEnv && env[preset.apiKeyEnv]?.trim()) return false;
+	if (ref.provider === cfg.llmProvider) return !(env.SHIRO_LLM_API_KEY?.trim() || cfg.llmApiKey);
+	return true;
+}
+
 /** API key enmascarada para mostrar en pantalla o logs. */
 export function maskKey(key: string): string {
 	return key ? `***${key.slice(-4)}` : "";

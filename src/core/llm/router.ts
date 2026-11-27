@@ -11,7 +11,7 @@ import { normalizeText } from "../agents/text.js";
 import type { LLMClient } from "./LLMClient.js";
 import { getLLM, getLLMFor } from "./getLLM.js";
 import { isGatedProvider } from "./modelGate.js";
-import { PROVIDER_PRESETS, type ModelRef } from "./providers.js";
+import { lacksApiKey, PROVIDER_PRESETS, type ModelRef } from "./providers.js";
 
 export type ModelTier = "fast" | "strong";
 
@@ -82,8 +82,22 @@ export function routeModel(goal: string, input: RouteInput, cfg: AppConfig = get
 	if (!auto?.enabled || (!auto.fast && !auto.strong)) return null;
 	const { tier, reason } = pickTier(goal, input);
 	const ref = refOf(tier === "fast" ? auto.fast : auto.strong);
+	// Sin su API key en este equipo fallaría seguro («Falta la API key…»): responde el de Ajustes → Modelo.
+	if (ref && lacksApiKey(ref, cfg)) {
+		const llm = getLLM();
+		return { llm, tier, reason: `${PROVIDER_PRESETS[ref.provider].title} no tiene clave en este equipo`, model: labelOf(llm) };
+	}
 	const llm = ref ? getLLMFor(ref) : getLLM();
 	return { llm, tier, reason, model: labelOf(llm) };
+}
+
+/** Cómo darle su clave a un proveedor que no es el de Ajustes → Modelo. */
+export function keyHint(provider: ModelRef["provider"], cfg: AppConfig = getConfig()): string {
+	const preset = PROVIDER_PRESETS[provider];
+	const current = PROVIDER_PRESETS[cfg.llmProvider]?.title ?? cfg.llmProvider;
+	return preset.apiKeyEnv
+		? `Ponla en la variable de entorno ${preset.apiKeyEnv} de Windows y vuelve a abrir Aku (la de Ajustes → Modelo solo vale para ${current}).`
+		: `Solo funciona si es el proveedor de Ajustes → Modelo (ahora es ${current}).`;
 }
 
 /**
@@ -108,8 +122,8 @@ export function autoModelWarnings(cfg: AppConfig = getConfig(), env: NodeJS.Proc
 	for (const [name, side] of sides) {
 		if (!side?.provider || side.provider === cfg.llmProvider) continue;
 		const preset = PROVIDER_PRESETS[side.provider];
-		if (preset?.needsApiKey && !(preset.apiKeyEnv && env[preset.apiKeyEnv]?.trim())) {
-			out.push(`El modelo ${name} (${preset.title}) necesita su API key en la variable de entorno ${preset.apiKeyEnv ?? "del proveedor"}: la de Ajustes → Modelo solo vale para ${PROVIDER_PRESETS[cfg.llmProvider]?.title ?? cfg.llmProvider}.`);
+		if (lacksApiKey(side, cfg, env)) {
+			out.push(`El modelo ${name} (${preset.title}) no tiene API key en este equipo: mientras falte, responde el de Ajustes → Modelo. ${keyHint(side.provider, cfg)}`);
 		}
 	}
 	return out;

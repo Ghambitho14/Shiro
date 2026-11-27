@@ -1,0 +1,30 @@
+# Aku en un servidor, como app: sin el código, solo la imagen publicada.
+# En una carpeta del servidor (p. ej. ~/aku) van este archivo, .env (claves) y data/ (tus datos).
+#
+#   Instalar / arrancar:  docker compose up -d
+#   Actualizar:           docker compose pull && docker compose up -d && docker image prune -f
+#
+# Variables de .env que usa este archivo:
+#   AKU_BIND  dónde escucha (por defecto 127.0.0.1; la IP de Tailscale para entrar desde tus equipos)
+#   AKU_PORT  puerto (por defecto 1407)
+#   AKU_TAG   versión de la imagen (por defecto latest; p. ej. 0.2.0 para fijarla)
+# El resto de .env (SHIRO_AUTH_TOKEN, OPENCODE_API_KEY…) pasa a Aku. Ver DEPLOY.md.
+
+services:
+  aku:
+    image: ghcr.io/ghambitho14/aku:${AKU_TAG:-latest}
+    container_name: aku
+    ports:
+      - "${AKU_BIND:-127.0.0.1}:${AKU_PORT:-1407}:1406"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - PORT=1406
+      - BIND_HOST=0.0.0.0
+    extra_hosts:
+      # Ollama/LM Studio del propio servidor: http://host.docker.internal:11434
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped

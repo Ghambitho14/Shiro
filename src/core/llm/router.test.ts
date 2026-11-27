@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseConfig } from "../../config/config.js";
 import { autoModelWarnings, pickTier, routeModel, type RouteInput } from "./router.js";
+import { getLLM } from "./getLLM.js";
+import { lacksApiKey } from "./providers.js";
 
 const chat: RouteInput = { mode: "chat", planning: false, moreReasoning: false, voice: false, images: false };
 
@@ -76,4 +78,25 @@ test("avisos: dos modelos del PC y una nube sin clave", () => {
 	// La nube elegida es la misma de Ajustes: usa su clave guardada, sin aviso.
 	const same = parseConfig({ llmProvider: "openrouter", autoModel: { enabled: true, fast: { provider: "ollama", model: "a" }, strong: { provider: "openrouter", model: "x" } } });
 	assert.deepEqual(autoModelWarnings(same, {}), []);
+});
+
+test("un modelo de la nube sin clave en este equipo se salta: responde el de Ajustes", () => {
+	const saved = process.env.OLLAMA_API_KEY;
+	delete process.env.OLLAMA_API_KEY;
+	// Lo que le pasó a Jhon: el principal es local y por voz iba a Ollama Cloud, que no tiene clave aquí.
+	const cfg = parseConfig({ llmProvider: "gguf", autoModel: { enabled: true, fast: { provider: "ollama-cloud", model: "deepseek-v4.1-flash" } } });
+	const r = routeModel("Hey, ¿cómo estás?", { ...chat, voice: true }, cfg);
+	assert.equal(r?.llm, getLLM());
+	assert.match(r?.reason ?? "", /Ollama Cloud no tiene clave/);
+	assert.match(autoModelWarnings(cfg, {}).join("\n"), /OLLAMA_API_KEY/);
+	if (saved !== undefined) process.env.OLLAMA_API_KEY = saved;
+});
+
+test("cuándo falta la clave: la de Ajustes solo vale para su proveedor; la variable de entorno vale siempre", () => {
+	const cfg = parseConfig({ llmProvider: "opencode-go", llmApiKey: "clave-guardada" });
+	assert.equal(lacksApiKey({ provider: "opencode-go" }, cfg, {}), false);
+	assert.equal(lacksApiKey({ provider: "ollama-cloud" }, cfg, {}), true);
+	assert.equal(lacksApiKey({ provider: "ollama-cloud" }, cfg, { OLLAMA_API_KEY: "k" }), false);
+	assert.equal(lacksApiKey({ provider: "ollama" }, cfg, {}), false);
+	assert.equal(lacksApiKey({ provider: "opencode-go" }, parseConfig({ llmProvider: "opencode-go" }), {}), true);
 });

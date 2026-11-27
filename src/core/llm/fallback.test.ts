@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { parseConfig, setConfig } from "../../config/config.js";
 import { runAgent } from "../agent/Agent.js";
 import { LLMError, type LLMClient } from "./LLMClient.js";
-import { engineRecentlyFailed, FAILED_ENGINE_MS, markEngineFailed, resetFailedEngines, type FallbackNotice } from "./fallback.js";
+import { engineRecentlyFailed, FAILED_ENGINE_MS, fallbackWarnings, markEngineFailed, resetFailedEngines, type FallbackNotice } from "./fallback.js";
 
 type Fake = LLMClient & { calls: number };
 
@@ -100,4 +100,22 @@ test("no cambia de modelo con una clave mala, si ya escribió algo o si no hay r
 	const alone = fake("principal", "http://pc:3/v1", down());
 	assert.notEqual(await ask(alone, notices), "Responde respaldo");
 	assert.deepEqual(notices, []);
+});
+
+test("un respaldo sin clave en este equipo se salta y se avisa en Ajustes", async () => {
+	const saved = process.env.OLLAMA_API_KEY;
+	delete process.env.OLLAMA_API_KEY;
+	const main = fake("principal", "http://pc:4/v1", down());
+	const backup = fake("respaldo", "http://nube/v1");
+	setConfig({ llmProvider: "gguf", fallbackModels: [{ provider: "ollama-cloud", model: "deepseek-v4.1-flash" }, { provider: "custom", model: "respaldo" }] });
+	resetFailedEngines((ref) => (ref.model === "respaldo" ? backup : fake("nube-sin-clave", "https://ollama.com", new LLMError("Falta la API key", "auth"))));
+	const notices: FallbackNotice[] = [];
+	assert.equal(await ask(main, notices), "Responde respaldo");
+	assert.deepEqual(notices, [{ from: "principal", to: "respaldo", reason: "no respondió" }]);
+	const warnings = fallbackWarnings(parseConfig({ llmProvider: "gguf", fallbackModels: [{ provider: "ollama-cloud" }, { provider: "ollama" }] }), {});
+	assert.equal(warnings.length, 1);
+	assert.match(warnings[0], /primer respaldo \(Ollama Cloud\).*OLLAMA_API_KEY/);
+	setConfig({ fallbackModels: [] });
+	resetFailedEngines();
+	if (saved !== undefined) process.env.OLLAMA_API_KEY = saved;
 });

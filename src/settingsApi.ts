@@ -10,6 +10,7 @@ import { PROVIDER_PRESETS, modelSupportsVision, resolveLLMSettings } from "./cor
 import { listProviderModels } from "./core/llm/modelList.js";
 import { getLLM } from "./core/llm/getLLM.js";
 import { autoModelWarnings } from "./core/llm/router.js";
+import { fallbackWarnings } from "./core/llm/fallback.js";
 import { getWhatsAppBridgeStatus } from "./whatsapp.js";
 import { isBodyTooLargeError, readBody, readJson, sendJson } from "./http.js";
 import { syncWakeListener, wakeStatus } from "./core/wake/wakeListener.js";
@@ -35,6 +36,7 @@ function buildSettings() {
 		autoModelWarnings: autoModelWarnings(c),
 		/** Respaldo entre motores (fallback.ts): hasta 2 modelos por si el de la respuesta no contesta. */
 		fallbackModels: c.fallbackModels,
+		fallbackWarnings: fallbackWarnings(c),
 		vision: c.vision,
 		visionActive: modelSupportsVision(llm.model, c.vision),
 		platform: process.platform,

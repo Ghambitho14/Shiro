@@ -111,16 +111,28 @@ export function paintFallbackModels() {
 	const rows = [0, 1].map((i) =>
 		sideField(`fallback-${i}`, i ? "Si ese tampoco responde" : "Primer respaldo", i ? "Se prueba después del primero." : "Mejor uno de otro lugar: si el tuyo es del PC, uno en la nube (o al revés).", saved[i], true),
 	);
+	const warn = el("div", "notice warn auto-model-warn");
+	const paintWarn = () => {
+		const lines = state.settings?.fallbackWarnings || [];
+		warn.hidden = !lines.length;
+		warn.innerHTML = "";
+		for (const line of lines) {
+			const p = el("p");
+			p.textContent = line;
+			warn.append(p);
+		}
+	};
 	const save = el("button", "btn primary");
 	save.type = "button";
 	save.textContent = "Guardar respaldo";
 	save.onclick = async () => {
 		const list = rows.map((r) => r.read()).filter(Boolean);
-		await putSettings({ fallbackModels: list }, list.length ? "Respaldo guardado" : "Sin modelos de respaldo");
+		if (await putSettings({ fallbackModels: list }, list.length ? "Respaldo guardado" : "Sin modelos de respaldo")) paintWarn();
 	};
 	const actions = el("div", "auto-model-actions");
 	actions.append(save);
-	box.append(...rows.map((r) => r.wrap), actions);
+	box.append(...rows.map((r) => r.wrap), warn, actions);
+	paintWarn();
 }
 
 export function initAutoModel() {

@@ -43,6 +43,27 @@ docker compose up -d --build
 - Ollama en el mismo servidor: `http://host.docker.internal:11434`.
 - Control del PC (teclado, ratón, capturas) solo funciona en Windows; en Docker la terminal usa bash.
 
+## Docker como app (sin el código en el servidor)
+
+Cada versión publicada (`npm run publicar` crea la etiqueta `v<versión>`) hace que GitHub Actions
+(`.github/workflows/docker-image.yml`) arme la imagen y la suba a `ghcr.io/ghambitho14/aku` con las
+etiquetas `latest` y `<versión>`. También se puede lanzar a mano en Actions → «Imagen Docker» → Run workflow.
+La imagen no lleva claves ni datos.
+
+En el servidor solo hace falta una carpeta (p. ej. `~/aku`) con:
+
+- `docker-compose.yml`: copia de `deploy/docker-compose.yml`.
+- `.env`: `AKU_BIND` (dónde escucha; la IP de Tailscale para entrar desde tus equipos), `AKU_PORT`
+  (1407 por defecto), `SHIRO_AUTH_TOKEN` y la clave del modelo (p. ej. `OPENCODE_API_KEY`).
+- `data/`: tus datos (se crea sola).
+
+```bash
+docker compose up -d                                              # instalar y arrancar
+docker compose pull && docker compose up -d && docker image prune -f   # actualizar
+```
+
+Actualizar no toca `data/` ni `.env`. Para fijar una versión: `AKU_TAG=0.2.0` en `.env`.
+
 ## Endpoints relevantes
 
 - `GET /` — UI web.

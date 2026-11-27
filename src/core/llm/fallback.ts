@@ -10,7 +10,8 @@ import { getConfig, type AppConfig } from "../../config/config.js";
 import { isRetryableError } from "../health/RetryPolicy.js";
 import { LLMError, type LLMClient } from "./LLMClient.js";
 import { getLLMFor } from "./getLLM.js";
-import { PROVIDER_PRESETS, type ModelRef } from "./providers.js";
+import { lacksApiKey, PROVIDER_PRESETS, type ModelRef } from "./providers.js";
+import { keyHint } from "./router.js";
 
 /** Cuánto se recuerda que un motor no respondió. */
 export const FAILED_ENGINE_MS = 60_000;
@@ -61,6 +62,15 @@ export function engineRecentlyFailed(llm: LLMClient, now = Date.now()): boolean 
 	return false;
 }
 
+/** Avisos para Ajustes → Modelo: los respaldos sin API key en este equipo se saltan. */
+export function fallbackWarnings(cfg: AppConfig = getConfig(), env: NodeJS.ProcessEnv = process.env): string[] {
+	return (cfg.fallbackModels ?? []).flatMap((ref, i) =>
+		lacksApiKey(ref, cfg, env)
+			? [`El ${i ? "segundo" : "primer"} respaldo (${PROVIDER_PRESETS[ref.provider].title}) no tiene API key en este equipo: se saltará. ${keyHint(ref.provider, cfg)}`]
+			: [],
+	);
+}
+
 /** Para las pruebas: olvida los motores caídos y, con `resolver`, crea los clientes de respaldo con modelos falsos. */
 export function resetFailedEngines(resolver?: (ref: ModelRef) => LLMClient): void {
 	failedAt.clear();
@@ -69,10 +79,11 @@ export function resetFailedEngines(resolver?: (ref: ModelRef) => LLMClient): voi
 
 /**
  * El siguiente modelo de respaldo que valga la pena probar: ni uno ya probado en esta respuesta (`tried`, con
- * `engineKey`) ni uno que falló hace menos de un minuto.
+ * `engineKey`), ni uno que falló hace menos de un minuto, ni uno sin su API key en este equipo (fallaría seguro).
  */
 export function nextFallback(tried: Set<string>, cfg: AppConfig = getConfig(), now = Date.now()): LLMClient | undefined {
 	for (const ref of cfg.fallbackModels ?? []) {
+		if (lacksApiKey(ref, cfg)) continue;
 		const llm = resolve(ref);
 		if (tried.has(engineKey(llm)) || engineRecentlyFailed(llm, now)) continue;
 		return llm;
