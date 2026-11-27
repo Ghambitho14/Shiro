@@ -2,7 +2,7 @@
 import * as projects from "./projects.js";
 import { hydrateIcons } from "./icons.js";
 import { openSetup } from "./setup.js";
-import { $, applyTheme, closeMenu, isMobile, openMenuEl, prefs, toast } from "./ui.js";
+import { $, applyTheme, closeMenu, isMobile, menuAnchor, openMenuEl, placeMenu, prefs, toast } from "./ui.js";
 import { input, state } from "./state.js";
 import { initMessages } from "./messages.js";
 import { initComposer, paintComposer, stopGeneration } from "./chat.js";
@@ -53,8 +53,15 @@ document.addEventListener("keydown", (e) => {
 	}
 });
 
+// En el teléfono, abrir el teclado solo cambia el alto (interactive-widget=resizes-content):
+// cerrar el menú ahí lo cerraba junto con su búsqueda y el teclado. Solo se cierra si cambia el ancho.
+let lastWidth = window.innerWidth;
 window.addEventListener("resize", () => {
-	if (openMenuEl) closeMenu();
+	const widthChanged = window.innerWidth !== lastWidth;
+	lastWidth = window.innerWidth;
+	if (!openMenuEl) return;
+	if (widthChanged || !menuAnchor?.isConnected) closeMenu();
+	else placeMenu(openMenuEl, menuAnchor, openMenuEl.dataset.align);
 });
 
 // ───────────────────────────── inicio ─────────────────────────────

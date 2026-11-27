@@ -2276,6 +2276,10 @@ a {
 	width: 340px;
 	max-width: calc(100vw - 24px);
 	padding: 8px;
+	/* Con el teclado del teléfono abierto queda poco alto: la lista se encoge para que todo quepa. */
+	display: flex;
+	flex-direction: column;
+	max-height: calc(100dvh - 16px);
 }
 
 .model-menu .mm-head {
@@ -2302,7 +2306,13 @@ a {
 
 .model-menu .mm-list {
 	max-height: 320px;
+	min-height: 76px;
+	flex: 0 1 auto;
 	overflow-y: auto;
+}
+
+.model-menu > :not(.mm-list) {
+	flex-shrink: 0;
 }
 
 .model-menu .menu-item {

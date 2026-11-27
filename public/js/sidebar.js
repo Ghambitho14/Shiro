@@ -591,7 +591,8 @@ export function initSidebar() {
 		showMenu(menu, anchor);
 		const search = $("input", menu);
 		const list = $(".mm-list", menu);
-		search.focus();
+		// Con pantalla táctil el teclado taparía la lista: sale solo si se toca la búsqueda.
+		if (!window.matchMedia("(pointer: coarse)").matches) search.focus();
 		let models = [];
 		let error = "";
 		const paint = () => {

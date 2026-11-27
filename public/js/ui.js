@@ -213,6 +213,7 @@ export function showMenu(menu, anchor, align) {
 	// Dentro de una ventana modal (Ajustes) el menú tiene que ir dentro: lo de fuera no se puede tocar.
 	(anchor.closest("dialog") || document.body).append(menu);
 	placeMenu(menu, anchor, align);
+	menu.dataset.align = align || "left";
 	openMenuEl = menu;
 	menuAnchor = anchor;
 	anchor.classList.add("menu-open");
