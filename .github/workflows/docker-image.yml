@@ -1,12 +1,13 @@
 # Arma la imagen Docker de Aku y la publica en ghcr.io/ghambitho14/aku.
-# Corre sola al publicar una versión (etiqueta v*, la crea `npm run publicar`)
-# y a mano desde la pestaña Actions («Run workflow»).
+# Corre sola al publicar una versión (etiqueta v*, la crea `npm run publicar`), al subir cambios
+# a main o a la rama de trabajo, y a mano desde la pestaña Actions («Run workflow», solo desde main).
 # En el servidor se instala y actualiza con deploy/docker-compose.yml (ver DEPLOY.md).
 name: Imagen Docker
 
 on:
   push:
     tags: ["v*"]
+    branches: [main, feat/preguntar-y-dibujar]
   workflow_dispatch:
 
 permissions:
