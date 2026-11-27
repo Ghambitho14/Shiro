@@ -1,3 +1,5 @@
+import { isPlanAction } from "../tools/toolPolicy.js";
+
 /** Modos del chat web. El servidor los valida: nunca se fía de un texto libre del navegador. */
 export const CHAT_MODES = ["chat", "code", "hacking"] as const;
 export type ChatMode = (typeof CHAT_MODES)[number];
@@ -20,11 +22,9 @@ export function parsePermissionMode(value: unknown): PermissionMode {
 
 /**
  * Al planear, algunas herramientas de lectura tienen también acciones con efectos. La lista de tools
- * no basta: esta comprobación se hace otra vez justo antes de ejecutar cada llamada.
+ * no basta: esta comprobación se hace otra vez justo antes de ejecutar cada llamada. Las acciones de
+ * solo lectura las declara cada herramienta (`planActions` de su `policy`).
  */
 export function isPlanToolCall(name: string, args: Record<string, unknown>): boolean {
-	if (name === "project") return ["list", "find", "read", "search", "semantic"].includes(String(args.action ?? "list"));
-	if (name === "terminal") return args.action === "read";
-	if (name === "browser") return ["open", "read", "scroll", "back", "screenshot"].includes(String(args.action));
-	return true;
+	return isPlanAction(name, args.action);
 }

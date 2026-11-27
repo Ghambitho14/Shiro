@@ -15,6 +15,7 @@ import { basename, dirname, join, parse, resolve } from "node:path";
 import { DATA_DIR } from "../../config/config.js";
 import { isWithinRoot, normalizeForCompare } from "../tools/paths.js";
 import { extractText, isReadableDocument, isTextFile } from "./documents.js";
+import { isSensitiveFile } from "../security/sensitiveFiles.js";
 
 export type ProjectFolder = { path: string; addedAt: number };
 
@@ -460,7 +461,8 @@ function projectOutline(p: Project, total: number, maxChars: number, missing: st
  * si no, null (el modelo lo lee con la tool project).
  */
 export async function inlineProjectText(p: Project, maxChars = 4000): Promise<string | null> {
-	const files = listProjectFiles(p).filter((f) => isReadableDocument(f.path));
+	// Sin los archivos con claves: entrarían en las instrucciones sin preguntar.
+	const files = listProjectFiles(p).filter((f) => isReadableDocument(f.path) && !isSensitiveFile(f.path));
 	if (!files.length || files.length > 8 || files.reduce((s, f) => s + f.size, 0) > 2 * 1024 * 1024) return null;
 	let out = "";
 	for (const f of files) {
@@ -533,7 +535,8 @@ const SEARCH_MAX_MS = 8000;
 const SEARCH_COUNT_MS = 1500;
 
 /** Archivos que la búsqueda lee: texto de hasta 1 MB, PDF y Word de hasta 5 MB. */
-const searchable = (f: ProjectFile) => isReadableDocument(f.path) && f.size <= (isTextFile(f.path) ? 1 : 5) * 1024 * 1024;
+// Los archivos con claves no se buscan por dentro: leerlos pide permiso (project read).
+const searchable = (f: ProjectFile) => isReadableDocument(f.path) && !isSensitiveFile(f.path) && f.size <= (isTextFile(f.path) ? 1 : 5) * 1024 * 1024;
 
 export type SearchOptions = {
 	/** Líneas que se devuelven en total. */

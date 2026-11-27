@@ -13,10 +13,13 @@ import type { Asker, AskQuestion } from "./core/tools/modules/ask.js";
 import { SCREENSHOT_DIR } from "./core/pc/pc.js";
 import { setHealthActive } from "./core/health/HealthManager.js";
 import { buildWorkspaceContext } from "./workspace.js";
-import { getLLM } from "./core/llm/getLLM.js";
+import { getLLM, profileModelRef } from "./core/llm/getLLM.js";
+import { routeModel } from "./core/llm/router.js";
 import { addUsage, newUsage } from "./core/llm/LLMClient.js";
 import { estimateContext, runAgent } from "./core/agent/Agent.js";
 import type { ContextReport } from "./core/agent/contextUsage.js";
+import type { ResponseStats } from "./core/agent/runLog.js";
+import type { FallbackNotice } from "./core/llm/fallback.js";
 import { parseChatMode, parsePermissionMode, type ChatMode, type PermissionMode } from "./core/agent/chatMode.js";
 import { CODE_TOOLS, getAllToolNames, HACKING_TOOLS, planToolsFor } from "./core/tools/ToolRegistry.js";
 import { deleteEngagement } from "./core/pentest/engagement.js";
@@ -561,6 +564,13 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 						? turn.allowedTools
 						: effectiveAllowedTools;
 			const speakerInfo = speaker ? { agent: publicAgent(speaker) } : {};
+			// «Elegir modelo solo» (router.ts): rápido o potente según el mensaje. Un agente de la sala con modelo
+			// propio sigue con el suyo.
+			const images = Array.isArray(lastMessage?.content) && lastMessage.content.some((p: { type: string }) => p.type === "image_url");
+			const routed = speaker && profileModelRef(speaker) ? null : routeModel(goal, { mode, planning, moreReasoning, voice, images });
+			const llm = routed?.llm ?? turn?.llm ?? getLLM();
+			const route = routed ? { tier: routed.tier, model: routed.model, reason: routed.reason } : undefined;
+			if (route) console.log(`🔀 Modelo ${route.tier === "fast" ? "rápido" : "potente"}: ${route.model} (${route.reason})`);
 
 			console.log(
 				"🛠️ Tools:",
@@ -592,6 +602,8 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 				if (speaker) sendSseData(res, { type: "agent", agent: publicAgent(speaker) });
 				const usage = newUsage();
 				let context: ContextReport | undefined;
+				let stats: ResponseStats = {};
+				let fallback: FallbackNotice | undefined;
 				const saveReply = async (content: string) => {
 					if (abort.signal.aborted || !chatId || !content.trim()) return;
 					const reply: ChatMessage = {
@@ -602,12 +614,16 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 						...(speaker ? { agent: speaker.id, agentName: speaker.name } : {}),
 						...(usage.turns ? { usage } : {}),
 						...(context ? { context } : {}),
+						...(route ? { route } : {}),
+						...(Object.keys(stats).length ? { stats } : {}),
+						...(fallback ? { fallback } : {}),
 					};
 					await appendDetachedReply(chatId, reply).catch((err) => console.error("No se pudo guardar la respuesta en el chat:", err));
 				};
 				try {
 					const content = await runAgent(goal, {
-						llm: turn?.llm ?? getLLM(),
+						learnFacts: true,
+						llm,
 						agentName: turn?.agentName ?? state.name,
 						tokenBudget: 8000,
 						textOnly: false,
@@ -628,6 +644,13 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 						onUsage: (u) => addUsage(usage, u),
 						onContext: (r) => {
 							context = r;
+						},
+						onStats: (s) => {
+							stats = s;
+						},
+						onFallback: (n) => {
+							fallback = n;
+							sendSseData(res, { type: "fallback", ...n });
 						},
 						onToolEvent: (e) => {
 							const image = e.phase === "end" ? screenshotUrl(e.image) : undefined;
@@ -652,7 +675,7 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 						return true;
 					}
 					await saveReply(content);
-					sendSseData(res, { type: "done", content, ...speakerInfo, ...(usage.turns ? { usage } : {}), ...(context ? { context } : {}) });
+					sendSseData(res, { type: "done", content, ...speakerInfo, ...(usage.turns ? { usage } : {}), ...(context ? { context } : {}), ...(route ? { route } : {}), ...(Object.keys(stats).length ? { stats } : {}), ...(fallback ? { fallback } : {}) });
 					res.end();
 				} catch (errIn) {
 					const msgIn = errIn instanceof Error ? errIn.message : String(errIn);
@@ -666,12 +689,21 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 			}
 			const usage = newUsage();
 			let context: ContextReport | undefined;
+			let stats: ResponseStats = {};
+			let fallback: FallbackNotice | undefined;
 			const content = await runAgent(goal, {
+				learnFacts: true,
 				onUsage: (u) => addUsage(usage, u),
 				onContext: (r) => {
 					context = r;
 				},
-				llm: turn?.llm ?? getLLM(),
+				onStats: (s) => {
+					stats = s;
+				},
+				onFallback: (n) => {
+					fallback = n;
+				},
+				llm,
 				agentName: turn?.agentName ?? state.name,
 				tokenBudget: 8000,
 				textOnly: false,
@@ -689,7 +721,7 @@ export async function handleChatApi(req: IncomingMessage, res: ServerResponse, m
 				sessionId,
 				projectId: project?.id,
 			}, workspaceContext ?? undefined);
-			sendJson(res, 200, { content, ...speakerInfo, ...(roomPayload ?? {}), ...(usage.turns ? { usage } : {}), ...(context ? { context } : {}) });
+			sendJson(res, 200, { content, ...speakerInfo, ...(roomPayload ?? {}), ...(usage.turns ? { usage } : {}), ...(context ? { context } : {}), ...(route ? { route } : {}), ...(Object.keys(stats).length ? { stats } : {}), ...(fallback ? { fallback } : {}) });
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);
 			if (streamSse && res.headersSent) {

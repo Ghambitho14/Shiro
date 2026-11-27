@@ -10,6 +10,7 @@ import type { ContentPart } from "../core/agent/Types.js";
 import type { ResponseUsage } from "../core/llm/LLMClient.js";
 import { sanitizeContextReport, type ContextReport } from "../core/agent/contextUsage.js";
 import { getMessagePreview } from "../core/agent/contentUtils.js";
+import type { ResponseStats } from "../core/agent/runLog.js";
 import { CHAT_MODES, type ChatMode } from "../core/agent/chatMode.js";
 import { getChatMode, modeOfMessages, removeChatMode, setChatMode } from "./chatModes.js";
 import type { TodoItem } from "../core/agent/previousWork.js";
@@ -43,7 +44,17 @@ export type ChatMessage = {
 	summary?: true;
 	/** Respuesta que quedó a medias porque Aku se cerró (backgroundRuns.ts): la web ofrece «Continuar». */
 	interrupted?: true;
+	/** Respuestas del asistente con «Elegir modelo solo» (router.ts): qué modelo eligió y por qué. */
+	route?: ChatRoute;
+	/** Respuestas del asistente: ms hasta la primera palabra y ≈ dólares (`plan`: de una suscripción). */
+	stats?: ResponseStats;
+	/** Respaldo entre motores (fallback.ts): el modelo que no respondió y el que contestó en su lugar. */
+	fallback?: ChatFallback;
 };
+
+export type ChatFallback = { from: string; to: string; reason: string };
+
+export type ChatRoute = { tier: "fast" | "strong"; model: string; reason: string };
 
 export type ChatSessionMeta = {
 	id: string;
@@ -90,10 +101,30 @@ function isContentPartArray(raw: unknown): raw is ContentPart[] {
 }
 
 /** Datos extra de cada mensaje que guarda la web: hora, herramientas usadas y, en salas, qué agente habló. */
-function sanitizeMeta(item: Record<string, unknown>): Pick<ChatMessage, "ts" | "tools" | "todo" | "agent" | "agentName" | "usage" | "context" | "mode" | "summary" | "interrupted"> {
-	const out: Pick<ChatMessage, "ts" | "tools" | "todo" | "agent" | "agentName" | "usage" | "context" | "mode" | "summary" | "interrupted"> = {};
+function sanitizeMeta(item: Record<string, unknown>): Pick<ChatMessage, "ts" | "tools" | "todo" | "agent" | "agentName" | "usage" | "context" | "mode" | "summary" | "interrupted" | "route" | "stats" | "fallback"> {
+	const out: Pick<ChatMessage, "ts" | "tools" | "todo" | "agent" | "agentName" | "usage" | "context" | "mode" | "summary" | "interrupted" | "route" | "stats" | "fallback"> = {};
 	if (item.role === "assistant" && item.summary === true) out.summary = true;
 	if (item.role === "assistant" && item.interrupted === true) out.interrupted = true;
+	if (item.role === "assistant" && item.stats && typeof item.stats === "object") {
+		const r = item.stats as Record<string, unknown>;
+		const ok = (v: unknown, max: number) => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= max;
+		const stats: ResponseStats = {
+			...(ok(r.firstTextMs, 864e5) ? { firstTextMs: Math.round(r.firstTextMs as number) } : {}),
+			...(ok(r.cost, 1e4) ? { cost: r.cost as number } : {}),
+			...(r.plan === true && ok(r.cost, 1e4) ? { plan: true as const } : {}),
+		};
+		if (Object.keys(stats).length) out.stats = stats;
+	}
+	if (item.role === "assistant" && item.route && typeof item.route === "object") {
+		const r = item.route as Record<string, unknown>;
+		const model = typeof r.model === "string" ? r.model.trim().slice(0, 80) : "";
+		if ((r.tier === "fast" || r.tier === "strong") && model) out.route = { tier: r.tier, model, reason: typeof r.reason === "string" ? r.reason.trim().slice(0, 80) : "" };
+	}
+	if (item.role === "assistant" && item.fallback && typeof item.fallback === "object") {
+		const f = item.fallback as Record<string, unknown>;
+		const text = (v: unknown) => (typeof v === "string" ? v.trim().slice(0, 80) : "");
+		if (text(f.from) && text(f.to)) out.fallback = { from: text(f.from), to: text(f.to), reason: text(f.reason) };
+	}
 	if (item.role === "user" && typeof item.mode === "string") {
 		if ((CHAT_MODES as readonly string[]).includes(item.mode)) out.mode = item.mode as ChatMode;
 	}

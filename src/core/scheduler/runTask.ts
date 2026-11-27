@@ -18,27 +18,11 @@ import { pushWebNotice } from "../reminders/notifications.js";
 import { getProject } from "../projects/projects.js";
 import type { CronTask } from "./CronService.js";
 
-/** Herramientas de una tarea `agent`: nada con efectos fuera de leer. */
-export const SCHEDULED_TOOLS = [
-	"search_web",
-	"fetch_url",
-	"get_weather",
-	"get_time",
-	"calculator",
-	"cve_search",
-	"memory_search",
-	"list_reminders",
-	"sessions_list",
-	"sessions_history",
-	"cron_list",
-	"read_file",
-	"list_dir",
-	"project",
-	// Leer correo y agenda («resúmeme mis correos cada mañana»). Enviar o crear eventos necesita permiso,
-	// y una tarea no puede pedirlo: queda bloqueado.
-	"email",
-	"calendar",
-];
+// Herramientas de una tarea `agent` (`scheduled: true` en su `policy`): nada con efectos fuera de leer.
+// Correo y agenda entran para leer («resúmeme mis correos cada mañana»): enviar o crear eventos necesita
+// permiso, y una tarea no puede pedirlo, así que queda bloqueado.
+export { SCHEDULED_TOOLS } from "../tools/toolPolicy.js";
+import { SCHEDULED_TOOLS } from "../tools/toolPolicy.js";
 
 const AGENT_TIMEOUT_MS = 10 * 60 * 1000;
 const EXEC_TIMEOUT_MS = 5 * 60 * 1000;

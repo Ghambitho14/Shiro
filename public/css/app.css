@@ -924,6 +924,73 @@ a {
 	color: var(--accent);
 }
 
+/* «Elegir modelo solo» (Ajustes → Modelo, autoModel.js) */
+.auto-model {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+	margin-top: 12px;
+}
+
+.auto-model-side .label {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	margin-bottom: 6px;
+}
+
+.auto-model-side .label span {
+	font-size: 12.5px;
+	color: var(--text-3);
+}
+
+.auto-model-warn p {
+	margin: 0;
+}
+
+.auto-model-warn p + p {
+	margin-top: 6px;
+}
+
+.auto-model-actions {
+	display: flex;
+	justify-content: flex-end;
+}
+
+.msg-route {
+	align-self: center;
+	margin-left: 8px;
+	padding: 1px 8px;
+	border-radius: 999px;
+	font-size: 11.5px;
+	color: var(--text-2);
+	background: var(--bg-soft);
+	white-space: nowrap;
+	cursor: default;
+}
+
+.msg-route.strong {
+	color: var(--accent);
+}
+
+.msg-route[hidden],
+.msg-fallback[hidden] {
+	display: none;
+}
+
+/* Respaldo entre motores: respondió otro modelo porque el de siempre no contestó. */
+.msg-fallback {
+	align-self: center;
+	margin-left: 8px;
+	padding: 1px 8px;
+	border-radius: 999px;
+	font-size: 11.5px;
+	color: var(--warning);
+	background: var(--bg-soft);
+	white-space: nowrap;
+	cursor: default;
+}
+
 .msg-usage {
 	align-self: center;
 	margin-left: 8px;
@@ -5345,6 +5412,27 @@ body.mini-voz .toast {
 	min-width: 0;
 }
 
+/* Datos del modelo elegido (describeModel de modelInfo.js): tamaño, si cabe en la tarjeta, precio */
+.mf-model-info {
+	margin-top: 6px;
+	font-size: 12.5px;
+	line-height: 1.5;
+	color: var(--text-3);
+	overflow-wrap: anywhere;
+}
+.mf-model-info.ok {
+	color: var(--success);
+}
+.mf-model-info.warn {
+	color: var(--warning);
+}
+.ext-item-text span.llama-fit-ok {
+	color: var(--success);
+}
+.ext-item-text span.llama-fit-warn {
+	color: var(--warning);
+}
+
 .mf-tuning > summary {
 	font-size: 14px;
 	color: var(--text);
@@ -5780,6 +5868,60 @@ body.mini-voz .toast {
 	font-size: 12px;
 }
 .run-tools li.bad {
+	color: var(--danger);
+}
+/* Tablas «Por modelo» y «Por herramienta» (paintTables de runLog.js) */
+.run-tables {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+	margin-top: 12px;
+}
+.run-table h4 {
+	margin: 0 0 6px;
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--text-2);
+}
+.run-table-scroll {
+	overflow-x: auto;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+}
+.run-table table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 13px;
+}
+.run-table th,
+.run-table td {
+	padding: 6px 10px;
+	text-align: left;
+	white-space: nowrap;
+	border-bottom: 1px solid var(--border);
+}
+.run-table tr:last-child td {
+	border-bottom: none;
+}
+.run-table th {
+	background: var(--bg-soft);
+	font-weight: 600;
+	color: var(--text-2);
+}
+.run-table td.mono {
+	font-family: var(--mono);
+	font-size: 12px;
+}
+.run-table td.wrap {
+	white-space: normal;
+	min-width: 120px;
+}
+.run-table td.path {
+	white-space: normal;
+	overflow-wrap: anywhere;
+	min-width: 140px;
+}
+.run-table td.bad {
 	color: var(--danger);
 }
 .exam-list {

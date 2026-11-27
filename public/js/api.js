@@ -84,7 +84,7 @@ export async function streamChat(body, handlers, signal) {
 		const j = await r.json();
 		if (j.error) throw new Error(j.error);
 		if (j.room !== undefined) handlers.onRoom?.({ room: j.room, openVoice: j.openVoice });
-		handlers.onDone?.({ content: j.content || "", agent: j.agent, usage: j.usage, context: j.context });
+		handlers.onDone?.({ content: j.content || "", agent: j.agent, usage: j.usage, context: j.context, route: j.route, stats: j.stats, fallback: j.fallback });
 		return;
 	}
 	const reader = r.body.getReader();
@@ -130,13 +130,15 @@ export async function streamChat(body, handlers, signal) {
 					handlers.onQuestion?.(evt);
 				} else if (evt.type === "question_done") {
 					handlers.onQuestionDone?.(evt.id);
+				} else if (evt.type === "fallback") {
+					handlers.onFallback?.(evt);
 				} else if (evt.type === "agent") {
 					handlers.onAgent?.(evt.agent);
 				} else if (evt.type === "room") {
 					handlers.onRoom?.(evt);
 				} else if (evt.type === "done") {
 					finished = true;
-					handlers.onDone?.({ content: evt.content ?? full, agent: evt.agent, usage: evt.usage, context: evt.context });
+					handlers.onDone?.({ content: evt.content ?? full, agent: evt.agent, usage: evt.usage, context: evt.context, route: evt.route, stats: evt.stats, fallback: evt.fallback });
 				} else if (evt.type === "error") {
 					throw new Error(evt.message || "Error en la respuesta");
 				}

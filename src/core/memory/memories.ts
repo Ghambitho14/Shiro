@@ -29,7 +29,19 @@ export type Memory = {
 	source?: string;
 };
 
-export type MemoryHit = { content: string; createdAt?: string; source?: string; score: number };
+export type MemoryHit = { content: string; createdAt?: string; source?: string; score: number; tags?: string[] };
+
+/**
+ * Etiqueta de los recuerdos en cuarentena (idea de OpenJarvis): salieron de una respuesta que leyó contenido
+ * de afuera (webs, correos, MCP) o parecen una orden escondida. Se guardan, pero el recuerdo automático no los
+ * trae nunca y `memory_search` los marca. Se verifican quitándoles la etiqueta (en Obsidian, en la nota).
+ * Es una etiqueta y no un campo nuevo porque las etiquetas ya pasan tal cual por local, Obsidian y Supabase.
+ */
+export const UNTRUSTED_TAG = "no-verificado";
+
+export function isUntrusted(m: { tags?: string[] }): boolean {
+	return m.tags?.includes(UNTRUSTED_TAG) === true;
+}
 
 interface MemoryBackend {
 	add(m: Memory): Promise<void>;
@@ -183,6 +195,22 @@ export async function listMemories(s = currentStorage()): Promise<Memory[]> {
 	return memoryBackendFor(s).all();
 }
 
+/**
+ * Un recuerdo guardado que ya dice lo mismo (casi las mismas palabras en los dos sentidos), o null.
+ * Solo mira los recuerdos, no las notas: con Obsidian, la copia del chat de ahora siempre "coincidiría".
+ * Con `trustedOnly`, los que están en cuarentena no cuentan (un dato confirmado no se pierde por uno dudoso).
+ */
+export async function findSimilarMemory(content: string, s = currentStorage(), minScore = 0.7, trustedOnly = false): Promise<Memory | null> {
+	const words = keywords(content);
+	if (!words.length) return null;
+	for (const m of await memoryBackendFor(s).all()) {
+		if (trustedOnly && isUntrusted(m)) continue;
+		const theirs = keywords(m.content);
+		if (keywordScore(words, m.content) >= minScore && keywordScore(theirs, content) >= minScore) return m;
+	}
+	return null;
+}
+
 /** Busca en los recuerdos (y, con Obsidian, en todas las notas de la carpeta Shiro). */
 export async function searchMemories(query: string, limit = 5, s = currentStorage(), embedTimeoutMs = 8000): Promise<MemoryHit[]> {
 	const words = keywords(query);
@@ -190,10 +218,10 @@ export async function searchMemories(query: string, limit = 5, s = currentStorag
 	const queryEmbedding = memories.some((m) => m.embedding?.length) ? await tryEmbed(query, embedTimeoutMs) : null;
 	const hits: MemoryHit[] = [];
 	for (const m of memories) {
-		const byWords = keywordScore(words, `${m.content} ${(m.tags ?? []).join(" ")}`);
+		const byWords = keywordScore(words, `${m.content} ${(m.tags ?? []).filter((t) => t !== UNTRUSTED_TAG).join(" ")}`);
 		const byMeaning = queryEmbedding && m.embedding?.length === queryEmbedding.length ? cosine(queryEmbedding, m.embedding) : 0;
 		const score = Math.max(byWords, byMeaning >= 0.55 ? byMeaning : 0);
-		if (score > 0) hits.push({ content: m.content, createdAt: m.createdAt, source: m.source, score });
+		if (score > 0) hits.push({ content: m.content, createdAt: m.createdAt, source: m.source, score, tags: m.tags });
 	}
 	if (s.kind === "obsidian" && words.length) {
 		const root = obsidianRoot(vaultOf(s));
@@ -233,6 +261,8 @@ export async function recallMemories(message: string, s = currentStorage()): Pro
 		const hits = await searchMemories(message, RECALL_LIMIT + 3, s, 2000);
 		return hits
 			.filter((h) => h.score >= RECALL_MIN_SCORE)
+			// En cuarentena: solo los ve el modelo si los busca a propósito (memory_search, marcados).
+			.filter((h) => !isUntrusted(h))
 			// Chats/ tiene la copia del chat de ahora (con el mismo mensaje): saldría siempre primero. memory_search sí la mira.
 			.filter((h) => {
 				const src = h.source?.replace(/\\/g, "/").toLowerCase();

@@ -236,3 +236,30 @@ test("la lista de tareas llega a quien la pinta y se queda en la respuesta", asy
 		],
 	]);
 });
+
+test("memoria automática: aprende solo en una charla con el usuario (learnFacts) y con contexto privado", async () => {
+	const { autoMemoryBusy } = await import("../memory/autoMemory.js");
+	const asked: string[] = [];
+	const llm: LLMClient = {
+		chat: async (messages) => {
+			asked.push(String(messages.at(-1)?.content ?? ""));
+			return "[]";
+		},
+		chatWithTools: async () => "Valparaíso es muy bonito.",
+		getConfig: () => ({ provider: "ollama", model: "qwen3:8b", baseUrl: "http://localhost:11434", local: true }),
+	};
+	const base = { llm, agentName: "Shiro", mcp: false, approver: async () => true };
+	const goal = "Me mudé a Valparaíso y trabajo de diseñador";
+	const settle = async () => {
+		while (autoMemoryBusy()) await new Promise((r) => setTimeout(r, 5));
+	};
+	// Sin learnFacts (tareas programadas, examen) o sin contexto privado (WhatsApp abierto): nada.
+	await runAgent(goal, base, "## Memoria\n");
+	await runAgent(goal, { ...base, learnFacts: true });
+	await runAgent(goal, { ...base, learnFacts: true, subagent: { boss: "Aku" } }, "## Memoria\n");
+	await settle();
+	assert.equal(asked.filter((t) => t.includes("Lista JSON")).length, 0);
+	await runAgent(goal, { ...base, learnFacts: true }, "## Memoria\n");
+	await settle();
+	assert.equal(asked.filter((t) => t.includes("Lista JSON")).length, 1);
+});

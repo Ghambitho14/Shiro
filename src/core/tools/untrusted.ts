@@ -1,20 +1,11 @@
 /**
  * Contenido de afuera (webs, servidores MCP): puede traer órdenes escondidas para el modelo
  * («ignora tus instrucciones y…»). Llega al modelo entre dos marcas que dicen que es texto, no órdenes.
- * Sin imports: lo usan tanto las tools como el cliente del modelo.
+ * Solo importa datos (las listas de toolPolicy.ts): lo usan tanto las tools como el cliente del modelo.
+ * Qué herramientas traen texto de otros lo dice `external` en la `policy` de cada una (webs, navegador,
+ * ayudantes —pueden traer texto de las webs que leyeron—, correo y calendario —los escribe cualquiera—).
  */
-
-const WEB_TOOLS: Record<string, string> = {
-	fetch_url: "una web",
-	search_web: "una búsqueda en Internet",
-	cve_search: "una base de datos de CVE (vulnerabilidades)",
-	browser: "una página del navegador",
-	// Lo que devuelven los ayudantes puede traer texto de las webs que leyeron.
-	delegate: "tus ayudantes (pueden traer texto de webs)",
-	// Correos e invitaciones los escribe cualquiera.
-	email: "el correo (Gmail)",
-	calendar: "el calendario (los eventos pueden venir de invitaciones de otros)",
-};
+import { EXTERNAL_SOURCES as WEB_TOOLS } from "./toolPolicy.js";
 
 const MCP_PREFIX = "mcp__";
 

@@ -1,4 +1,5 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { priceFromPerMillion, type ModelPrice } from "./modelInfo.js";
 import { join } from "node:path";
 import { DATA_DIR } from "../../config/config.js";
 
@@ -8,7 +9,8 @@ import { DATA_DIR } from "../../config/config.js";
  * Hace falta porque en OpenCode no todos los modelos hablan igual: unos usan
  * /chat/completions, otros /messages (formato Anthropic) y otros /responses.
  * También dice si el modelo ve imágenes y cuánto puede escribir.
- * Se guarda en data/cache y se renueva una vez al día.
+ * Se guarda en data/cache y se renueva una vez al día. De OpenRouter solo guarda los precios (`prices`,
+ * para el coste de cada respuesta en pricing.ts).
  */
 export type ModelApi = "chat" | "messages" | "responses" | "google";
 export type CatalogId = "opencode" | "opencode-go";
@@ -24,13 +26,27 @@ export type CatalogModel = {
 	/** Tamaño de su contexto (medidor de la caja de escribir). */
 	context?: number;
 	deprecated: boolean;
+	/** Dólares por millón de tokens (models.dev `cost`); 0/0 = gratis. */
+	price?: ModelPrice;
 };
 
-export type Catalog = { fetchedAt: number; providers: Partial<Record<CatalogId, Record<string, CatalogModel>>> };
+/** `format`: si cambia lo que se guarda (p. ej. los precios), el archivo viejo cuenta como caducado. */
+/** Proveedores de los que solo se guarda el precio (coste de cada respuesta, pricing.ts). */
+export type PriceSource = "openrouter";
+
+export type Catalog = {
+	fetchedAt: number;
+	format?: number;
+	providers: Partial<Record<CatalogId, Record<string, CatalogModel>>>;
+	/** Dólares por millón de tokens de otros proveedores (models.dev `cost`), por id de modelo. */
+	prices?: Partial<Record<PriceSource, Record<string, ModelPrice>>>;
+};
 
 const SOURCE_URL = "https://models.dev/api.json";
 const CATALOG_IDS: CatalogId[] = ["opencode", "opencode-go"];
 const MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const PRICE_SOURCES: PriceSource[] = ["openrouter"];
+const CATALOG_FORMAT = 3;
 /** Tras un fallo de red no se vuelve a intentar hasta pasado este tiempo. */
 const RETRY_MS = 10 * 60 * 1000;
 const catalogFile = () => join(DATA_DIR, "cache", "models-catalog.json");
@@ -50,11 +66,12 @@ type RawModel = {
 	modalities?: { input?: unknown };
 	limit?: { output?: unknown; context?: unknown };
 	provider?: { npm?: unknown };
+	cost?: unknown;
 };
 
 /** Se queda solo con lo que Shiro necesita del JSON de models.dev (que pesa varios MB). */
 export function extractCatalog(raw: unknown, now = Date.now()): Catalog {
-	const catalog: Catalog = { fetchedAt: now, providers: {} };
+	const catalog: Catalog = { fetchedAt: now, format: CATALOG_FORMAT, providers: {} };
 	if (!raw || typeof raw !== "object") return catalog;
 	for (const id of CATALOG_IDS) {
 		const provider = (raw as Record<string, { npm?: unknown; models?: Record<string, RawModel> }>)[id];
@@ -74,9 +91,20 @@ export function extractCatalog(raw: unknown, now = Date.now()): Catalog {
 				...(Number.isFinite(output) && output > 0 ? { output } : {}),
 				...(Number.isFinite(context) && context > 0 ? { context } : {}),
 				deprecated: m.status === "deprecated",
+				...(priceFromPerMillion(m.cost) ? { price: priceFromPerMillion(m.cost) } : {}),
 			};
 		}
 		if (Object.keys(models).length) catalog.providers[id] = models;
+	}
+	for (const id of PRICE_SOURCES) {
+		const provider = (raw as Record<string, { models?: Record<string, RawModel> }>)[id];
+		if (!provider?.models || typeof provider.models !== "object") continue;
+		const prices: Record<string, ModelPrice> = {};
+		for (const [modelId, m] of Object.entries(provider.models)) {
+			const price = m && typeof m === "object" ? priceFromPerMillion(m.cost) : undefined;
+			if (price) prices[modelId] = price;
+		}
+		if (Object.keys(prices).length) (catalog.prices ??= {})[id] = prices;
 	}
 	return catalog;
 }
@@ -91,7 +119,9 @@ function load(): Catalog | null {
 	memory = null;
 	try {
 		const data = JSON.parse(readFileSync(catalogFile(), "utf-8")) as Catalog;
-		if (data && typeof data.fetchedAt === "number" && data.providers && typeof data.providers === "object") memory = data;
+		if (data && typeof data.fetchedAt === "number" && data.providers && typeof data.providers === "object")
+			// De un formato anterior: se usa mientras tanto, pero se vuelve a bajar.
+			memory = data.format === CATALOG_FORMAT ? data : { ...data, fetchedAt: 0 };
 	} catch {
 		// Sin archivo (primera vez) o corrupto: se descargará.
 	}
@@ -109,6 +139,11 @@ export function catalogModels(id: CatalogId): Record<string, CatalogModel> | und
 
 export function lookupModel(id: CatalogId, model: string): CatalogModel | undefined {
 	return catalogModels(id)?.[model];
+}
+
+/** Precio de un modelo de un proveedor que no es de OpenCode (solo el precio), o undefined. */
+export function catalogPrice(id: PriceSource, model: string): ModelPrice | undefined {
+	return load()?.prices?.[id]?.[model];
 }
 
 /** Id que entiende la API para lo que escribió el usuario: acepta también el nombre visible ("Kimi K3" → "kimi-k3"). */

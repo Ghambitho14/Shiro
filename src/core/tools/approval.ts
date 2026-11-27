@@ -11,6 +11,10 @@ import { gitWorkDir, isGitReadableDir } from "./gitDir.js";
 import { currentAgentRun } from "../agent/runContext.js";
 import { targetsOutOfScope } from "../pentest/engagement.js";
 import { isFreeReadCommand, isReadOnlyGitArgs } from "./readOnlyCommand.js";
+import { asksAlways, AUTO_TOOLS, REMEMBERABLE_TOOLS } from "./toolPolicy.js";
+import { isSensitiveFile, mentionsSensitiveFile, SENSITIVE_NOTE } from "../security/sensitiveFiles.js";
+
+export { REMEMBERABLE_TOOLS };
 
 /**
  * Aprobación de acciones peligrosas.
@@ -42,7 +46,8 @@ export function noteExternalRead(): void {
 	if (store) store.externalRead = true;
 }
 
-function externalReadInThisResponse(): boolean {
+/** Si en esta respuesta ya se leyó contenido de afuera (solo vale dentro de runWithApprover). */
+export function externalReadInThisResponse(): boolean {
 	return approverStore.getStore()?.externalRead === true;
 }
 
@@ -66,6 +71,8 @@ function str(v: unknown): string {
 
 /** Comandos de la lista "sin preguntar" (Ajustes), siempre que no encadenen otros: null. */
 function describeCommand(prefix: string, command: string, where = "", cwd?: string): string | null {
+	// Un comando que nombra un archivo con claves (`cat .env`) se pregunta siempre, aunque solo mire o esté en la lista.
+	if (mentionsSensitiveFile(command)) return `${prefix}: ${command}${where} (${SENSITIVE_NOTE})`;
 	// Mirar dentro del proyecto del chat no se pregunta (como project read), salvo tras leer algo de afuera.
 	if (!externalReadInThisResponse() && isFreeReadCommand(command, cwd)) return null;
 	const first = command.split(/\s+/)[0]?.toLowerCase() ?? "";
@@ -121,9 +128,10 @@ function describeRiskyActionBase(tool: string, args: Record<string, unknown>): s
 		case "exec":
 			return describeCommand("Ejecutar comando", str(args.command).trim(), args.workingDir ? ` (en ${str(args.workingDir)})` : "", str(args.workingDir).trim() || undefined);
 		case "project": {
-			if (args.action !== "write" && args.action !== "edit") return null;
 			const project = currentProject();
 			const where = `${str(args.path)}${project ? ` en el proyecto «${project.name}»` : ""}`;
+			if (args.action === "read" && isSensitiveFile(str(args.path))) return `Leer ${where} (${SENSITIVE_NOTE})`;
+			if (args.action !== "write" && args.action !== "edit") return null;
 			if (args.action === "write") return `Escribir el archivo ${where} (${str(args.content).length} caracteres)`;
 			// Se enseña el antes y el después para que el usuario vea qué cambia.
 			const clip = (v: unknown) => (str(v).length > 400 ? `${str(v).slice(0, 400)}…` : str(v));
@@ -157,16 +165,20 @@ function describeRiskyActionBase(tool: string, args: Record<string, unknown>): s
 				: null;
 		case "write_file_system":
 			return `Escribir el archivo ${str(args.path)} (${str(args.content).length} caracteres)`;
+		case "read_file":
+			return isSensitiveFile(str(args.path)) ? `Leer ${str(args.path)} de la carpeta de Aku (${SENSITIVE_NOTE})` : null;
 		case "read_file_system": {
 			// Dentro de una carpeta del proyecto del chat es lo mismo que project read: el usuario ya la eligió.
 			const project = currentProject();
 			const path = str(args.path).trim();
+			if (isSensitiveFile(path)) return `Leer el archivo ${path} (${SENSITIVE_NOTE})`;
 			if (project && /^([A-Za-z]:[\\/]|\/)/.test(path) && resolveProjectPath(project, path)) return null;
 			return `Leer el archivo ${str(args.path)}`;
 		}
 		case "git": {
 			const command = str(args.command).trim();
 			const repoPath = str(args.repoPath).trim();
+			if (mentionsSensitiveFile(command)) return `Ejecutar git ${command} (${SENSITIVE_NOTE})`;
 			if (isReadOnlyGit(command, repoPath)) return null;
 			return `Ejecutar git ${command}${repoPath && repoPath !== "." ? ` (en ${repoPath})` : ""}`;
 		}
@@ -255,18 +267,15 @@ function describeMcpAction(tool: string, args: Record<string, unknown>): string 
 }
 
 /**
- * Tools cuyo permiso el usuario puede dar "para toda la conversación" (acciones repetitivas
- * de manejar el PC). Comandos, archivos del sistema y apagar el equipo se preguntan siempre.
+ * true si se ofrece "Permitir siempre en este chat": las de `remember: true` en su `policy` (acciones repetitivas
+ * de manejar el PC) y cada tool de un servidor MCP. Comandos, archivos del sistema y apagar el equipo se preguntan siempre.
  */
-export const REMEMBERABLE_TOOLS = new Set(["pc_open", "pc_keyboard", "pc_mouse", "pc_clipboard", "browser"]);
-
-/** true si se ofrece "Permitir siempre en este chat" (también cada tool de un servidor MCP). */
 export function canRememberApproval(tool: string): boolean {
 	return REMEMBERABLE_TOOLS.has(tool) || isMcpToolName(tool);
 }
 
-/** Lo único que «Automático» hace sin preguntar: comandos y archivos. El resto (web, teclado, MCP, tareas programadas…) se pregunta. */
-const AUTO_TOOLS = new Set(["exec", "terminal", "git", "project", "write_file", "write_file_system", "read_file_system", "memory_add", "claude_code"]);
+// «Automático» solo deja sin preguntar las de `auto: true` (comandos y archivos); el resto (web, teclado, MCP,
+// tareas programadas…) se pregunta. AUTO_TOOLS sale de la `policy` de cada herramienta (toolPolicy.ts).
 
 /** Borrar, formatear, apagar, reescribir git, ejecutar lo que baje de internet. Va por palabras: no es infalible. */
 const DESTRUCTIVE_COMMAND = new RegExp(
@@ -289,17 +298,21 @@ export function isDestructiveCommand(command: string): boolean {
 	return DESTRUCTIVE_COMMAND.test(command);
 }
 
-/** «Automático» sigue preguntando esto: lo que no es un comando o un archivo, lo destructivo y teclear una contraseña. */
+/**
+ * «Automático» sigue preguntando esto: lo que no es un comando o un archivo, lo destructivo, teclear una
+ * contraseña y leer un archivo con claves (su contenido saldría hacia el modelo).
+ */
 export function isHardToUndo(tool: string, args: Record<string, unknown>): boolean {
 	if (!AUTO_TOOLS.has(tool)) return true;
 	if (tool === "terminal" && args.action === "write" && terminal.waitingForPassword()) return true;
+	if ((tool === "project" || tool === "read_file_system") && isSensitiveFile(str(args.path))) return true;
 	const typed = tool === "exec" || tool === "terminal" ? str(args.command ?? args.text) : tool === "git" ? `git ${str(args.command)}` : "";
-	return isDestructiveCommand(typed);
+	return isDestructiveCommand(typed) || mentionsSensitiveFile(typed);
 }
 
-/** Lo que sale en nombre del usuario: se pregunta siempre, sea cual sea el permiso del chat. */
+/** Lo que sale en nombre del usuario (`alwaysAsk` de la `policy`: enviar un correo, crear un evento): se pregunta siempre. */
 export function alwaysAsksUser(tool: string, args: Record<string, unknown>): boolean {
-	return (tool === "email" && args.action === "send") || (tool === "calendar" && args.action === "create");
+	return asksAlways(tool, args.action);
 }
 
 export async function requestApproval(tool: string, args: Record<string, unknown>): Promise<{ ok: true } | { ok: false; error: string }> {

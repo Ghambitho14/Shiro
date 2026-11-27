@@ -5,6 +5,7 @@ import { api } from "./api.js";
 import { icon } from "./icons.js";
 import { mountLlamaCppPanel } from "./llamacpp.js";
 import { escapeHtml } from "./markdown.js";
+import { describeModel } from "./modelInfo.js";
 
 const $ = (sel, root) => root.querySelector(sel);
 
@@ -61,6 +62,7 @@ export function mountModelForm(container, { llm, toast, promptDialog, settings =
 					<button type="button" class="btn" data-a="reload" title="Buscar de nuevo" aria-label="Buscar los modelos de nuevo">${icon("refresh", "sm")}</button>
 				</div>
 				<div data-f="modelNote"></div>
+				<div class="mf-model-info" data-f="modelInfo"></div>
 			</div>
 			<label class="field" data-row="key"><span data-f="keyLabel">API key</span><input class="input mono" data-f="apiKey" type="password" autocomplete="off" /><small data-f="keyHint"></small></label>
 			<details class="mf-adv" data-row="url">
@@ -87,6 +89,8 @@ export function mountModelForm(container, { llm, toast, promptDialog, settings =
 	let listToken = 0;
 	/** El modelo elegido mientras se busca la lista (el desplegable aún está vacío). */
 	let pending = null;
+	/** La última lista pedida, con los datos de cada modelo y la tarjeta (para la frase bajo el desplegable). */
+	let found = { models: [], gpu: null };
 
 	const provider = () => radios.find((r) => r.checked)?.value || llm.provider;
 	const preset = () => llm.providers.find((p) => p.value === provider()) || llm.providers[0];
@@ -96,6 +100,16 @@ export function mountModelForm(container, { llm, toast, promptDialog, settings =
 		return select.value === OTHER || select.hidden ? custom.value.trim() : select.value;
 	};
 	const modelChanged = () => onModelChange?.();
+
+	/** Bajo el desplegable: tamaño, cuantización, si cabe en la tarjeta o el precio del modelo elegido. */
+	function paintInfo() {
+		const box = f("modelInfo");
+		const m = select.hidden || select.value === OTHER ? null : found.models.find((x) => x.id === select.value);
+		const { text, kind } = describeModel(m, found.gpu);
+		box.textContent = text;
+		box.className = `mf-model-info ${kind}`;
+		box.hidden = !text;
+	}
 
 	/** Pinta los campos del proveedor elegido: si es el guardado, con lo guardado; si no, con lo de fábrica. */
 	function paint() {
@@ -163,6 +177,8 @@ export function mountModelForm(container, { llm, toast, promptDialog, settings =
 		select.innerHTML = `<option value="">Buscando modelos…</option>`;
 		custom.hidden = true;
 		notice(f("modelNote"), null);
+		found = { models: [], gpu: null };
+		paintInfo();
 		let list;
 		try {
 			list = await api("/api/models", { method: "POST", json: { provider: p.value, baseUrl: f("baseUrl").value.trim(), apiKey: f("apiKey").value.trim() } });
@@ -172,6 +188,7 @@ export function mountModelForm(container, { llm, toast, promptDialog, settings =
 		if (token !== listToken) return;
 		pending = null;
 		const models = list.models || [];
+		found = { models, gpu: list.gpu || null };
 		const ids = models.map((m) => m.id);
 		// Lo de ejemplo del proveedor ("local-model"…) no cuenta como elegido si no está instalado:
 		// se propone uno ya cargado en memoria, el de ejemplo si está, o el primero.
@@ -195,6 +212,7 @@ export function mountModelForm(container, { llm, toast, promptDialog, settings =
 		custom.placeholder = p.model ? `Por ejemplo: ${p.model}` : "Nombre exacto del modelo";
 		if (list.error) notice(f("modelNote"), "warn", list.error);
 		else if (!models.length) notice(f("modelNote"), "warn", "No encontré modelos. Descarga uno y pulsa el botón de buscar de nuevo, o escribe su nombre.");
+		paintInfo();
 		modelChanged();
 	}
 
@@ -236,6 +254,7 @@ export function mountModelForm(container, { llm, toast, promptDialog, settings =
 		const other = select.value === OTHER;
 		custom.hidden = !other;
 		if (other) custom.focus();
+		paintInfo();
 		modelChanged();
 	};
 	custom.onchange = modelChanged;

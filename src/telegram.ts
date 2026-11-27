@@ -201,6 +201,7 @@ async function answer(token: string, msg: TgMessage, text: string, signal: Abort
 			userProfile: getUserProfile(),
 			sessionId: linked.id,
 			signal,
+			learnFacts: true,
 		},
 		buildWorkspaceContext({ includeLongTermMemory: true }) || undefined,
 	);

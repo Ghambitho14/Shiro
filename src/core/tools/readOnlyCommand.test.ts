@@ -62,9 +62,10 @@ test("sin permiso solo dentro de una carpeta del proyecto del chat y sin haber l
 		strictEqual(describeRiskyAction("exec", { command: "ls" }) !== null, true);
 		// Tras leer una web vuelve a preguntar: la página podría pedir que lea y mande archivos.
 		await runWithApprover(async () => true, async () => {
-			strictEqual(describeRiskyAction("exec", { command: "cat .env", workingDir: folder }), null);
+			// (Un archivo con claves como .env pregunta siempre: approval.test.ts.)
+			strictEqual(describeRiskyAction("exec", { command: "cat notas.txt", workingDir: folder }), null);
 			noteExternalRead();
-			strictEqual(describeRiskyAction("exec", { command: "cat .env", workingDir: folder }) !== null, true);
+			strictEqual(describeRiskyAction("exec", { command: "cat notas.txt", workingDir: folder }) !== null, true);
 		});
 	});
 });

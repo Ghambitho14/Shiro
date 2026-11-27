@@ -11,6 +11,7 @@ import { newChat, paintSidebar, panels, rememberChat, setRoute } from "./sidebar
 import { readAloud, stopReading, voice as voiceMode } from "./voiceMode.js";
 import { refreshContextMeter } from "./contextMeter.js";
 import { workProjectForNewChat } from "./workFolder.js";
+import { isSensitiveFile } from "./sensitiveFiles.js";
 
 // ───────────────────────────── composer ─────────────────────────────
 
@@ -89,7 +90,6 @@ const FOLDER_MAX_CHARS = 200_000;
 const FOLDER_MAX_FILE_BYTES = 100_000;
 const FOLDER_SKIP_DIRS = /(^|\/)(node_modules|\.git|\.next|\.venv|venv|__pycache__|dist|build|target|vendor)\//i;
 /** Claves y credenciales: nunca salen de la carpeta hacia el modelo. */
-const FOLDER_SECRET = /(^|\/)(\.env(\.[^/]*)?|\.npmrc|\.netrc|id_rsa|id_ed25519|credentials(\.[^/]*)?|secrets?\.[^/]*|[^/]*\.(pem|key|p12|pfx))$/i;
 const FOLDER_TEXT_NAME = /(^|\/)(dockerfile|makefile|readme|license|\.gitignore|\.dockerignore)$/i;
 
 /**
@@ -109,7 +109,7 @@ export async function addFolder(files) {
 	for (const f of files) {
 		const path = f.webkitRelativePath || f.name;
 		if (FOLDER_SKIP_DIRS.test(path)) continue;
-		if (FOLDER_SECRET.test(path)) {
+		if (isSensitiveFile(path)) {
 			skipped.secret++;
 			continue;
 		}
@@ -464,6 +464,11 @@ export async function runAssistant({ voice = false, hooks = {} } = {}) {
 				onQuestionDone: (id) => {
 					refs.get(m)?.cards.find((c) => c.id === id)?.expire?.();
 				},
+				onFallback: ({ from, to, reason }) => {
+					m.fallback = { from, to, reason };
+					toast(`${from} ${reason}; sigo con ${to}`);
+					repaint();
+				},
 				onAgent: (agent) => {
 					setMessageAgent(m, agent);
 					repaint();
@@ -473,10 +478,13 @@ export async function runAssistant({ voice = false, hooks = {} } = {}) {
 					if (sessionId === state.activeId) setRoom(evt.room);
 					if (evt.openVoice && !voice) setTimeout(() => voiceMode.open(), 0);
 				},
-				onDone: ({ content, agent, usage, context }) => {
+				onDone: ({ content, agent, usage, context, route, stats, fallback }) => {
 					if (typeof content === "string" && content) m.content = content;
 					if (usage?.turns) m.usage = usage;
 					if (context?.used) m.context = context;
+					if (route?.model) m.route = route;
+					if (stats && typeof stats === "object") m.stats = stats;
+					if (fallback?.to) m.fallback = fallback;
 					// Las órdenes de sala responden a nombre de un agente (o del asistente: null).
 					if (agent !== undefined) {
 						setMessageAgent(m, agent);

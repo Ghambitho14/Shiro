@@ -9,6 +9,7 @@ import { getConfig, setConfig, LLM_PROVIDERS, type LLMProvider } from "./config/
 import { PROVIDER_PRESETS, modelSupportsVision, resolveLLMSettings } from "./core/llm/providers.js";
 import { listProviderModels } from "./core/llm/modelList.js";
 import { getLLM } from "./core/llm/getLLM.js";
+import { autoModelWarnings } from "./core/llm/router.js";
 import { getWhatsAppBridgeStatus } from "./whatsapp.js";
 import { isBodyTooLargeError, readBody, readJson, sendJson } from "./http.js";
 import { syncWakeListener, wakeStatus } from "./core/wake/wakeListener.js";
@@ -28,6 +29,12 @@ function buildSettings() {
 		approvalMode: c.approvalMode,
 		execAllowlist: c.execAllowlist,
 		pcControl: c.pcControl,
+		autoMemory: c.autoMemory,
+		/** «Elegir modelo solo» (router.ts) y lo que conviene saber de cómo está puesto. */
+		autoModel: c.autoModel,
+		autoModelWarnings: autoModelWarnings(c),
+		/** Respaldo entre motores (fallback.ts): hasta 2 modelos por si el de la respuesta no contesta. */
+		fallbackModels: c.fallbackModels,
 		vision: c.vision,
 		visionActive: modelSupportsVision(llm.model, c.vision),
 		platform: process.platform,
@@ -60,7 +67,7 @@ function applySettings(d: Record<string, unknown>): void {
 	const copy = (keys: string[]) => {
 		for (const k of keys) if (k in d && d[k] !== undefined) patch[k] = d[k];
 	};
-	copy(["autonomousMode", "approvalMode", "pcControl", "vision", "sttEngine", "sttModel", "ttsEngine", "ttsModel", "ttsVoice", "ttsLocalVoice", "liquidVoice", "wakeWordEnabled", "wakeSensitivity"]);
+	copy(["autonomousMode", "approvalMode", "pcControl", "autoMemory", "autoModel", "fallbackModels", "vision", "sttEngine", "sttModel", "ttsEngine", "ttsModel", "ttsVoice", "ttsLocalVoice", "liquidVoice", "wakeWordEnabled", "wakeSensitivity"]);
 	for (const k of ["sttBaseUrl", "ttsBaseUrl"]) {
 		if (typeof d[k] === "string") patch[k] = (d[k] as string).trim() || undefined;
 	}

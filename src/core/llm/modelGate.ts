@@ -24,6 +24,9 @@ export type GateTarget = {
 /** Proveedores en los que Shiro sabe descargar el modelo anterior (o los mantiene él). */
 const GATED = new Set(["ollama", "lmstudio", "gguf"]);
 
+/** Proveedores que tienen un solo modelo cargado a la vez (cambiar de modelo obliga a recargar). */
+export const isGatedProvider = (provider: string): boolean => GATED.has(provider);
+
 export function gateTarget(s: Pick<LLMSettings, "provider" | "model" | "baseUrl"> & { headers?: Record<string, string> }): GateTarget | null {
 	if (!GATED.has(s.provider)) return null;
 	// llama.cpp integrado: la dirección cambia en cada arranque, el modelo es lo que cuenta.

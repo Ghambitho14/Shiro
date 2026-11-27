@@ -58,6 +58,9 @@ export function fromServer(m) {
 	if (m.agent) Object.assign(out, { agent: m.agent, agentName: m.agentName });
 	if (m.usage?.turns) out.usage = m.usage;
 	if (m.context?.used) out.context = m.context;
+	if (m.route?.model) out.route = m.route;
+	if (m.stats) out.stats = m.stats;
+	if (m.fallback?.to) out.fallback = m.fallback;
 	if (m.summary === true) out.summary = true;
 	if (m.interrupted === true) out.interrupted = true;
 	if (Array.isArray(m.todo) && m.todo.length) out.todo = m.todo;
@@ -72,6 +75,9 @@ export function serialize(m) {
 	if (m.agent) Object.assign(o, { agent: m.agent, agentName: m.agentName });
 	if (m.usage) o.usage = m.usage;
 	if (m.context) o.context = m.context;
+	if (m.route) o.route = m.route;
+	if (m.stats) o.stats = m.stats;
+	if (m.fallback) o.fallback = m.fallback;
 	if (m.summary) o.summary = true;
 	if (m.interrupted) o.interrupted = true;
 	if (m.todo?.length) o.todo = m.todo;
@@ -169,6 +175,8 @@ export function buildAssistant(m) {
 		actionButton("copy", "Copiar", (b) => copyText(m.content, b)),
 		actionButton("volume", "Leer en voz alta", (b) => readAloud(m, b)),
 		actionButton("refresh", "Regenerar respuesta", () => regenerate(m)),
+		el("span", "msg-fallback"),
+		el("span", "msg-route"),
 		el("span", "msg-usage"),
 	);
 	refs.set(m, r);
@@ -525,12 +533,49 @@ export function paintAssistant(m) {
 		r.extra.append(resume);
 	}
 	r.actions.hidden = Boolean(m.error) && !m.content;
+	paintFallback(m, r);
+	paintRoute(m, r);
 	paintUsage(m, r);
 }
 
 const num = (n) => Number(n).toLocaleString("es");
 /** 12345 → "12,3 mil" (corto, para la barra de acciones). */
 const short = (n) => (n >= 1000 ? `${(n / 1000).toLocaleString("es", { maximumFractionDigits: n >= 10_000 ? 0 : 1 })} mil` : num(n));
+
+/** Dólares cortos: $0,0012 · $0,034 · $1,25 (una respuesta suele costar una fracción de centavo). */
+export function formatCost(usd) {
+	if (usd < 0.0001) return "< $0,0001";
+	return "$" + usd.toLocaleString("es", usd < 1 ? { maximumSignificantDigits: 2 } : { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/** 850 → "0,9 s"; 12400 → "12 s". */
+function formatSeconds(ms) {
+	return `${(ms / 1000).toLocaleString("es", { maximumFractionDigits: ms < 10_000 ? 1 : 0 })} s`;
+}
+
+/** Respaldo entre motores: el modelo de siempre no respondió y contestó otro. */
+function paintFallback(m, r) {
+	const box = $(".msg-fallback", r.actions);
+	if (!box) return;
+	const f = m.fallback;
+	box.hidden = !f?.to;
+	if (!f?.to) return;
+	box.textContent = `respaldo · ${f.to}`;
+	box.title = `${f.from} ${f.reason || "no respondió"}, así que respondió ${f.to} (Ajustes → Modelo → «Si no responde, usar…»).`;
+}
+
+/** «Elegir modelo solo»: qué modelo respondió (rápido o potente) y, al pasar el ratón, por qué. */
+function paintRoute(m, r) {
+	const box = $(".msg-route", r.actions);
+	if (!box) return;
+	const route = m.route;
+	box.hidden = !route?.model;
+	if (!route?.model) return;
+	const tier = route.tier === "strong" ? "potente" : "rápido";
+	box.textContent = `${tier} · ${route.model}`;
+	box.className = `msg-route ${route.tier === "strong" ? "strong" : "fast"}`;
+	box.title = `Elegir modelo solo: respondió el modelo ${tier} (${route.model})${route.reason ? ` porque: ${route.reason}` : ""}.`;
+}
 
 /** Cuántos tokens gastó la respuesta (si el servidor lo dijo): leídos y escritos; el detalle, al pasar el ratón. */
 function paintUsage(m, r) {
@@ -539,11 +584,17 @@ function paintUsage(m, r) {
 	const u = m.usage;
 	box.hidden = !u?.turns;
 	if (!u?.turns) return;
-	box.textContent = `${short(u.input)} leídos · ${short(u.output)} escritos`;
+	const s = m.stats || {};
+	const cost = typeof s.cost === "number" && s.cost > 0 ? `≈ ${formatCost(s.cost)}${s.plan ? " (plan)" : ""}` : "";
+	box.textContent = `${short(u.input)} leídos · ${short(u.output)} escritos${cost ? ` · ${cost}` : ""}`;
 	const parts = [`Leyó ${num(u.input)} tokens y escribió ${num(u.output)}`];
 	if (u.reasoning) parts.push(`de ellos, unos ${num(u.reasoning)} pensando`);
 	parts.push(u.turns === 1 ? "en 1 vuelta con el modelo" : `en ${u.turns} vueltas con el modelo (cada herramienta es una vuelta más y reenvía todo)`);
-	box.title = parts.join(", ") + ".";
+	let title = parts.join(", ") + ".";
+	if (typeof s.firstTextMs === "number") title += ` La primera palabra salió a los ${formatSeconds(s.firstTextMs)}.`;
+	if (cost) title += s.plan ? ` Con tu suscripción no se paga por token: pagando por uso serían unos ${formatCost(s.cost)}.` : ` Costó unos ${formatCost(s.cost)} (estimado con el precio publicado del modelo).`;
+	else if (s.cost === 0) title += " Modelo gratuito.";
+	box.title = title;
 }
 
 /** Resumen de «Cerrar conversación»: una tarjeta plegable; lo de arriba ya no le llega entero al modelo. */

@@ -2,15 +2,33 @@ import type { LLMProvider } from "../../config/config.js";
 import { listGgufModels } from "../llamacpp/models.js";
 import { catalogModels, ensureCatalog } from "./catalog.js";
 import { PROVIDER_PRESETS, normalizeBaseUrl, resolveLLMSettings } from "./providers.js";
+import { detectNvidia } from "../llamacpp/install.js";
+import { completeDetails, detailsFromLmStudio, detailsFromOllama, detailsFromOpenAI, type ModelDetails } from "./modelInfo.js";
 
-export type ModelOption = {
+/** Con los datos de `modelInfo.ts` (tamaño, cuantización, contexto, precio, si cabe en la tarjeta) cuando se saben. */
+export type ModelOption = ModelDetails & {
 	id: string;
 	/** Nombre bonito, si el proveedor lo da ("Kimi K2.6"). */
 	name?: string;
 	/** Ya está en memoria (LM Studio y Ollama lo dicen): responde sin esperar a cargarlo. */
 	loaded?: boolean;
 };
-export type ModelList = { models: ModelOption[]; error?: string };
+/** `gpu`: la tarjeta NVIDIA y su memoria, para decir si un modelo local cabe (solo con proveedores locales). */
+export type ModelList = { models: ModelOption[]; error?: string; gpu?: { name: string; vramBytes: number } };
+
+/** La tarjeta con su memoria, o undefined si no hay NVIDIA o no se sabe cuánta memoria tiene. */
+async function localGpu(): Promise<ModelList["gpu"]> {
+	const n = await detectNvidia();
+	return n?.vramBytes ? { name: n.name, vramBytes: n.vramBytes } : undefined;
+}
+
+/** Un modelo de la nube servido por Ollama local («gpt-oss:120b-cloud»): su tamaño no ocupa la tarjeta. */
+const isCloudTag = (id: string) => /(^|[:-])cloud$/i.test(id);
+
+/** Datos completos de los modelos locales: lo que falte se saca del nombre y se calcula si caben en la tarjeta. */
+function withLocalDetails(models: ModelOption[], gpu: ModelList["gpu"]): ModelOption[] {
+	return models.map((m) => (isCloudTag(m.id) ? m : { ...m, ...completeDetails(m.id, m, gpu?.vramBytes) }));
+}
 
 /**
  * Modelos que ofrece un proveedor, para elegirlos de una lista en vez de escribirlos.
@@ -20,7 +38,10 @@ export type ModelList = { models: ModelOption[]; error?: string };
 export async function listProviderModels(opts: { provider: LLMProvider; baseUrl?: string; apiKey?: string }): Promise<ModelList> {
 	const { provider } = opts;
 	const preset = PROVIDER_PRESETS[provider];
-	if (preset.managed) return { models: listGgufModels().map((m) => ({ id: m.id })) };
+	if (preset.managed) {
+		const gpu = await localGpu();
+		return { models: withLocalDetails(listGgufModels().map((m) => ({ id: m.id, sizeBytes: m.sizeBytes })), gpu), ...(gpu ? { gpu } : {}) };
+	}
 
 	const saved = resolveLLMSettings();
 	const sameProvider = saved.provider === provider;
@@ -44,7 +65,7 @@ export async function listProviderModels(opts: { provider: LLMProvider; baseUrl?
 		if (known && Object.keys(known).length) {
 			const models = Object.entries(known)
 				.filter(([, m]) => !m.deprecated)
-				.map(([id, m]) => ({ id, ...(m.name && m.name !== id ? { name: m.name } : {}) }));
+				.map(([id, m]) => ({ id, ...(m.name && m.name !== id ? { name: m.name } : {}), ...(m.context ? { context: m.context } : {}), ...(m.price ? { price: m.price } : {}) }));
 			return { models: sortModels(models) };
 		}
 	}
@@ -76,26 +97,38 @@ export async function listProviderModels(opts: { provider: LLMProvider; baseUrl?
 	} catch {
 		return { models: [], error: `Lo que contestó ${base} no es una lista de modelos. ¿Es la dirección correcta?` };
 	}
-	const loaded = await loadedModels(provider, base, headers);
-	return { models: models.map((m) => (loaded.has(m.id) ? { ...m, loaded: true } : m)) };
+	const extra = await serverExtras(provider, base, headers);
+	models = models.map((m) => ({ ...m, ...extra.details.get(m.id), ...(extra.loaded.has(m.id) ? { loaded: true } : {}) }));
+	if (!preset.local) return { models };
+	const gpu = await localGpu();
+	return { models: withLocalDetails(models, gpu), ...(gpu ? { gpu } : {}) };
 }
 
-/** Modelos que ya están cargados en memoria (Ollama: `/api/ps`; LM Studio: `/api/v0/models`). Vacío si no se sabe. */
-async function loadedModels(provider: LLMProvider, base: string, headers: Record<string, string>): Promise<Set<string>> {
+/**
+ * Lo que el servidor dice aparte de la lista: qué modelos ya están cargados en memoria (Ollama: `/api/ps`;
+ * LM Studio: `/api/v0/models`) y, en LM Studio, la cuantización y el contexto de cada uno. Vacío si no se sabe.
+ */
+async function serverExtras(provider: LLMProvider, base: string, headers: Record<string, string>): Promise<{ loaded: Set<string>; details: Map<string, ModelDetails> }> {
+	const out = { loaded: new Set<string>(), details: new Map<string, ModelDetails>() };
 	try {
 		const opts = { headers, signal: AbortSignal.timeout(3000) };
 		if (provider === "ollama") {
 			const j = (await (await fetch(`${base}/api/ps`, opts)).json()) as { models?: { name?: string }[] };
-			return new Set((j.models ?? []).map((m) => String(m?.name ?? "")));
+			for (const m of j.models ?? []) out.loaded.add(String(m?.name ?? ""));
 		}
 		if (provider === "lmstudio") {
 			const j = (await (await fetch(`${new URL(base).origin}/api/v0/models`, opts)).json()) as { data?: { id?: string; state?: string }[] };
-			return new Set((j.data ?? []).filter((m) => m?.state === "loaded").map((m) => String(m.id)));
+			for (const m of j.data ?? []) {
+				const id = String(m?.id ?? "");
+				if (!id) continue;
+				if (m.state === "loaded") out.loaded.add(id);
+				out.details.set(id, detailsFromLmStudio(m));
+			}
 		}
 	} catch {
 		// Versión vieja o sin esa ruta: simplemente no se marca ninguno.
 	}
-	return new Set();
+	return out;
 }
 
 /**
@@ -105,9 +138,9 @@ async function loadedModels(provider: LLMProvider, base: string, headers: Record
 export function parseModelList(json: unknown): ModelOption[] {
 	const j = (json ?? {}) as { models?: { name?: unknown }[]; data?: { id?: unknown; name?: unknown }[] };
 	const raw: ModelOption[] = Array.isArray(j.models)
-		? j.models.map((m) => ({ id: String(m?.name ?? "") }))
+		? j.models.map((m) => ({ id: String(m?.name ?? ""), ...detailsFromOllama(m) }))
 		: Array.isArray(j.data)
-			? j.data.map((m) => ({ id: String(m?.id ?? ""), ...(typeof m?.name === "string" && m.name && m.name !== m.id ? { name: m.name } : {}) }))
+			? j.data.map((m) => ({ id: String(m?.id ?? ""), ...(typeof m?.name === "string" && m.name && m.name !== m.id ? { name: m.name } : {}), ...detailsFromOpenAI(m) }))
 			: [];
 	const seen = new Set<string>();
 	return sortModels(raw.filter((m) => m.id && !/embed/i.test(m.id) && !seen.has(m.id) && seen.add(m.id))).slice(0, 1000);

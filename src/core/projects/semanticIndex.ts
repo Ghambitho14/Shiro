@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { DATA_DIR } from "../../config/config.js";
 import { resolveEmbeddingsProvider, type EmbeddingsProvider } from "../memory/EmbeddingsClient.js";
 import { isTextFile } from "./documents.js";
+import { isSensitiveFile } from "../security/sensitiveFiles.js";
 import { listProjectFiles, resolveProjectPath, type Project, type ProjectFile } from "./projects.js";
 
 const DIR = join(DATA_DIR, "cache", "semantic");
@@ -92,7 +93,8 @@ function withTask(model: string, kind: "doc" | "query", text: string): string {
 }
 
 function indexable(f: ProjectFile): boolean {
-	return isTextFile(f.path) && f.size > 0 && f.size <= MAX_FILE_BYTES && !SKIP_FILE.test(f.path);
+	// Los archivos con claves no se indexan: sus trozos irían al modelo de embeddings y a los resultados.
+	return isTextFile(f.path) && f.size > 0 && f.size <= MAX_FILE_BYTES && !SKIP_FILE.test(f.path) && !isSensitiveFile(f.path);
 }
 
 /** Un índice a la vez por proyecto (dos búsquedas seguidas no indexan dos veces). */

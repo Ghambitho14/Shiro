@@ -30,10 +30,21 @@ export type RunLogEntry = {
 	/** Recuerdos que se trajeron solos. */
 	recalled: number;
 	tools: RunToolEntry[];
-	usage: { input: number; output: number; turns: number };
+	/** `reasoning`: tokens de pensar (parte de `output`); falta en registros de antes. */
+	usage: { input: number; output: number; reasoning?: number; turns: number };
 	outcome: RunOutcome;
 	error?: string;
+	/** Milisegundos hasta la primera palabra visible (solo con streaming). */
+	firstTextMs?: number;
+	/** ≈ Dólares de la respuesta (pricing.ts); `plan`: de una suscripción, no se pagan por token. */
+	cost?: number;
+	plan?: true;
+	/** Respaldo entre motores: el modelo que no respondió y por eso contestó este. */
+	fallbackFrom?: string;
 };
+
+/** Lo que la interfaz enseña de una respuesta además de los tokens: primera palabra y coste. */
+export type ResponseStats = Pick<RunLogEntry, "firstTextMs" | "cost" | "plan">;
 
 const MAX_BYTES = 2 * 1024 * 1024;
 const GOAL_CHARS = 120;
@@ -94,24 +105,111 @@ export function readRunLog(opts: { limit?: number; sessionId?: string } = {}): R
 	return all.slice(-limit).reverse();
 }
 
-/** Resumen para la cabecera del registro: cuántas respuestas, cuántas fallaron y las herramientas que más fallan. */
-export function summarizeRuns(entries: RunLogEntry[]): { runs: number; failed: number; avgMs: number; failingTools: { name: string; failed: number; total: number }[] } {
-	const failed = entries.filter((e) => e.outcome === "error" || e.outcome === "empty").length;
-	const avgMs = entries.length ? Math.round(entries.reduce((s, e) => s + e.durationMs, 0) / entries.length) : 0;
-	const byTool = new Map<string, { failed: number; total: number }>();
-	for (const e of entries)
-		for (const t of e.tools) {
-			const c = byTool.get(t.name) ?? { failed: 0, total: 0 };
-			c.total++;
-			if (!t.ok) c.failed++;
-			byTool.set(t.name, c);
+/** Cómo le fue a un modelo en las respuestas del registro (medias por respuesta). */
+export type ModelSummary = {
+	provider: string;
+	model: string;
+	runs: number;
+	failed: number;
+	avgMs: number;
+	avgInput: number;
+	avgOutput: number;
+	avgReasoning: number;
+	/** Media hasta la primera palabra (solo respuestas con streaming); falta si ninguna la midió. */
+	avgFirstTextMs?: number;
+	/** ≈ Dólares sumando todas sus respuestas (también las detenidas: se pagan igual); falta si no tiene precio. */
+	cost?: number;
+	/** De una suscripción: el coste es orientativo. */
+	plan?: true;
+};
+
+/** Cómo le fue a una herramienta: cuántas veces se usó, cuántas falló y cuánto tarda de media. */
+export type ToolSummary = { name: string; uses: number; failed: number; avgMs: number };
+
+export type RunSummary = {
+	runs: number;
+	failed: number;
+	avgMs: number;
+	failingTools: { name: string; failed: number; total: number }[];
+	/** Por modelo, de más a menos respuestas. */
+	byModel: ModelSummary[];
+	/** Por herramienta, de más a menos usada. */
+	byTool: ToolSummary[];
+	/** ≈ Dólares de todas las respuestas que pagan por token (sin las de suscripción). */
+	totalCost: number;
+};
+
+const isFailure = (e: RunLogEntry) => e.outcome === "error" || e.outcome === "empty";
+const avg = (total: number, n: number) => (n ? Math.round(total / n) : 0);
+const roundUsd = (usd: number) => Math.round(usd * 1e6) / 1e6;
+
+/**
+ * Resumen para Ajustes → Registro: cuántas respuestas, cuántas fallaron, las herramientas que más fallan y
+ * dos tablas para comparar («qué modelo y qué herramienta va mejor»). Las medias de tiempo y tokens son por
+ * respuesta; las detenidas por el usuario no cuentan para el tiempo ni para los tokens (a medias, engañan).
+ */
+export function summarizeRuns(entries: RunLogEntry[]): RunSummary {
+	const failed = entries.filter(isFailure).length;
+	const avgMs = avg(entries.reduce((s, e) => s + e.durationMs, 0), entries.length);
+
+	const models = new Map<string, { provider: string; model: string; runs: number; failed: number; measured: number; ms: number; input: number; output: number; reasoning: number; firstN: number; firstMs: number; cost?: number; plan?: true }>();
+	let totalCost = 0;
+	const tools = new Map<string, { uses: number; failed: number; ms: number }>();
+	for (const e of entries) {
+		const provider = e.provider || "?";
+		const model = e.model || "?";
+		const key = `${provider}|${model}`;
+		const m = models.get(key) ?? { provider, model, runs: 0, failed: 0, measured: 0, ms: 0, input: 0, output: 0, reasoning: 0, firstN: 0, firstMs: 0 };
+		if (typeof e.cost === "number") {
+			m.cost = (m.cost ?? 0) + e.cost;
+			if (e.plan) m.plan = true;
+			else totalCost += e.cost;
 		}
-	const failingTools = [...byTool.entries()]
-		.filter(([, c]) => c.failed > 0)
-		.map(([name, c]) => ({ name, ...c }))
+		m.runs++;
+		if (isFailure(e)) m.failed++;
+		if (e.outcome !== "cancelled") {
+			m.measured++;
+			m.ms += e.durationMs;
+			m.input += e.usage?.input ?? 0;
+			m.output += e.usage?.output ?? 0;
+			m.reasoning += e.usage?.reasoning ?? 0;
+			if (typeof e.firstTextMs === "number") {
+				m.firstN++;
+				m.firstMs += e.firstTextMs;
+			}
+		}
+		models.set(key, m);
+		for (const t of e.tools) {
+			const c = tools.get(t.name) ?? { uses: 0, failed: 0, ms: 0 };
+			c.uses++;
+			c.ms += t.ms;
+			if (!t.ok) c.failed++;
+			tools.set(t.name, c);
+		}
+	}
+
+	const byModel = [...models.values()]
+		.map((m) => ({
+			provider: m.provider,
+			model: m.model,
+			runs: m.runs,
+			failed: m.failed,
+			avgMs: avg(m.ms, m.measured),
+			avgInput: avg(m.input, m.measured),
+			avgOutput: avg(m.output, m.measured),
+			avgReasoning: avg(m.reasoning, m.measured),
+			...(m.firstN ? { avgFirstTextMs: avg(m.firstMs, m.firstN) } : {}),
+			...(m.cost !== undefined ? { cost: roundUsd(m.cost) } : {}),
+			...(m.plan ? { plan: true as const } : {}),
+		}))
+		.sort((a, b) => b.runs - a.runs);
+	const byTool = [...tools.entries()].map(([name, c]) => ({ name, uses: c.uses, failed: c.failed, avgMs: avg(c.ms, c.uses) })).sort((a, b) => b.uses - a.uses);
+	const failingTools = byTool
+		.filter((t) => t.failed > 0)
+		.map((t) => ({ name: t.name, failed: t.failed, total: t.uses }))
 		.sort((a, b) => b.failed - a.failed)
 		.slice(0, 5);
-	return { runs: entries.length, failed, avgMs, failingTools };
+	return { runs: entries.length, failed, avgMs, failingTools, byModel, byTool, totalCost: roundUsd(totalCost) };
 }
 
 /** Vacía el registro (botón «Borrar registro»). */

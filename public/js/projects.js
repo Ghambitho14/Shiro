@@ -4,8 +4,9 @@
 import { api, authFetch } from "./api.js";
 import { promptDialog } from "./extensions.js";
 import { icon } from "./icons.js";
+import { isSensitiveFile } from "./sensitiveFiles.js";
 
-const $ = (sel, root = document) => root.querySelector(sel);
+const $ =(sel, root = document) => root.querySelector(sel);
 
 /**
  * Ayudas de app.js: toast, confirmDialog, openMenu, sessions() (metas de los chats),
@@ -24,9 +25,14 @@ const MAX_UPLOAD_FILES = 1000;
  */
 const SKIP_UPLOAD = new Set(["node_modules", "dist", "build", "out", "target", "bin", "obj", "coverage", "vendor", "__pycache__", "venv"]);
 
-/** true si el archivo va dentro de una carpeta oculta, de dependencias o compilada. */
+/**
+ * true si el archivo va dentro de una carpeta oculta, de dependencias o compilada, o si al subir una carpeta
+ * es un archivo con claves (credentials.json, llaves .pem…). Uno elegido a mano sí se sube: Aku pide permiso
+ * antes de leerlo.
+ */
 function skipUpload(f) {
 	const parts = (f.webkitRelativePath || f.name).split("/");
+	if (f.webkitRelativePath && isSensitiveFile(f.webkitRelativePath)) return true;
 	return parts.some((s) => s.startsWith(".")) || parts.slice(0, -1).some((s) => SKIP_UPLOAD.has(s));
 }
 const READABLE =

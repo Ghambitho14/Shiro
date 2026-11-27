@@ -43,6 +43,10 @@ const TOOL_PROFILES = ["auto", "lite", "full"] as const;
 const SAVER = ["auto", "on", "off"] as const;
 const opt = <T extends z.ZodTypeAny>(schema: T) => schema.optional().catch(undefined);
 
+/** Un modelo de «Elegir modelo solo»: proveedor y modelo (sin modelo, el de ese proveedor). */
+const modelRef = z.object({ provider: z.enum(LLM_PROVIDERS), model: z.string().trim().max(200).optional().catch(undefined) });
+const autoModelRef = modelRef.optional().catch(undefined);
+
 /**
  * Ajustes propios de un modelo (Ajustes → Modelo → "Solo este modelo"). Lo que no está aquí sale
  * de los generales (los campos sueltos de la configuración). Ver src/core/llm/modelSettings.ts.
@@ -174,6 +178,29 @@ const configSchema = z.object({
 
 	/** Herramientas para controlar el PC (abrir apps, volumen, ventanas, teclado, ratón…). */
 	pcControl: z.boolean().default(true).catch(true),
+	/** Memoria automática: tras cada respuesta, apuntar lo que valga la pena recordar del usuario (`autoMemory.ts`). */
+	autoMemory: z.boolean().default(true).catch(true),
+	/**
+	 * Elegir modelo solo (`core/llm/router.ts`), apagado por defecto: lo corto y la voz van al rápido; programar,
+	 * planear, imágenes y lo largo, al potente. Sin modelo en un lado, ese lado es el de Ajustes → Modelo.
+	 */
+	autoModel: z
+		.object({
+			enabled: z.boolean().default(false).catch(false),
+			fast: autoModelRef,
+			strong: autoModelRef,
+		})
+		.default({ enabled: false })
+		.catch({ enabled: false }),
+	/**
+	 * Respaldo entre motores (`core/llm/fallback.ts`): hasta 2 modelos, en orden, por si el de la respuesta no
+	 * responde (sin conexión, tiempo, error del servidor). Vacío = sin respaldo.
+	 */
+	fallbackModels: z
+		.array(modelRef.nullable().catch(null))
+		.default([])
+		.catch([])
+		.transform((list) => list.filter((r): r is z.infer<typeof modelRef> => r !== null).slice(0, 2)),
 	/**
 	 * Si el modelo puede ver imágenes (capturas de pantalla, fotos adjuntas):
 	 * - auto: se deduce del nombre del modelo (llava, qwen2.5-vl, gemma3, gpt-4o, claude…)

@@ -175,6 +175,7 @@ export async function runChat(): Promise<void> {
 			{
 				llm: turn?.llm ?? getLLM(),
 				agentName: speaker,
+				learnFacts: true,
 				textOnly,
 				explainMode: cfg.explainMode,
 				userProfile: getUserProfile(),

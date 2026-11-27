@@ -348,6 +348,19 @@
 						</div>
 						<div class="set-group">
 							<div class="set-row">
+								<div class="label"><strong>Elegir modelo solo</strong><span>En cada mensaje Aku elige: el modelo rápido (normalmente el de tu PC) para charlar y lo corto, y el potente (normalmente en la nube) para programar, analizar, mensajes largos, imágenes, Code, Hacking y Planear. Cada respuesta dice cuál usó.</span></div>
+								<label class="switch"><input type="checkbox" id="set-auto-model" /><span class="track"></span></label>
+							</div>
+							<div id="auto-model-fields" class="auto-model" hidden></div>
+						</div>
+						<div class="set-group">
+							<div class="set-row">
+								<div class="label"><strong>Si no responde, usar…</strong><span>Hasta dos modelos de respaldo, en orden. Si el modelo no contesta (sin conexión, tarda demasiado o falla su servidor) antes de empezar a escribir, Aku sigue con el siguiente y te lo dice. Uno que falló se salta durante un minuto.</span></div>
+							</div>
+							<div id="fallback-fields" class="auto-model"></div>
+						</div>
+						<div class="set-group">
+							<div class="set-row">
 								<div class="label"><strong>Visión (ver imágenes y la pantalla)</strong><span id="vision-desc">Si el modelo puede ver imágenes, Aku puede mirar tu pantalla para hacer clic donde haga falta.</span></div>
 								<select class="select" id="set-vision" style="max-width: 190px">
 									<option value="auto">Automático</option>
@@ -629,6 +642,12 @@
 							<p class="set-desc">Tus chats, lo que recuerdo de ti y tus recordatorios. Los ajustes, las claves y las sesiones de WhatsApp siempre se quedan en este equipo.</p>
 							<div id="storage-form"></div>
 						</div>
+						<div class="set-group">
+							<div class="set-row">
+								<div class="label"><strong>Aprender de lo que hablamos</strong><span>Después de cada respuesta, Aku apunta solo lo que vale la pena recordar de ti (dónde vives, tus gustos, tus proyectos). Usa el mismo modelo, un poco más por respuesta. Lo que salga después de leer una web o un correo se guarda como «no verificado» y no lo usa solo.</span></div>
+								<label class="switch"><input type="checkbox" id="set-auto-memory" /><span class="track"></span></label>
+							</div>
+						</div>
 					</section>
 
 					<!-- Registro -->
@@ -646,6 +665,7 @@
 							<h3>Últimas respuestas</h3>
 							<p class="set-desc">Qué hizo Aku en cada respuesta: modelo, tiempo, herramientas (y cuáles fallaron), tokens y cómo terminó. Se guarda solo en este equipo; del mensaje solo queda el comienzo.</p>
 							<div id="runs-summary" class="notice">Consultando…</div>
+							<div id="runs-tables" class="run-tables" hidden></div>
 							<div class="ext-list" id="runs-list" style="margin-top: 12px"></div>
 							<div class="actions-row">
 								<button class="btn" id="runs-refresh">Actualizar</button>

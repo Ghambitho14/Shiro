@@ -8,6 +8,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { isAbsolute, resolve } from "node:path";
 import { getConfig, setConfig, type AppConfig } from "./config/config.js";
 import { getEngineStatus, LOG_FILE, stopLlamaServer } from "./core/llamacpp/engine.js";
+import { completeDetails } from "./core/llm/modelInfo.js";
 import { BACKEND_LABELS, detectNvidia, findDownload, getInstalled, getInstallState, installLlamaCpp, resolveTarget } from "./core/llamacpp/install.js";
 import { listGgufModels, MODELS_DIR, SOURCE_LABELS } from "./core/llamacpp/models.js";
 import { canPickFolder, pickFolder } from "./core/pc/pickFolder.js";
@@ -22,6 +23,9 @@ const BACKENDS = ["auto", "cuda", "vulkan", "cpu"] as const;
 async function buildStatus(req: IncomingMessage, fresh = false) {
 	const cfg = getConfig();
 	const installed = getInstalled();
+	// La memoria de la tarjeta, para decir si cada modelo cabe (Ajustes → Modelo).
+	const nvidia = await detectNvidia();
+	const gpu = nvidia?.vramBytes ? { name: nvidia.name, vramBytes: nvidia.vramBytes } : null;
 	return {
 		installed: installed ? { tag: installed.tag, backend: installed.backend, variant: installed.variant, label: BACKEND_LABELS[installed.backend], installedAt: installed.installedAt } : null,
 		install: getInstallState(),
@@ -34,7 +38,9 @@ async function buildStatus(req: IncomingMessage, fresh = false) {
 			source: m.source,
 			sourceLabel: SOURCE_LABELS[m.source],
 			vision: Boolean(m.mmproj),
+			...completeDetails(m.id, { sizeBytes: m.sizeBytes }, gpu?.vramBytes),
 		})),
+		gpu,
 		modelsDir: MODELS_DIR,
 		folders: cfg.ggufFolders,
 		idleMinutes: cfg.llamaIdleMinutes,

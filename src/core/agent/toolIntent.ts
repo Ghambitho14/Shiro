@@ -4,47 +4,48 @@
  * todas juntas son unos 5.600. Las de servidores MCP y las desconocidas se dejan siempre.
  */
 import { normalizeText } from "../agents/text.js";
+import type { IntentGroup } from "../tools/toolDefinitions.js";
+import { ALWAYS_TOOLS, toolsInGroup } from "../tools/toolPolicy.js";
 
 /**
- * Siempre disponibles: baratas y útiles para casi cualquier pregunta. Incluye la terminal porque
- * varias habilidades la necesitan (buscar-en-pc) y lo que se le pide no siempre trae una palabra
- * clave. Sigue pidiendo permiso y solo está si el control del PC está permitido (`resolveTools`).
+ * Siempre disponibles (`intent: "always"` en su `policy`): baratas y útiles para casi cualquier pregunta.
+ * Incluye la terminal porque varias habilidades la necesitan (buscar-en-pc) y lo que se le pide no siempre
+ * trae una palabra clave. Sigue pidiendo permiso y solo está si el control del PC está permitido (`resolveTools`).
  */
-const ALWAYS = ["calculator", "get_time", "search_web", "fetch_url", "memory_search", "memory_add", "use_skill", "project", "delegate", "terminal"];
+const ALWAYS = ALWAYS_TOOLS;
 
-/** Grupos que solo entran si el mensaje habla de ello. `words` se mira sobre el texto sin tildes. */
-const GROUPS: { tools: string[]; words: RegExp; raw?: RegExp }[] = [
-	{
-		tools: ["read_file", "write_file", "list_dir", "read_file_system", "write_file_system", "list_dir_system", "describe_image"],
+/**
+ * Palabras de cada grupo: el grupo entra solo si el mensaje habla de ello. `words` se mira sobre el texto sin
+ * tildes. Qué herramientas van en cada grupo lo dice `intent` en su `policy`; un grupo nuevo necesita aquí sus palabras.
+ */
+const GROUP_WORDS: Record<IntentGroup, { words: RegExp; raw?: RegExp }> = {
+	archivos: {
 		words: /\b(archivos?|carpetas?|documentos?|ficheros?|lee|leer|leelo|leeme|escrib\w*|guard\w*|txt|pdf|docx?|csv|json|ruta|escritorio|descargas|imagen(es)?|fotos?|notas?|crea\w*)\b/,
 		raw: /\b\w+\.(txt|md|pdf|docx?|csv|json|js|ts|py|html?|xlsx?)\b|[a-z]:[\\/]/i,
 	},
-	{
-		tools: ["create_reminder", "list_reminders", "complete_reminder", "cron_create", "cron_list", "cron_delete", "cron_toggle"],
+	recordatorios: {
 		words: /\b(recuerd\w*|recordatorios?|avis\w*|alarmas?|programa\w*|cada (dia|semana|hora|mes|manana|tarde|noche|lunes|martes|miercoles|jueves|viernes|sabado|domingo)|todos los (dias|lunes|martes|miercoles|jueves|viernes|sabados|domingos)|diari\w*|semanal\w*|automatic\w*|manana|a las \d+|en \d+ (minutos?|horas?)|tareas?|pendientes?)\b/,
 	},
-	{
-		tools: ["email", "calendar"],
+	google: {
 		words: /\b(correos?|e-?mails?|mails?|gmail|bandeja|mensajes? nuevos?|respond\w*|contest\w*|envi\w*|calendario|agenda\w*|eventos?|reunion\w*|citas?|cumpleanos|invita\w*|que tengo (hoy|manana|el|esta|la)|ocupad\w*|libre)\b/,
 	},
-	{ tools: ["get_weather"], words: /\b(clima|tiempo hace|temperatura|llueve|lluvia|llover|pronostico|calor|frio|grados)\b/ },
-	{
-		tools: ["pc_open", "pc_screenshot", "pc_keyboard", "pc_mouse", "pc_media", "pc_windows", "pc_processes", "pc_clipboard", "pc_system", "pc_power", "exec"],
+	clima: { words: /\b(clima|tiempo hace|temperatura|llueve|lluvia|llover|pronostico|calor|frio|grados)\b/ },
+	pc: {
 		words:
 			/\b(pc|compu|computador\w*|ordenador|laptop|portatil|equipo|windows|abr\w*|cierr\w*|cerrar|ventanas?|volumen|sonido|audio|silenci\w*|altavoc\w*|parlantes?|bocinas?|musica|cancion\w*|reproduc\w*|paus\w*|play|reanud\w*|siguiente|spotify|youtube|videos?|captura\w*|pantalla|ves|mira|apag\w*|reinici\w*|suspend\w*|bloque\w*|teclado|teclas?|raton|mouse|clic|procesos?|portapapeles|copi\w*|peg\w*|comandos?|terminal|powershell|consola|contrasen\w*|sudo|ssh|claude|instal\w*|ejecut\w*|bateria|ram|cpu|disco|aplicacion\w*|apps?)\b/,
 	},
-	{
-		tools: ["browser"],
+	navegador: {
 		words: /\b(navegador|naveg\w*|paginas?|sitios?|entr\w*|sesion|login|formularios?|clic|puls\w*|botones?|boton|links?|enlaces?|chrome|edge|compr\w*|reserv\w*)\b/,
 		raw: /https?:\/\/|www\./i,
 	},
-	{ tools: ["git"], words: /\b(git|commits?|ramas?|repo\w*|diff|push|cambios)\b/ },
-	{ tools: ["sessions_list", "sessions_history"], words: /\b(chats? anterior\w*|conversacion\w* anterior\w*|otros? chats?|otra conversacion|historial|hablamos|dijimos)\b/ },
+	git: { words: /\b(git|commits?|ramas?|repo\w*|diff|push|cambios)\b/ },
+	chats: { words: /\b(chats? anterior\w*|conversacion\w* anterior\w*|otros? chats?|otra conversacion|historial|hablamos|dijimos)\b/ },
 	// La lista de tareas solo para trabajos largos: en una pregunta normal sería ruido.
-	{ tools: ["todo"], words: /\b(investig\w*|analiz\w*|audit\w*|revis\w*|compar\w*|paso a paso|plan\w*|organiz\w*|migr\w*|tareas?)\b/ },
-	{ tools: ["claude_code"], words: /\b(claude|codigo|program\w*|bugs?|errores?|error|funcion\w*|arregl\w*|implement\w*|proyecto|refactor\w*)\b/ },
-];
+	tareas: { words: /\b(investig\w*|analiz\w*|audit\w*|revis\w*|compar\w*|paso a paso|plan\w*|organiz\w*|migr\w*|tareas?)\b/ },
+	claude: { words: /\b(claude|codigo|program\w*|bugs?|errores?|error|funcion\w*|arregl\w*|implement\w*|proyecto|refactor\w*)\b/ },
+};
 
+const GROUPS = Object.entries(GROUP_WORDS).map(([group, w]) => ({ ...w, tools: toolsInGroup(group as IntentGroup) }));
 const KNOWN = new Set([...ALWAYS, ...GROUPS.flatMap((g) => g.tools)]);
 
 /**

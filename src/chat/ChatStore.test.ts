@@ -91,3 +91,40 @@ test("sanitizeMessages guarda la lista de tareas solo en respuestas del asistent
 	]);
 	assert.equal(empty.todo, undefined);
 });
+
+test("sanitizeMessages guarda qué modelo eligió «Elegir modelo solo» solo si es válido", () => {
+	const [user, ok, bad, empty] = sanitizeMessages([
+		{ role: "user", content: "hola", route: { tier: "fast", model: "qwen", reason: "x" } },
+		{ role: "assistant", content: "ok", route: { tier: "strong", model: "kimi-k2", reason: "modo Code", extra: 1 } },
+		{ role: "assistant", content: "ok", route: { tier: "medio", model: "qwen" } },
+		{ role: "assistant", content: "ok", route: { tier: "fast", model: "  " } },
+	]);
+	assert.equal(user.route, undefined);
+	assert.deepEqual(ok.route, { tier: "strong", model: "kimi-k2", reason: "modo Code" });
+	assert.equal(bad.route, undefined);
+	assert.equal(empty.route, undefined);
+});
+
+test("sanitizeMessages guarda la primera palabra y el coste solo si son números válidos", () => {
+	const [user, ok, plan, bad] = sanitizeMessages([
+		{ role: "user", content: "hola", stats: { firstTextMs: 900, cost: 0.01 } },
+		{ role: "assistant", content: "ok", stats: { firstTextMs: 912.4, cost: 0.0012, extra: "x" } },
+		{ role: "assistant", content: "ok", stats: { cost: 0.002, plan: true } },
+		{ role: "assistant", content: "ok", stats: { firstTextMs: -5, cost: "mucho", plan: true } },
+	]);
+	assert.equal(user.stats, undefined);
+	assert.deepEqual(ok.stats, { firstTextMs: 912, cost: 0.0012 });
+	assert.deepEqual(plan.stats, { cost: 0.002, plan: true });
+	assert.equal(bad.stats, undefined);
+});
+
+test("sanitizeMessages guarda el aviso del respaldo solo en respuestas y con ambos modelos", () => {
+	const [user, ok, bad] = sanitizeMessages([
+		{ role: "user", content: "hola", fallback: { from: "a", to: "b", reason: "x" } },
+		{ role: "assistant", content: "ok", fallback: { from: " qwen3:8b ", to: "kimi-k2.6", reason: "no respondió", extra: 1 } },
+		{ role: "assistant", content: "ok", fallback: { from: "qwen3:8b" } },
+	]);
+	assert.equal(user.fallback, undefined);
+	assert.deepEqual(ok.fallback, { from: "qwen3:8b", to: "kimi-k2.6", reason: "no respondió" });
+	assert.equal(bad.fallback, undefined);
+});

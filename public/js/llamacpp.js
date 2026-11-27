@@ -4,6 +4,7 @@
 import { api } from "./api.js";
 import { icon } from "./icons.js";
 import { escapeHtml } from "./markdown.js";
+import { describeModel } from "./modelInfo.js";
 
 const $ = (sel, root) => root.querySelector(sel);
 
@@ -169,7 +170,10 @@ export function mountLlamaCppPanel(container, ctx) {
 			row.title = m.path;
 			row.innerHTML = `<div class="ext-item-text"><strong class="mono"></strong><span></span></div>${m.vision ? `<span class="chip tiny">Visión</span>` : ""}`;
 			$("strong", row).textContent = m.id;
-			$("span", row).textContent = `${m.sourceLabel} · ${formatBytes(m.sizeBytes)}`;
+			// Origen y datos del modelo (parámetros, cuantización, tamaño, si cabe en la tarjeta).
+			const info = describeModel(m, st.gpu);
+			$("span", row).textContent = `${m.sourceLabel} · ${info.text || formatBytes(m.sizeBytes)}`;
+			if (info.kind) $("span", row).classList.add(`llama-fit-${info.kind}`);
 			if (m.id.toLowerCase() === current) {
 				row.insertAdjacentHTML("beforeend", `<span class="chip accent">${icon("check", "sm")}En uso</span>`);
 			} else {

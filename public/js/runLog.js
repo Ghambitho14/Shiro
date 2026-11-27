@@ -2,6 +2,7 @@
 // y el examen del agente (tareas fijas con el modelo de Ajustes). Datos de /api/runs y /api/agent-exam.
 import { api } from "./api.js";
 import { $, confirmDialog, el, toast } from "./ui.js";
+import { formatCost } from "./messages.js";
 
 let examTimer = null;
 
@@ -45,9 +46,12 @@ function runRow(e) {
 	const lines = [
 		`<b>Modelo:</b> ${escape(e.provider || "?")} · ${escape(e.model || "?")}`,
 		`<b>Modo:</b> ${MODE[e.mode] || escape(e.mode)} · permisos ${escape(e.permissions)}${e.subagent ? ` · ayudante (${escape(e.agent)})` : ""}`,
-		`<b>Tokens:</b> ${e.usage.input.toLocaleString()} leídos · ${e.usage.output.toLocaleString()} escritos · ${e.usage.turns} vueltas con el modelo`,
+		`<b>Tokens:</b> ${e.usage.input.toLocaleString()} leídos · ${e.usage.output.toLocaleString()} escritos${e.usage.reasoning ? ` (${e.usage.reasoning.toLocaleString()} pensando)` : ""} · ${e.usage.turns} vueltas con el modelo`,
 		`<b>Recuerdos traídos solos:</b> ${e.recalled}`,
 	];
+	if (typeof e.firstTextMs === "number") lines.splice(3, 0, `<b>Primera palabra:</b> a los ${seconds(e.firstTextMs)}`);
+	if (typeof e.cost === "number") lines.splice(3, 0, `<b>Coste:</b> ${e.cost > 0 ? `≈ ${formatCost(e.cost)}` : "gratis"}${e.plan && e.cost > 0 ? " (incluido en tu suscripción: es lo que costaría pagando por uso)" : ""}`);
+	if (e.fallbackFrom) lines.splice(1, 0, `<b>Respaldo:</b> respondió este porque ${escape(e.fallbackFrom)} no contestó`);
 	if (e.error) lines.push(`<b>Error:</b> ${escape(e.error)}`);
 	body.innerHTML = lines.map((l) => `<div>${l}</div>`).join("");
 	if (e.tools.length) {
@@ -80,12 +84,85 @@ function escape(s) {
 	return d.innerHTML;
 }
 
+/** Una tabla chica: cabeceras y filas de celdas (texto, o `[texto, clase]`). Todo va con textContent. */
+function smallTable(title, heads, rows) {
+	const wrap = el("div", "run-table");
+	const h = el("h4");
+	h.textContent = title;
+	const scroll = el("div", "run-table-scroll");
+	const table = el("table");
+	const tr = el("tr");
+	for (const name of heads) {
+		const th = el("th");
+		th.textContent = name;
+		tr.append(th);
+	}
+	const thead = el("thead");
+	thead.append(tr);
+	const tbody = el("tbody");
+	for (const cells of rows) {
+		const row = el("tr");
+		for (const c of cells) {
+			const [text, cls] = Array.isArray(c) ? c : [c, ""];
+			const td = el("td", cls);
+			td.textContent = text;
+			row.append(td);
+		}
+		tbody.append(row);
+	}
+	table.append(thead, tbody);
+	scroll.append(table);
+	wrap.append(h, scroll);
+	return wrap;
+}
+
+/** Coste total de un modelo: «—» sin precio (los de tu PC), «gratis» o ≈ dólares («plan» si es de suscripción). */
+const costCell = (m) => (typeof m.cost !== "number" ? "—" : m.cost > 0 ? `≈ ${formatCost(m.cost)}${m.plan ? " (plan)" : ""}` : "gratis");
+
+const failCell = (failed, total) => (failed ? [`${failed} (${Math.round((failed / total) * 100)} %)`, "bad"] : ["0", ""]);
+
+/** «Qué modelo y qué herramienta va mejor»: medias del resumen de /api/runs. */
+function paintTables(summary) {
+	const box = $("#runs-tables");
+	box.replaceChildren();
+	const models = summary.byModel || [];
+	const tools = summary.byTool || [];
+	box.hidden = !models.length && !tools.length;
+	if (models.length) {
+		box.append(
+			smallTable(
+				"Por modelo",
+				["Modelo", "Respuestas", "Fallaron", "Tiempo medio", "1.ª palabra", "Tokens por respuesta", "Coste"],
+				models.map((m) => [
+					[`${m.model} · ${m.provider}`, "path"],
+					String(m.runs),
+					failCell(m.failed, m.runs),
+					[seconds(m.avgMs), "mono"],
+					[typeof m.avgFirstTextMs === "number" ? seconds(m.avgFirstTextMs) : "—", "mono"],
+					[`${m.avgInput.toLocaleString()} leídos · ${m.avgOutput.toLocaleString()} escritos${m.avgReasoning ? ` (${m.avgReasoning.toLocaleString()} pensando)` : ""}`, "mono wrap"],
+					[costCell(m), "mono"],
+				]),
+			),
+		);
+	}
+	if (tools.length) {
+		box.append(
+			smallTable(
+				"Por herramienta",
+				["Herramienta", "Usos", "Fallaron", "Tiempo medio"],
+				tools.map((t) => [[t.name, "mono"], String(t.uses), failCell(t.failed, t.uses), [seconds(t.avgMs), "mono"]]),
+			),
+		);
+	}
+}
+
 async function loadRuns() {
 	const box = $("#runs-list");
 	const head = $("#runs-summary");
 	try {
 		const { entries, summary } = await api("/api/runs?limit=100");
 		box.replaceChildren();
+		paintTables(summary);
 		if (!entries.length) {
 			head.textContent = "Todavía no hay respuestas registradas.";
 			head.className = "notice";
@@ -97,6 +174,7 @@ async function loadRuns() {
 			(summary.runs === 1
 				? `La última respuesta ${summary.failed ? "terminó con error o vacía" : "salió bien"} y tardó ${seconds(summary.avgMs)}.`
 				: `Últimas ${summary.runs} respuestas: ${summary.failed} con error o vacías, ${seconds(summary.avgMs)} de media.`) +
+			(summary.totalCost > 0 ? ` Coste ≈ ${formatCost(summary.totalCost)}.` : "") +
 			(tools ? ` Herramientas que más fallan: ${tools}.` : "");
 		for (const e of entries) box.append(runRow(e));
 	} catch (err) {

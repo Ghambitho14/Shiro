@@ -25,7 +25,8 @@ export type Release = { tag_name: string; assets: ReleaseAsset[] };
 export type Download = { tag: string; variant: string; main: ReleaseAsset; extra?: ReleaseAsset };
 export type Target = { platform: NodeJS.Platform; arch: string; backend: Backend; cudaMajor?: number };
 export type Installed = { tag: string; backend: Backend; variant: string; exe: string; installedAt: string };
-export type NvidiaInfo = { name: string; driver: string; cudaMajor?: number };
+/** `vramBytes`: memoria de la tarjeta (Ajustes → Modelo dice si un modelo cabe). */
+export type NvidiaInfo = { name: string; driver: string; cudaMajor?: number; vramBytes?: number };
 
 export const BACKEND_LABELS: Record<Backend, string> = { cuda: "CUDA (NVIDIA)", vulkan: "Vulkan", cpu: "Solo procesador", metal: "Metal (Mac)" };
 
@@ -85,15 +86,20 @@ function run(file: string, args: string[], timeoutMs: number): Promise<string> {
 	});
 }
 
+/** Primera tarjeta de `nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader,nounits` (memoria en MiB). */
+export function parseNvidiaSmi(out: string): NvidiaInfo | null {
+	const [name, driver, mib] = (out.split(/\r?\n/)[0] ?? "").split(",").map((s) => s.trim());
+	if (!name || !driver) return null;
+	const vram = Number(mib);
+	return { name, driver, cudaMajor: cudaMajorForDriver(driver), ...(Number.isFinite(vram) && vram > 0 ? { vramBytes: vram * 1024 * 1024 } : {}) };
+}
+
 let nvidiaCache: Promise<NvidiaInfo | null> | null = null;
 
 /** Tarjeta NVIDIA y su driver (null si no hay o no está nvidia-smi). */
 export function detectNvidia(): Promise<NvidiaInfo | null> {
-	nvidiaCache ??= run("nvidia-smi", ["--query-gpu=name,driver_version", "--format=csv,noheader"], 8000)
-		.then((out) => {
-			const [name, driver] = out.split(/\r?\n/)[0].split(",").map((s) => s.trim());
-			return name && driver ? { name, driver, cudaMajor: cudaMajorForDriver(driver) } : null;
-		})
+	nvidiaCache ??= run("nvidia-smi", ["--query-gpu=name,driver_version,memory.total", "--format=csv,noheader,nounits"], 8000)
+		.then(parseNvidiaSmi)
 		.catch(() => null);
 	return nvidiaCache;
 }

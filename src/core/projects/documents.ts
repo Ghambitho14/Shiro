@@ -15,10 +15,10 @@ const DOC_EXT = new Set(["pdf", "docx"]);
 export const MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
 
 function extOf(file: string): string {
-	const e = extname(file).slice(1).toLowerCase();
-	if (e) return e;
-	// Archivos sin extensión con nombre conocido (Dockerfile, Makefile, LICENSE…) se leen como texto.
-	return /(^|[\\/])(dockerfile|makefile|license|readme|\.gitignore|\.env[^\\/]*)$/i.test(file) ? "txt" : "";
+	// Nombres conocidos (Dockerfile, Makefile, LICENSE, .env, .env.example…) se leen como texto. Va antes de la
+	// extensión: en `.env.example` o `.env.local`, extname daría «.example» o «.local», que no son tipos de archivo.
+	if (/(^|[\\/])(dockerfile|makefile|license|readme|\.gitignore|\.env[^\\/]*)$/i.test(file)) return "txt";
+	return extname(file).slice(1).toLowerCase();
 }
 
 /** true si Shiro sabe sacar el texto de este archivo. */

@@ -158,6 +158,8 @@ async function processIncomingMessage(message: Message): Promise<void> {
 			explainMode: config.explainMode,
 			conversation: withUser,
 			userProfile: WA_ALLOWED_CHAT ? getUserProfile() : undefined,
+			// Sin WA_ALLOWED_CHAT no hay contexto privado y runAgent no aprende nada (responde a cualquiera).
+			learnFacts: true,
 		},
 		workspaceContext || undefined,
 	);

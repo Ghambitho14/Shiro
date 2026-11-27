@@ -209,3 +209,55 @@ test("git de solo lectura va sin permiso también en las carpetas del proyecto d
 		ok(describeRiskyAction("git", { command: "status", repoPath: TMP }));
 	});
 });
+
+test("externalReadInThisResponse se puede leer al terminar la respuesta (lo usa la memoria automática)", async () => {
+	const { externalReadInThisResponse, noteExternalRead, runWithApprover } = await import("./approval.js");
+	let seen: boolean | undefined;
+	await runWithApprover(undefined, () =>
+		(async () => {
+			await new Promise((r) => setTimeout(r, 1));
+			noteExternalRead();
+		})().finally(() => {
+			seen = externalReadInThisResponse();
+		}),
+	);
+	strictEqual(seen, true);
+	strictEqual(externalReadInThisResponse(), false);
+	let clean: boolean | undefined;
+	await runWithApprover(undefined, () => Promise.resolve().finally(() => (clean = externalReadInThisResponse())));
+	strictEqual(clean, false);
+});
+
+test("archivos con claves: leerlos pide permiso, también dentro del proyecto y en Automático", async () => {
+	const { addFolder, createProject, runWithProject } = await import("../projects/projects.js");
+	const { isHardToUndo } = await import("./approval.js");
+	const { mkdirSync } = await import("node:fs");
+	const dir = join(TMP, "con-claves");
+	mkdirSync(dir, { recursive: true });
+	const p = addFolder(createProject({ name: "Claves" }).id, dir)!;
+	await runWithProject(p, async () => {
+		const card = describeRiskyAction("project", { action: "read", path: "con-claves/.env" });
+		ok(card?.includes("archivo con claves"), card ?? "");
+		strictEqual(describeRiskyAction("project", { action: "read", path: "con-claves/.env.example" }), null);
+		strictEqual(describeRiskyAction("project", { action: "read", path: "con-claves/README.md" }), null);
+		// Mirar con un comando dentro del proyecto no pregunta… salvo si nombra un archivo con claves.
+		strictEqual(describeRiskyAction("exec", { command: "cat README.md", workingDir: dir }), null);
+		ok(describeRiskyAction("exec", { command: "cat .env", workingDir: dir })?.includes("archivo con claves"));
+		ok(describeRiskyAction("read_file_system", { path: join(dir, "server.pem") })?.includes("archivo con claves"));
+		strictEqual(describeRiskyAction("read_file_system", { path: join(dir, "README.md") }), null);
+		ok(describeRiskyAction("git", { command: "show HEAD:.env" }));
+	});
+	ok(describeRiskyAction("read_file", { path: "secrets.json" }));
+	strictEqual(describeRiskyAction("read_file", { path: "notas.md" }), null);
+	// Ni la lista «sin preguntar» de Ajustes lo deja pasar.
+	setConfig({ execAllowlist: ["cat"] });
+	ok(describeRiskyAction("exec", { command: "cat .env" }));
+	strictEqual(describeRiskyAction("exec", { command: "cat notas.txt" }), null);
+	setConfig({ execAllowlist: [] });
+	// «Automático» también pregunta.
+	strictEqual(isHardToUndo("project", { action: "read", path: "x/.env" }), true);
+	strictEqual(isHardToUndo("read_file_system", { path: "C:/x/credentials.json" }), true);
+	strictEqual(isHardToUndo("exec", { command: "type .env" }), true);
+	strictEqual(isHardToUndo("exec", { command: "type README.md" }), false);
+	strictEqual(isHardToUndo("project", { action: "read", path: "x/README.md" }), false);
+});

@@ -20,7 +20,8 @@ import { logger } from "../logger.js";
 import { isMeaningfulResponse, FALLBACK_EMPTY_RESPONSE } from "../sanitizeResponse.js";
 import { createRetryPolicy, getBackoffMs, isRetryableError } from "../health/RetryPolicy.js";
 import { getConfig } from "../../config/config.js";
-import { runWithApprover, type Approver } from "../tools/approval.js";
+import { externalReadInThisResponse, runWithApprover, type Approver } from "../tools/approval.js";
+import { learnInBackground } from "../memory/autoMemory.js";
 import { mcpManager } from "../mcp/McpManager.js";
 import { getEnabledSkills, getSkillInstructions } from "../skills/SkillLoader.js";
 import { getProject, inlineProjectText, projectIndex, projectSources, runWithProject, type Project } from "../projects/projects.js";
@@ -36,7 +37,9 @@ import { claudeCodeLauncher } from "../claudeCode/claudeCode.js";
 import { googleConnected } from "../google/googleAuth.js";
 import { loadAgents } from "../agents/registry.js";
 import { recallMemories } from "../memory/memories.js";
-import { appendRunLog, type RunOutcome, type RunToolEntry } from "./runLog.js";
+import { appendRunLog, type ResponseStats, type RunOutcome, type RunToolEntry } from "./runLog.js";
+import { costOf, priceFor } from "../llm/pricing.js";
+import { engineKey, engineLabel, engineRecentlyFailed, fallbackReason, isFallbackError, markEngineFailed, nextFallback, type FallbackNotice } from "../llm/fallback.js";
 import { runWithAgentContext, type AgentRunContext } from "./runContext.js";
 import type { Asker } from "../tools/modules/ask.js";
 import type { ThinkingLevel } from "../../config/config.js";
@@ -77,6 +80,10 @@ export type AgentOptions = {
 	onUsage?: (usage: TokenUsage) => void;
 	/** Al terminar: cuánto contexto del modelo ocupó la respuesta y en qué (medidor de la web). */
 	onContext?: (report: ContextReport) => void;
+	/** Al terminar: cuándo salió la primera palabra y ≈ cuánto costó (si el modelo tiene precio). */
+	onStats?: (stats: ResponseStats) => void;
+	/** Respaldo entre motores: el modelo no respondió y sigue otro (Ajustes → Modelo → «Si no responde, usar…»). */
+	onFallback?: (notice: FallbackNotice) => void;
 	/**
 	 * Quién aprueba las acciones peligrosas (exec, escribir archivos…).
 	 * Sin approver, con approvalMode "ask" esas acciones se bloquean.
@@ -114,6 +121,11 @@ export type AgentOptions = {
 	chatSummary?: string;
 	/** Es un ayudante creado con `delegate`: hace su tarea y no puede crear otros. */
 	subagent?: { boss: string };
+	/**
+	 * Es una charla con el usuario (web, terminal, Telegram, WhatsApp): al terminar, la memoria automática
+	 * apunta lo que valga la pena (`autoMemory.ts`). Las tareas programadas y el examen no lo ponen.
+	 */
+	learnFacts?: boolean;
 };
 
 /** Herramientas que en Code, dentro de un proyecto, se confunden con `project` (ver prepareRun). */
@@ -438,7 +450,59 @@ export async function estimateContext(goal: string, opts: AgentOptions, workspac
 	});
 }
 
+/** El modelo no respondió y hay otro de respaldo: lo lanza runAgentOnce para que runAgent cambie de modelo. */
+class SwitchModel extends Error {
+	constructor(readonly reason: unknown) {
+		super("cambiar al modelo de respaldo");
+	}
+}
+
+/**
+ * Una respuesta completa del agente. Si el modelo no responde (sin conexión, tiempo, error del servidor) antes de
+ * escribir nada o usar herramientas, sigue con el siguiente de `fallbackModels` (`core/llm/fallback.ts`), armando
+ * todo otra vez para ese modelo (sus herramientas y su contexto pueden ser otros).
+ */
 export async function runAgent(goal: string, opts: AgentOptions, workspaceContext?: string): Promise<string> {
+	const tried = new Set<string>();
+	let llm = opts.llm;
+	let notice: FallbackNotice | undefined;
+	// Si no respondió hace menos de un minuto, no se le vuelve a esperar.
+	if (getConfig().fallbackModels.length && engineRecentlyFailed(llm)) {
+		tried.add(engineKey(llm));
+		const next = nextFallback(tried);
+		if (next) {
+			notice = { from: engineLabel(llm), to: engineLabel(next), reason: "no respondió hace un momento" };
+			llm = next;
+		}
+	}
+	for (;;) {
+		tried.add(engineKey(llm));
+		if (notice) {
+			logger.warn(`🛟 ${notice.from} ${notice.reason}; sigo con ${notice.to}`);
+			opts.onFallback?.(notice);
+		}
+		try {
+			return await runAgentOnce(goal, llm === opts.llm ? opts : { ...opts, llm }, workspaceContext, {
+				from: notice?.from,
+				canSwitch: () => nextFallback(tried) !== undefined,
+			});
+		} catch (err) {
+			if (!(err instanceof SwitchModel)) throw err;
+			markEngineFailed(llm);
+			const next = nextFallback(tried);
+			if (!next) return describeFailure(err.reason);
+			notice = { from: engineLabel(llm), to: engineLabel(next), reason: fallbackReason(err.reason) };
+			llm = next;
+		}
+	}
+}
+
+async function runAgentOnce(
+	goal: string,
+	opts: AgentOptions,
+	workspaceContext: string | undefined,
+	fallback: { from?: string; canSwitch: () => boolean },
+): Promise<string> {
 	const { llm, agentName, onStreamDelta, onUsage, approver, onToolEvent, signal, userProfile, sessionId } = opts;
 	const startedAt = Date.now();
 	const prep = await prepareRun(goal, opts, workspaceContext);
@@ -446,8 +510,19 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 
 	// Registro de la respuesta (data/logs/runs.jsonl): herramientas con su tiempo, tokens y cómo terminó.
 	const logTools: RunToolEntry[] = [];
-	const logUsage = { input: 0, output: 0, turns: 0 };
-	const writeLog = (outcome: RunOutcome, error?: string) =>
+	const logUsage = { input: 0, output: 0, reasoning: 0, turns: 0 };
+	const logProvider = ref?.provider ?? llm.getConfig().provider;
+	const logModel = ref?.model ?? llm.getConfig().model;
+	// Primera palabra visible (el pensar y las llamadas a herramientas no cuentan) y coste con el precio del modelo.
+	let firstTextMs: number | undefined;
+	const stats = (): ResponseStats => {
+		const priced = logUsage.turns ? priceFor(logProvider, logModel) : undefined;
+		const cost = priced ? costOf(logUsage, priced.price) : undefined;
+		return { ...(firstTextMs !== undefined ? { firstTextMs } : {}), ...(cost !== undefined ? { cost } : {}), ...(priced?.plan ? { plan: true as const } : {}) };
+	};
+	const writeLog = (outcome: RunOutcome, error?: string) => {
+		const s = stats();
+		opts.onStats?.(s);
 		appendRunLog({
 			at: new Date(startedAt).toISOString(),
 			durationMs: Date.now() - startedAt,
@@ -456,15 +531,18 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 			subagent: opts.subagent ? true : undefined,
 			mode,
 			permissions,
-			provider: ref?.provider ?? llm.getConfig().provider,
-			model: ref?.model ?? llm.getConfig().model,
+			provider: logProvider,
+			model: logModel,
 			goal,
 			recalled: prep.recalled,
 			tools: logTools,
 			usage: logUsage,
 			outcome,
 			error,
+			...(fallback.from ? { fallbackFrom: fallback.from } : {}),
+			...s,
 		});
+	};
 
 	// Medidor de contexto: lo que leyó el modelo en la última vuelta y lo que trajeron las herramientas.
 	let lastInput: number | undefined;
@@ -473,6 +551,7 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 		if (u.input > 0) lastInput = u.input;
 		logUsage.input += u.input;
 		logUsage.output += u.output;
+		logUsage.reasoning += u.reasoning ?? 0;
 		logUsage.turns++;
 		onUsage?.(u);
 	};
@@ -581,6 +660,7 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 	const onDelta = onStreamDelta
 		? (chunk: string) => {
 				streamed = true;
+				if (firstTextMs === undefined && chunk.trim()) firstTextMs = Date.now() - startedAt;
 				onStreamDelta(chunk);
 			}
 		: undefined;
@@ -610,6 +690,12 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 		asker: opts.subagent ? undefined : opts.asker,
 	};
 	let content = "";
+	// Si la respuesta leyó contenido de afuera: solo se sabe dentro de runWithApprover (AsyncLocalStorage).
+	let readExternal = false;
+	const noteExternal = <T>(p: Promise<T>): Promise<T> =>
+		p.finally(() => {
+			readExternal = externalReadInThisResponse();
+		});
 	try {
 		for (let attempt = 0; ; attempt++) {
 			try {
@@ -618,7 +704,7 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 						runWithApprover(
 							approver,
 							() =>
-								textOnly
+								noteExternal(textOnly
 									? llm.chat(fullMessages, { onDelta, onUsage: trackUsage, signal, sessionId, thinking: replyThinking, maxTokens: replyMaxTokens })
 									: llm.chatWithTools(fullMessages, toolsDef, executeTool, {
 										onDelta,
@@ -631,7 +717,7 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 										resultChars: prep.resultChars,
 										contextTokens: prep.contextTokens,
 										beforeFinish: selfCheck?.pending,
-									}),
+									})),
 							permissions,
 						),
 					),
@@ -655,6 +741,8 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 		}
 		const message = err instanceof Error ? err.message : String(err);
 		writeLog("error", message);
+		// Sin texto mostrado ni herramientas usadas, otro modelo puede responder lo mismo desde cero.
+		if (!streamed && usedTools.length === 0 && isFallbackError(err) && fallback.canSwitch()) throw new SwitchModel(err);
 		logger.error("Fallo del modelo", { error: message.slice(0, 300) });
 		// Si no cupo, el medidor lo muestra lleno (con lo estimado: el modelo no dijo cuánto leyó).
 		await reportContext();
@@ -664,6 +752,11 @@ export async function runAgent(goal: string, opts: AgentOptions, workspaceContex
 	await reportContext();
 	const meaningful = isMeaningfulResponse(content);
 	writeLog(signal?.aborted ? "cancelled" : meaningful ? "ok" : "empty");
+	// Memoria automática: solo donde habla el usuario (learnFacts), nunca en ayudantes ni sin contexto privado
+	// (WhatsApp abierto). Corre en segundo plano: esta respuesta no la espera.
+	if (meaningful && !signal?.aborted && opts.learnFacts && !opts.subagent && workspaceContext?.trim()) {
+		learnInBackground({ goal, reply: content, userName: userProfile?.userName, externalRead: readExternal, llm, sessionId });
+	}
 	const finalText = meaningful ? content : FALLBACK_EMPTY_RESPONSE;
 	return finalText + buildToolExplanation(usedTools, effectiveExplainMode);
 }

@@ -190,6 +190,11 @@ test("lee texto, Word y PDF", async () => {
 	assert.match(await extractText(join(dir, "contrato.docx")), /El pago vence el 5 de cada mes/);
 	assert.match(await extractText(join(dir, "factura.pdf")), /Total a pagar 120 euros/);
 	await assert.rejects(extractText(join(dir, "hoja.xlsx")), /\.xlsx/);
+	// .env.example y .env.local: «.example»/«.local» no son el tipo de archivo; se leen como texto.
+	writeFileSync(join(dir, ".env.example"), "CLAVE=");
+	writeFileSync(join(dir, ".env.local"), "MODO=dev");
+	assert.match(await extractText(join(dir, ".env.example")), /CLAVE=/);
+	assert.match(await extractText(join(dir, ".env.local")), /MODO=dev/);
 });
 
 test("tool project: listar, leer, buscar y escribir dentro del proyecto", async () => {

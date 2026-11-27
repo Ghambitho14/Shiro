@@ -11,6 +11,7 @@ import { mountModelForm } from "./modelForm.js";
 import { mountModelSettings } from "./modelSettings.js";
 import { initAgents, loadAgents } from "./agents.js";
 import { initRunLog, loadRunLog } from "./runLog.js";
+import { initAutoModel, paintAutoModel, paintFallbackModels } from "./autoModel.js";
 import { $, $$, applyTheme, closeMenu, confirmDialog, copyText, el, openMenu, prefs, savePrefs, setTheme, toast } from "./ui.js";
 import { state } from "./state.js";
 import { renderThread, updateEmpty } from "./messages.js";
@@ -176,6 +177,9 @@ export function fillSettings() {
 	paintWake();
 
 	$("#set-pc").checked = s.pcControl;
+	$("#set-auto-memory").checked = s.autoMemory !== false;
+	paintAutoModel();
+	paintFallbackModels();
 	const radio = $(`#approval-choices input[value="${s.approvalMode}"]`);
 	if (radio) radio.checked = true;
 	$("#set-allowlist").value = (s.execAllowlist || []).join(", ");
@@ -618,6 +622,7 @@ export function initSettings() {
 	initExtensions({ toast, confirmDialog, openMenu, copyText });
 	initPrompts({ toast, confirmDialog, name: () => state.name });
 	initRunLog();
+	initAutoModel();
 	initAgents({
 		toast,
 		confirmDialog,
@@ -660,6 +665,7 @@ export function initSettings() {
 		if (await putSettings({ vision: e.target.value })) paintVision();
 	};
 	$("#set-pc").onchange = (e) => putSettings({ pcControl: e.target.checked }, e.target.checked ? "Control del PC activado" : "Control del PC desactivado");
+	$("#set-auto-memory").onchange = (e) => putSettings({ autoMemory: e.target.checked }, e.target.checked ? "Aku apuntará lo importante de cada charla" : "Memoria automática apagada");
 	$("#pc-save").onclick = () =>
 		putSettings({
 			approvalMode: $("#approval-choices input:checked")?.value || "ask",
