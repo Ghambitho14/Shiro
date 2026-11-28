@@ -177,34 +177,73 @@ function orderParts(parts: ContentPart[]): ContentPart[] {
 	return [...parts.filter((p) => p.type === "image_url"), ...parts.filter((p) => p.type === "text")];
 }
 
-function withTimeout(settings: LLMSettings, signal?: AbortSignal): AbortSignal {
-	const timeout = AbortSignal.timeout(settings.timeoutMs);
-	return signal ? AbortSignal.any([signal, timeout]) : timeout;
+/**
+ * Reloj de silencio de una respuesta: la espera (`timeoutMs`) cuenta desde lo último que mandó el modelo,
+ * no desde el principio. Un modelo lento que sigue escribiendo (un archivo largo con un 9B) no se corta;
+ * uno que se quedó callado, sí. `readLines` lo reinicia con cada trozo y traduce el corte a un `LLMError`.
+ */
+interface IdleWatch {
+	touch(): void;
+	stop(): void;
+	explain(err: unknown): unknown;
+}
+
+const idleWatches = new WeakMap<Response, IdleWatch>();
+
+function isAbortLike(err: unknown): boolean {
+	return err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError");
 }
 
 async function doFetch(settings: LLMSettings, url: string, body: unknown, signal?: AbortSignal): Promise<Response> {
+	const idle = new AbortController();
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const stop = () => clearTimeout(timer);
+	const touch = () => {
+		stop();
+		timer = setTimeout(() => idle.abort(new DOMException("El modelo se quedó callado", "TimeoutError")), settings.timeoutMs);
+		timer.unref?.();
+	};
+	const explain = (err: unknown): unknown => {
+		// El usuario pulsó "Detener": no es un fallo del modelo.
+		if (signal?.aborted) return new LLMError("Respuesta detenida por el usuario.", "cancelled");
+		return isAbortLike(err) || idle.signal.aborted ? toNetworkError(settings, err) : err;
+	};
+	touch();
 	let res: Response;
 	try {
 		res = await fetch(url, {
 			method: "POST",
 			headers: settings.headers,
 			body: JSON.stringify(body),
-			signal: withTimeout(settings, signal),
+			signal: signal ? AbortSignal.any([signal, idle.signal]) : idle.signal,
 		});
 	} catch (err) {
-		// El usuario pulsó "Detener": no es un fallo del modelo.
-		if (signal?.aborted) throw new LLMError("Respuesta detenida por el usuario.", "cancelled");
-		throw toNetworkError(settings, err);
+		stop();
+		const explained = explain(err);
+		throw explained instanceof LLMError ? explained : toNetworkError(settings, err);
 	}
-	if (!res.ok) throw await toHttpError(settings, res);
+	if (!res.ok) {
+		stop();
+		throw await toHttpError(settings, res);
+	}
+	// Llegaron las cabeceras: el servidor está vivo. Sin streaming el reloj sigue hasta leer el cuerpo entero.
+	touch();
+	idleWatches.set(res, { touch, stop, explain });
 	return res;
+}
+
+/** «180 s», «10 minutos», «1 hora»: la espera tal como se elige en Ajustes. */
+function describeWait(ms: number): string {
+	if (ms < 120_000) return `${Math.round(ms / 1000)} s`;
+	if (ms % 3_600_000 === 0) return ms === 3_600_000 ? "1 hora" : `${ms / 3_600_000} horas`;
+	return `${Math.round(ms / 60_000)} minutos`;
 }
 
 function toNetworkError(settings: LLMSettings, err: unknown): LLMError {
 	const label = PROVIDER_PRESETS[settings.provider].label;
-	if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
+	if (isAbortLike(err)) {
 		return new LLMError(
-			`${label} tardó más de ${Math.round(settings.timeoutMs / 1000)}s en responder. Si el modelo es grande, sube "llmTimeoutMs" en la configuración.`,
+			`${label} se quedó callado más de ${describeWait(settings.timeoutMs)} sin mandar nada. Si el modelo es lento, sube «Tiempo máximo de espera» en Ajustes → Modelo.`,
 			"timeout",
 		);
 	}
@@ -289,19 +328,31 @@ async function toHttpError(settings: LLMSettings, res: Response): Promise<LLMErr
 	return new LLMError(`${label} rechazó la petición (${res.status}): ${detail}`, "bad_request", res.status);
 }
 
-/** Lee un cuerpo en streaming línea a línea. */
+/** Lee un cuerpo en streaming línea a línea. Cada trozo que llega reinicia el reloj de silencio. */
 async function* readLines(res: Response): AsyncGenerator<string> {
-	if (!res.body) return;
+	const watch = idleWatches.get(res);
+	if (!res.body) {
+		watch?.stop();
+		return;
+	}
 	const decoder = new TextDecoder();
 	let buf = "";
-	for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
-		buf += decoder.decode(chunk, { stream: true });
-		let nl: number;
-		while ((nl = buf.indexOf("\n")) >= 0) {
-			const line = buf.slice(0, nl).trim();
-			buf = buf.slice(nl + 1);
-			if (line) yield line;
+	try {
+		for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+			watch?.touch();
+			buf += decoder.decode(chunk, { stream: true });
+			let nl: number;
+			while ((nl = buf.indexOf("\n")) >= 0) {
+				const line = buf.slice(0, nl).trim();
+				buf = buf.slice(nl + 1);
+				if (line) yield line;
+			}
 		}
+	} catch (err) {
+		// Antes salía «The operation was aborted due to timeout» en inglés y sin pista.
+		throw watch ? watch.explain(err) : err;
+	} finally {
+		watch?.stop();
 	}
 	if (buf.trim()) yield buf.trim();
 }

@@ -71,7 +71,7 @@ export const modelTuningSchema = z.object({
 	toolMode: opt(z.enum(TOOL_MODES)),
 	toolProfile: opt(z.enum(TOOL_PROFILES)),
 	maxToolIterations: opt(z.number().int().min(1).max(40)),
-	timeoutMs: opt(z.number().int().min(5_000).max(1_800_000)),
+	timeoutMs: opt(z.number().int().min(5_000).max(3_600_000)),
 	/** Modo ahorro: herramientas según el mensaje, resultados cortos y pocos pasos. */
 	saver: opt(z.enum(SAVER)),
 });
@@ -91,8 +91,8 @@ const configSchema = z.object({
 	llmApiKey: optionalString,
 	/** Tamaño de contexto (tokens) que se pide al servidor local (Ollama: num_ctx; llama.cpp integrado: -c). */
 	contextWindow: int(8192, 1024, 1_000_000),
-	/** Tiempo máximo por petición al modelo (ms). */
-	llmTimeoutMs: int(180_000, 5_000, 1_800_000),
+	/** Cuánto puede quedarse callado el modelo en una vuelta (ms): cuenta desde lo último que mandó, no desde el principio. */
+	llmTimeoutMs: int(180_000, 5_000, 3_600_000),
 	temperature: z.coerce.number().min(0).max(2).optional().catch(undefined),
 	/**
 	 * Cómo se llaman las herramientas:

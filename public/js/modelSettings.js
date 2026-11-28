@@ -67,6 +67,7 @@ const TIMEOUTS = [
 	[300000, "5 minutos"],
 	[600000, "10 minutos"],
 	[1800000, "30 minutos"],
+	[3600000, "1 hora"],
 ];
 
 /** Una fila de ajuste: título, explicación y control. */
@@ -119,7 +120,7 @@ export function mountModelSettings(container, ctx) {
 				${row("Cómo las usa", "Nativas es lo normal. «Como texto» sirve para modelos que no saben usarlas.", `<select class="select" data-f="toolMode"></select>`)}
 				${row("Cuántas ve", "Los modelos pequeños se confunden con muchas: mejor pocas.", `<select class="select" data-f="toolProfile"></select>`)}
 				${row("Pasos máximos por respuesta", "Cuántas herramientas puede usar seguidas antes de contestar. En Code, Hacking y al planear vale el triple: son trabajos largos.", `<input class="input tuning-num" type="number" min="1" max="40" data-f="maxToolIterations" aria-label="Pasos máximos" />`)}
-				${row("Tiempo máximo de espera", "Si el modelo tarda más en responder, se corta.", `<select class="select" data-f="timeoutMs"></select>`)}
+				${row("Tiempo máximo de espera", "Si el modelo se queda callado más que esto, se corta. Mientras siga escribiendo, no.", `<select class="select" data-f="timeoutMs"></select>`)}
 			</details>
 			<div class="actions-row">
 				<button type="button" class="btn primary" data-a="save">Guardar</button>

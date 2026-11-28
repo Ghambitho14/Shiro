@@ -54,13 +54,13 @@ function canCloseChat() {
 	return user && reply;
 }
 
-/** «Cerrar conversación»: el modelo resume el chat, se guarda como recuerdo y desde ahí solo se le manda el resumen. */
+/** «Compactar conversación»: el modelo resume el chat, se guarda como recuerdo y desde ahí solo se le manda el resumen. */
 async function closeConversation(btn) {
 	if (state.busy || state.closing) return toast("Espera a que termine la respuesta.", "info");
 	const ok = await confirmDialog({
-		title: "Cerrar conversación",
+		title: "Compactar conversación",
 		text: `${state.name} resumirá este chat y guardará el resumen en su memoria. Podrás seguir leyéndolo y escribiendo aquí, pero ${state.name} solo recibirá el resumen y lo nuevo.`,
-		ok: "Resumir y cerrar",
+		ok: "Compactar",
 	});
 	if (!ok) return;
 	const id = state.activeId;
@@ -81,7 +81,7 @@ async function closeConversation(btn) {
 		}
 		toast("Resumen guardado en la memoria.", "success");
 	} catch (err) {
-		toast(`No pude cerrar la conversación: ${err.message}`, "error", 6000);
+		toast(`No pude compactar la conversación: ${err.message}`, "error", 6000);
 	} finally {
 		state.closing = false;
 		state.busy = false;
@@ -129,7 +129,7 @@ export function paintRoomBar() {
 		const close = el("button", "room-chip add close-chat", `${icon("archive", "sm")}<span></span>`);
 		close.type = "button";
 		close.title = "Resume este chat, guarda el resumen en la memoria y desde ahí solo manda el resumen al modelo";
-		$("span", close).textContent = state.closing ? "Resumiendo…" : "Cerrar conversación";
+		$("span", close).textContent = state.closing ? "Resumiendo…" : "Compactar conversación";
 		close.disabled = state.closing;
 		close.onclick = () => closeConversation(close);
 		roomBar.append(close);
